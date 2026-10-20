@@ -1,0 +1,33 @@
+{
+  "name": "warpweft-scheduler",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WarpWeft Scheduler single-machine MVP",
+  "main": "apps/desktop/main.cjs",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "test": "node --test tests/*.test.cjs",
+    "solver": "python services/solver/solver.py",
+    "validate": "node scripts/validate-demo.cjs",
+    "desktop": "electron ."
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  },
+  "allowScripts": {
+    "electron@33.4.11": true,
+    "esbuild@0.25.12": true
+  }
+}
