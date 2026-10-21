@@ -68,3 +68,7 @@ npm run dist:win
 ## Solver
 
 Solver 首选 OR-Tools CP-SAT；未安装 OR-Tools 时自动回退到贪心实现。输入输出协议见 `packages/contracts/src.ts`，锁定课程会在重新排课时固定在原时间与教室。
+
+## 手动测试数据
+
+`tests/test_data/` 提供基础、完整周和容量错误三套 Excel 数据集及导入模板。在“基础资料 → Excel 导入”中直接选择 .xlsx；导入时勾选“导入前清空当前工作区”可得到与数据集一致的数据。

@@ -454,3 +454,19 @@ html[data-theme='dark'] .tt-card.is-swap-target{outline-color:#4ade80;border-col
 @media print{.tt-immersive-bar{display:none!important}}
 
 @media print{.timetable-layout.is-immersive{position:static;width:auto;height:auto;display:block;overflow:visible}.timetable-layout.is-immersive .tt-board{display:block}.timetable-layout.is-immersive .tt-board-scroll{--tt-height:auto;height:auto;max-height:none}}
+
+/* Excel import controls */
+.import-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}
+.file-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:38px;padding:0 14px;border:1px solid var(--rule);border-radius:8px;background:var(--panel);color:var(--ink);font:13px var(--font-text);line-height:1;cursor:pointer;transition:background .15s ease,border-color .15s ease,color .15s ease}
+.file-button:hover{background:var(--chip);border-color:var(--ink)}
+.file-button:focus-within{outline:2px solid var(--ink);outline-offset:2px}
+.file-button-primary{background:#2563eb;border-color:#2563eb;color:#fff}
+.file-button-primary:hover{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
+.file-button input{display:none}
+html[data-theme='dark'] .file-button-primary{background:#3b82f6;border-color:#3b82f6;color:#fff}
+html[data-theme='dark'] .file-button-primary:hover{background:#2563eb;border-color:#2563eb}
+@media(max-width:680px){.import-actions .file-button{flex:1 1 100%}}
+
+.import-replace{display:inline-flex;align-items:center;gap:7px;margin-top:12px;font-size:12px;color:var(--muted);cursor:pointer}
+.import-replace:hover{color:var(--ink)}
+.import-replace input{width:15px;height:15px;margin:0;accent-color:#2563eb}

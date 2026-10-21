@@ -26,3 +26,35 @@ export function exportWorkbook(sheets: Record<string, Record<string, unknown>[]>
   for (const [name, rows] of Object.entries(sheets)) XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), name.slice(0, 31));
   return XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
 }
+
+export function buildImportTemplate(): Uint8Array {
+  const workbook = XLSX.utils.book_new();
+  const sheets: { name: string; headers: string[]; rows: (string | number)[][] }[] = [
+    {
+      name: '说明',
+      headers: ['项目', '说明'],
+      rows: [
+        ['导入顺序', '可先填写学校名称，再填写班级、教师、学科、教室、时间段，最后填写教学计划。'],
+        ['学校名称', '可在“学校”工作表填写；留空则保留当前名称。'],
+        ['名称引用', '教学计划通过“班级/学科/教师”名称引用，请与前面工作表保持一致。'],
+        ['星期', '填写周一至周日，或 1-7。'],
+        ['固定时间', '可留空；需要固定时填写“周一 第1节”或时间段 ID。'],
+        ['重复导入', '基础资料按名称复用已有记录；教学计划工作表会整体替换原计划。'],
+        ['空行', '完全空白的行会被忽略。'],
+      ],
+    },
+    { name: '学校', headers: ['名称'], rows: [] },
+    { name: '班级', headers: ['名称', '年级', '人数'], rows: [] },
+    { name: '教师', headers: ['名称'], rows: [] },
+    { name: '学科', headers: ['名称'], rows: [] },
+    { name: '教室', headers: ['名称', '容量', '类型'], rows: [] },
+    { name: '时间段', headers: ['星期', '节次', '名称'], rows: [] },
+    { name: '教学计划', headers: ['班级', '学科', '教师', '周课时', '教室类型', '固定时间'], rows: [] },
+  ];
+  for (const sheet of sheets) {
+    const worksheet = XLSX.utils.aoa_to_sheet([sheet.headers, ...sheet.rows]);
+    worksheet['!cols'] = sheet.headers.map((header) => ({ wch: Math.max(12, Math.min(30, header.length * 2 + 8)) }));
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name);
+  }
+  return XLSX.write(workbook, { bookType: 'xlsx', type: 'array' }) as Uint8Array;
+}

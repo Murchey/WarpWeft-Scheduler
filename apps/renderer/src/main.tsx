@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HeroUIProvider, Button, Card, CardBody, Chip, Progress, Select, SelectItem, Tabs, Tab } from '@heroui/react';
 import { validateInput } from '../../../packages/validation/src';
-import { exportCsv, exportWorkbook, readWorkbook } from '../../../packages/import-export/src';
+import { buildImportTemplate, exportCsv, exportWorkbook, readWorkbook } from '../../../packages/import-export/src';
 import { loadData, saveData, solveSchedule } from './api';
 import type {
   ClassRoom,
@@ -873,7 +873,7 @@ function App() {
             onTimetable={() => setTab('课表预览')}
           />
         ) : null}
-        {tab === '基础资料' ? <ResourcesPage data={data} commit={commit} setError={setError} /> : null}
+        {tab === '基础资料' ? <ResourcesPage data={data} commit={commit} setError={setError} setNotice={setNotice} /> : null}
         {tab === '教学计划' ? <PlansPage data={data} commit={commit} setError={setError} /> : null}
         {tab === '排课任务' ? (
           <RunsPage
@@ -1072,12 +1072,15 @@ function ResourcesPage({
   data,
   commit,
   setError,
+  setNotice,
 }: {
   data: SchoolData;
   commit: Commit;
   setError: (value: string) => void;
+  setNotice: (value: string) => void;
 }) {
   const days = DAYS.slice(1).map((label, index) => ({ value: String(index + 1), label }));
+  const [replaceOnImport, setReplaceOnImport] = useState(false);
   const update = (
     collection: 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots',
     id: string,
@@ -1132,35 +1135,263 @@ function ResourcesPage({
 
   const importWorkbookFile = async (file: File) => {
     try {
+      if (replaceOnImport && !window.confirm('导入前将清空当前工作区的基础资料、时间段和教学计划，确定继续？')) return;
       const rows = readWorkbook(await file.arrayBuffer());
-      const imported = { ...data };
+      if (rows.length === 0) {
+        setError('Excel 文件为空，请先下载模板并按表头填写。');
+        return;
+      }
+      const text = (value: unknown) => String(value ?? '').trim();
+      const numeric = (value: unknown, fallback = 0) => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : fallback;
+      };
+      const dayMap: Record<string, number> = {
+        周一: 1, 星期一: 1, 一: 1, '1': 1,
+        周二: 2, 星期二: 2, 二: 2, '2': 2,
+        周三: 3, 星期三: 3, 三: 3, '3': 3,
+        周四: 4, 星期四: 4, 四: 4, '4': 4,
+        周五: 5, 星期五: 5, 五: 5, '5': 5,
+        周六: 6, 星期六: 6, 六: 6, '6': 6,
+        周日: 7, 星期日: 7, 日: 7, '7': 7,
+      };
       const issues: string[] = [];
+      const grouped = new Map<string, typeof rows>();
       for (const row of rows) {
+        const key = text(row.sheet).toLowerCase();
+        const list = grouped.get(key) ?? [];
+        list.push(row);
+        grouped.set(key, list);
+      }
+      const takeRows = (tokens: string[]) => {
+        const result: typeof rows = [];
+        for (const [sheet, sheetRows] of grouped) {
+          if (tokens.some((token) => sheet.includes(token))) result.push(...sheetRows);
+        }
+        return result;
+      };
+      const schoolRows = takeRows(['学校', 'school']);
+      const classRows = takeRows(['班级', 'class']);
+      const teacherRows = takeRows(['教师', 'teacher']);
+      const subjectRows = takeRows(['学科', 'subject']);
+      const roomRows = takeRows(['教室', 'room']);
+      const slotRows = takeRows(['时间段', 'slot']);
+      const planRows = takeRows(['教学计划', 'plan']);
+      const planSheetFound = [...grouped.keys()].some((sheet) => sheet.includes('教学计划') || sheet.includes('plan'));
+      if (![...schoolRows, ...classRows, ...teacherRows, ...subjectRows, ...roomRows, ...slotRows, ...planRows].length) {
+        setError('未识别到可导入的工作表。请使用模板中的“班级/教师/学科/教室/时间段/教学计划”表头。');
+        return;
+      }
+      const next: SchoolData = {
+        ...data,
+        classes: data.classes.map((item) => ({ ...item })),
+        teachers: data.teachers.map((item) => ({ ...item })),
+        subjects: data.subjects.map((item) => ({ ...item })),
+        rooms: data.rooms.map((item) => ({ ...item })),
+        timeSlots: data.timeSlots.map((item) => ({ ...item })),
+        coursePlans: data.coursePlans.map((item) => ({ ...item })),
+      };
+      const schoolRow = schoolRows.find((row) => text(row.values['名称'] ?? row.values['学校名称'] ?? row.values['name']));
+      if (schoolRow) {
+        const schoolName = text(schoolRow.values['名称'] ?? schoolRow.values['学校名称'] ?? schoolRow.values['name']);
+        if (schoolName) next.school = { ...next.school, name: schoolName };
+      }
+      if (replaceOnImport) {
+        next.classes = [];
+        next.teachers = [];
+        next.subjects = [];
+        next.rooms = [];
+        next.timeSlots = [];
+        next.coursePlans = [];
+      }
+      const classNames = new Set<string>();
+      for (const row of classRows) {
         const v = row.values;
-        const sheet = row.sheet.toLowerCase();
-        if (sheet.includes('班级') || sheet.includes('class')) {
-          if (!v['名称'] && !v['班级名称'] && !v['name']) { issues.push(`${row.sheet} 第${row.row}行缺少班级名称`); continue; }
-          imported.classes = [...imported.classes, { id: uid('class'), name: String(v['名称'] ?? v['班级名称'] ?? v['name']), grade: String(v['年级'] ?? v['grade'] ?? ''), size: Number(v['人数'] ?? v['size'] ?? 0) || 40 }];
-        } else if (sheet.includes('教师') || sheet.includes('teacher')) {
-          const name = v['名称'] ?? v['教师名称'] ?? v['name'];
-          if (!name) { issues.push(`${row.sheet} 第${row.row}行缺少教师名称`); continue; }
-          imported.teachers = [...imported.teachers, { id: uid('teacher'), name: String(name) }];
-        } else if (sheet.includes('学科') || sheet.includes('subject')) {
-          const name = v['名称'] ?? v['学科名称'] ?? v['name'];
-          if (!name) { issues.push(`${row.sheet} 第${row.row}行缺少学科名称`); continue; }
-          imported.subjects = [...imported.subjects, { id: uid('subject'), name: String(name) }];
-        } else if (sheet.includes('教室') || sheet.includes('room')) {
-          const name = v['名称'] ?? v['教室名称'] ?? v['name'];
-          if (!name) { issues.push(`${row.sheet} 第${row.row}行缺少教室名称`); continue; }
-          imported.rooms = [...imported.rooms, { id: uid('room'), name: String(name), capacity: Number(v['容量'] ?? v['capacity'] ?? 40) || 40, type: String(v['类型'] ?? v['type'] ?? '普通教室') }];
+        const name = text(v['名称'] ?? v['班级名称'] ?? v['name']);
+        if (!name) {
+          issues.push('班级 第' + row.row + '行缺少名称');
+          continue;
+        }
+        const key = name.toLowerCase();
+        if (classNames.has(key)) {
+          issues.push('班级 第' + row.row + '行名称重复：' + name);
+          continue;
+        }
+        classNames.add(key);
+        const size = numeric(v['人数'] ?? v['size'], 40);
+        if (!Number.isInteger(size) || size <= 0) {
+          issues.push('班级 第' + row.row + '行人数必须为正整数');
+          continue;
+        }
+        const grade = text(v['年级'] ?? v['grade']);
+        const existing = next.classes.find((item) => item.name.trim().toLowerCase() === key);
+        if (existing) {
+          existing.grade = grade || existing.grade;
+          existing.size = size;
+        } else {
+          next.classes.push({ id: uid('class'), name, grade, size });
         }
       }
-      if (issues.length) setError('导入校验未通过：\n' + issues.join('\n'));
-      const changed = imported.classes.length !== data.classes.length || imported.teachers.length !== data.teachers.length || imported.subjects.length !== data.subjects.length || imported.rooms.length !== data.rooms.length;
-      if (changed) commit(imported, { invalidate: true, immediate: true });
-      if (!issues.length && changed) setError('');
+      const teacherNames = new Set<string>();
+      for (const row of teacherRows) {
+        const v = row.values;
+        const name = text(v['名称'] ?? v['教师名称'] ?? v['name']);
+        if (!name) {
+          issues.push('教师 第' + row.row + '行缺少名称');
+          continue;
+        }
+        const key = name.toLowerCase();
+        if (teacherNames.has(key)) {
+          issues.push('教师 第' + row.row + '行名称重复：' + name);
+          continue;
+        }
+        teacherNames.add(key);
+        if (!next.teachers.some((item) => item.name.trim().toLowerCase() === key)) {
+          next.teachers.push({ id: uid('teacher'), name });
+        }
+      }
+      const subjectNames = new Set<string>();
+      for (const row of subjectRows) {
+        const v = row.values;
+        const name = text(v['名称'] ?? v['学科名称'] ?? v['name']);
+        if (!name) {
+          issues.push('学科 第' + row.row + '行缺少名称');
+          continue;
+        }
+        const key = name.toLowerCase();
+        if (subjectNames.has(key)) {
+          issues.push('学科 第' + row.row + '行名称重复：' + name);
+          continue;
+        }
+        subjectNames.add(key);
+        if (!next.subjects.some((item) => item.name.trim().toLowerCase() === key)) {
+          next.subjects.push({ id: uid('subject'), name });
+        }
+      }
+      const roomNames = new Set<string>();
+      for (const row of roomRows) {
+        const v = row.values;
+        const name = text(v['名称'] ?? v['教室名称'] ?? v['name']);
+        if (!name) {
+          issues.push('教室 第' + row.row + '行缺少名称');
+          continue;
+        }
+        const key = name.toLowerCase();
+        if (roomNames.has(key)) {
+          issues.push('教室 第' + row.row + '行名称重复：' + name);
+          continue;
+        }
+        roomNames.add(key);
+        const capacity = numeric(v['容量'] ?? v['capacity'], 40);
+        if (!Number.isInteger(capacity) || capacity <= 0) {
+          issues.push('教室 第' + row.row + '行容量必须为正整数');
+          continue;
+        }
+        const type = text(v['类型'] ?? v['type']) || '普通教室';
+        const existing = next.rooms.find((item) => item.name.trim().toLowerCase() === key);
+        if (existing) {
+          existing.capacity = capacity;
+          existing.type = type;
+        } else {
+          next.rooms.push({ id: uid('room'), name, capacity, type });
+        }
+      }
+      const slotKeys = new Set<string>();
+      for (const row of slotRows) {
+        const v = row.values;
+        const day = dayMap[text(v['星期'] ?? v['day'])];
+        const period = numeric(v['节次'] ?? v['period']);
+        if (!day || !Number.isInteger(period) || period <= 0) {
+          issues.push('时间段 第' + row.row + '行缺少有效星期或节次');
+          continue;
+        }
+        const key = day + '-' + period;
+        if (slotKeys.has(key)) {
+          issues.push('时间段 第' + row.row + '行重复：' + day + '-' + period);
+          continue;
+        }
+        slotKeys.add(key);
+        const label = text(v['名称'] ?? v['label']) || DAYS[day] + ' 第' + period + '节';
+        const existing = next.timeSlots.find((item) => item.day === day && item.period === period);
+        if (existing) existing.label = label;
+        else next.timeSlots.push({ id: uid('slot'), day, period, label });
+      }
+      const classByName = new Map(next.classes.map((item) => [item.name.trim().toLowerCase(), item]));
+      const subjectByName = new Map(next.subjects.map((item) => [item.name.trim().toLowerCase(), item]));
+      const teacherByName = new Map(next.teachers.map((item) => [item.name.trim().toLowerCase(), item]));
+      const slotByLabel = new Map(next.timeSlots.map((item) => [item.label.trim(), item]));
+      const slotById = new Map(next.timeSlots.map((item) => [item.id, item]));
+      if (planSheetFound) {
+        const plans: CoursePlan[] = [];
+        const planKeys = new Set<string>();
+        for (const row of planRows) {
+          const v = row.values;
+          if (!Object.values(v).some((value) => text(value) !== '')) continue;
+          const className = text(v['班级'] ?? v['班级名称'] ?? v['class']);
+          const subjectName = text(v['学科'] ?? v['学科名称'] ?? v['subject']);
+          const teacherName = text(v['教师'] ?? v['教师姓名'] ?? v['teacher']);
+          const classItem = classByName.get(className.toLowerCase());
+          const subjectItem = subjectByName.get(subjectName.toLowerCase());
+          const teacherItem = teacherByName.get(teacherName.toLowerCase());
+          if (!classItem || !subjectItem || !teacherItem) {
+            issues.push('教学计划 第' + row.row + '行引用了不存在的班级、学科或教师');
+            continue;
+          }
+          const weeklyPeriods = numeric(v['周课时'] ?? v['课时'] ?? v['weeklyPeriods']);
+          if (!Number.isInteger(weeklyPeriods) || weeklyPeriods <= 0) {
+            issues.push('教学计划 第' + row.row + '行周课时必须为正整数');
+            continue;
+          }
+          const roomType = text(v['教室类型'] ?? v['roomType']);
+          if (roomType && !next.rooms.some((room) => room.type === roomType)) {
+            issues.push('教学计划 第' + row.row + '行教室类型不存在：' + roomType);
+            continue;
+          }
+          const fixedText = text(v['固定时间'] ?? v['fixedSlot'] ?? v['fixed']);
+          let fixedSlotId = '';
+          if (fixedText) {
+            const fixed = slotByLabel.get(fixedText) ?? slotById.get(fixedText);
+            if (!fixed) {
+              issues.push('教学计划 第' + row.row + '行固定时间不存在：' + fixedText);
+              continue;
+            }
+            fixedSlotId = fixed.id;
+          }
+          const key = classItem.id + '|' + subjectItem.id + '|' + teacherItem.id;
+          if (planKeys.has(key)) {
+            issues.push('教学计划 第' + row.row + '行重复：' + className + ' / ' + subjectName);
+            continue;
+          }
+          planKeys.add(key);
+          plans.push({ id: uid('plan'), classId: classItem.id, subjectId: subjectItem.id, teacherId: teacherItem.id, weeklyPeriods, roomType, fixedSlotId });
+        }
+        next.coursePlans = plans;
+      }
+      if (issues.length) {
+        setError('导入校验未通过（未写入数据）：\n' + issues.join('\n'));
+        return;
+      }
+      commit(next, { invalidate: true, immediate: true });
+      setError('');
+      setNotice((replaceOnImport ? '已清空并导入：' : 'Excel 导入完成：') + '班级 ' + next.classes.length + '，教师 ' + next.teachers.length + '，学科 ' + next.subjects.length + '，教室 ' + next.rooms.length + '，时间段 ' + next.timeSlots.length + '，教学计划 ' + next.coursePlans.length);
     } catch (cause) {
       setError('Excel 导入失败：' + messageOf(cause));
+    }
+  };
+
+  const downloadTemplate = async () => {
+    try {
+      const bytes = buildImportTemplate();
+      const savedPath = await download(
+        new Blob([bytes.buffer as ArrayBuffer], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }),
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'warpweft-import-template.xlsx',
+      );
+      setNotice(savedPath ? '模板已保存到 ' + savedPath : '模板已开始下载，请查看系统下载目录');
+    } catch (cause) {
+      setError('下载模板失败：' + messageOf(cause));
     }
   };
 
@@ -1168,8 +1399,29 @@ function ResourcesPage({
     <div className="resource-grid">
       <section className="section-panel resource-panel import-panel">
         <div className="panel-head"><SectionHeading english="IMPORT / VALIDATE" title="Excel 导入" /></div>
-        <p className="panel-note">按工作表名称识别班级、教师、学科、教室；导入前会逐行检查必填名称，成功后自动清空候选课表。</p>
-        <label className="file-button">选择 Excel 文件<input type="file" accept=".xlsx,.xls,.csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importWorkbookFile(file); event.currentTarget.value = ''; }} /></label>
+        <p className="panel-note">支持学校、班级、教师、学科、教室、时间段和教学计划。建议先下载模板；基础资料按名称复用，教学计划会整体替换，导入后自动清空候选课表。</p>
+        <div className="import-actions">
+          <label className="file-button file-button-primary">
+            <span>选择 Excel 文件</span>
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void importWorkbookFile(file);
+                event.currentTarget.value = '';
+              }}
+            />
+          </label>
+          <button type="button" className="file-button" onClick={() => void downloadTemplate()}>
+            下载模板
+          </button>
+        </div>
+        <label className="import-replace">
+          <input type="checkbox" checked={replaceOnImport} onChange={(event) => setReplaceOnImport(event.target.checked)} />
+          <span>导入前清空当前工作区</span>
+        </label>
+        <p className="panel-note">仅支持 Excel（.xlsx/.xls）；模板包含“说明、学校、班级、教师、学科、教室、时间段、教学计划”工作表。测试完整数据集时建议勾选上方清空选项。</p>
       </section>
       <EditableTable<ClassRoom>
         title="班级"
