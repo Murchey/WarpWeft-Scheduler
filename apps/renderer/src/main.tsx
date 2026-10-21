@@ -233,8 +233,14 @@ function exportRows(data: SchoolData, result: SolverOutput): Record<string, stri
   });
 }
 
-function download(content: BlobPart, type: string, filename: string) {
+type ExportBridge = { saveExport?: (filename: string, data: ArrayBuffer) => Promise<string> };
+
+async function download(content: BlobPart, type: string, filename: string): Promise<string | null> {
   const blob = content instanceof Blob ? content : new Blob([content], { type });
+  const bridge = (window as unknown as { warpweft?: ExportBridge }).warpweft;
+  if (bridge?.saveExport) {
+    return bridge.saveExport(filename, await blob.arrayBuffer());
+  }
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
@@ -243,6 +249,7 @@ function download(content: BlobPart, type: string, filename: string) {
   anchor.click();
   anchor.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return null;
 }
 
 function SectionHeading({ english, title }: { english: string; title: string }) {
@@ -634,6 +641,18 @@ function App() {
       return;
     }
     if (moving.slotId === targetSlotId) return;
+    const movingPlan = planOf(data, moving);
+    if (movingPlan?.fixedSlotId && movingPlan.fixedSlotId !== targetSlotId) {
+      setError('该课程设置了固定时间，不能移动');
+      return;
+    }
+    if (target) {
+      const targetPlan = planOf(data, target);
+      if (targetPlan?.fixedSlotId && targetPlan.fixedSlotId !== moving.slotId) {
+        setError('目标课程设置了固定时间，不能交换');
+        return;
+      }
+    }
     const blocking = result.entries.find((entry) => entry.id !== moving.id && entry.id !== target?.id && entry.slotId === targetSlotId && (
       entry.teacherId === moving.teacherId || entry.roomId === moving.roomId
     ));
@@ -698,19 +717,25 @@ function App() {
     setNotice('候选课表已清空');
   };
 
-  const exportCsvFile = () => {
+  const exportCsvFile = async () => {
     if (!data) return;
     const target = result ?? data.published;
     if (!target) return;
-    const csv = exportCsv(exportRows(data, target));
-    download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), 'text/csv', 'warpweft-timetable.csv');
+    try {
+      const csv = exportCsv(exportRows(data, target));
+      const savedPath = await download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), 'text/csv', 'warpweft-timetable.csv');
+      setNotice(savedPath ? 'CSV 已导出到 ' + savedPath : 'CSV 已开始下载，请查看系统下载目录');
+    } catch (cause) {
+      setError('导出 CSV 失败：' + messageOf(cause));
+    }
   };
 
-  const exportExcelFile = () => {
+  const exportExcelFile = async () => {
     if (!data) return;
     const target = result ?? data.published;
     if (!target) return;
-    const bytes = exportWorkbook({
+    try {
+      const bytes = exportWorkbook({
       课表: exportRows(data, target),
       元数据: [
         { 项目: '学校', 值: data.school.name },
@@ -718,13 +743,17 @@ function App() {
         { 项目: '课表状态', 值: target.status },
       ],
     });
-    download(
-      new Blob([bytes.buffer as ArrayBuffer], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      }),
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'warpweft-timetable.xlsx',
-    );
+      const savedPath = await download(
+        new Blob([bytes.buffer as ArrayBuffer], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }),
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'warpweft-timetable.xlsx',
+      );
+      setNotice(savedPath ? 'Excel 已导出到 ' + savedPath : 'Excel 已开始下载，请查看系统下载目录');
+    } catch (cause) {
+      setError('导出 Excel 失败：' + messageOf(cause));
+    }
   };
 
   if (!runMode) {
@@ -792,7 +821,7 @@ function App() {
           <small>{data.updatedAt ? '更新 ' + fmtTime(data.updatedAt) : '尚未保存'}</small>
         </div>
       </aside>
-      <main className="workspace">
+      <main className={'workspace' + (tab === '课表预览' ? ' workspace-timetable' : '')}>
         <header className="topbar">
           <div>
             <span className="kicker">// {EN[tab]}</span>
@@ -876,10 +905,11 @@ function App() {
             onToggleLock={toggleLock}
             onUndo={undo}
             canUndo={history.length > 0}
-            onRun={() => setTab('排课任务')}
+            onRun={run}
             running={running}
             onExportCsv={exportCsvFile}
             onExportExcel={exportExcelFile}
+            onPrint={() => window.print()}
           />
         ) : null}
         {tab === '报表发布' ? (
@@ -1418,6 +1448,7 @@ function TimetablePage({
   running,
   onExportCsv,
   onExportExcel,
+  onPrint,
 }: {
   data: SchoolData;
   result: SolverOutput | null;
@@ -1435,35 +1466,112 @@ function TimetablePage({
   running: boolean;
   onExportCsv: () => void;
   onExportExcel: () => void;
+  onPrint: () => void;
 }) {
   const [dragId, setDragId] = useState('');
   const [dragOver, setDragOver] = useState('');
+  const [focus, setFocus] = useState(false);
+  const [immersive, setImmersive] = useState(false);
+  const [swapMode, setSwapMode] = useState(false);
+  const overlay = focus || immersive;
+
+  useEffect(() => {
+    if (!overlay) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setImmersive(false);
+        setFocus(false);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [overlay]);
+
+  useEffect(() => {
+    setSelectedEntryId('');
+    setSwapMode(false);
+  }, [view, entityId, setSelectedEntryId]);
+
   const days = Array.from(new Set(data.timeSlots.map((slot) => slot.day))).sort((a, b) => a - b);
   const periods = Array.from(new Set(data.timeSlots.map((slot) => slot.period))).sort((a, b) => a - b);
   const entities = view === 'class' ? data.classes : view === 'teacher' ? data.teachers : data.rooms;
   const conflicts = result ? conflictIds(result.entries) : new Set<string>();
   const selected = result?.entries.find((entry) => entry.id === selectedEntryId);
+  const selectedPlan = selected ? planOf(data, selected) : undefined;
+  const selectedSlot = selected ? data.timeSlots.find((slot) => slot.id === selected.slotId) : undefined;
+  const selectedClass = selected ? findClass(data, selected.classId) : undefined;
+  const selectedTeacher = selected ? findTeacher(data, selected.teacherId) : undefined;
+  const selectedRoom = selected ? findRoom(data, selected.roomId) : undefined;
   const missing = result ? missingPlans(data, result) : [];
-  const slotAt = (day: number, period: number) => data.timeSlots.find((slot) => slot.day === day && slot.period === period);
-  const entriesAt = (slotId: string) => {
-    if (!result) return [];
-    return result.entries.filter((entry) => {
-      if (entry.slotId !== slotId) return false;
-      if (view === 'class') return entry.classId === entityId;
-      if (view === 'teacher') return entry.teacherId === entityId;
-      return entry.roomId === entityId;
-    });
-  };
+  const totalMissing = missing.reduce((sum, item) => sum + item.missing, 0);
   const viewLabel = view === 'class' ? '班级' : view === 'teacher' ? '教师' : '教室';
+  const entityName = entities.find((item) => item.id === entityId)?.name ?? '';
+  const belongsHere = (entry: ScheduleEntry) => {
+    if (view === 'class') return entry.classId === entityId;
+    if (view === 'teacher') return entry.teacherId === entityId;
+    return entry.roomId === entityId;
+  };
+  const viewEntries = result ? result.entries.filter(belongsHere) : [];
+  const expectedForView =
+    view === 'class'
+      ? data.coursePlans.filter((plan) => plan.classId === entityId).reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0)
+      : view === 'teacher'
+        ? data.coursePlans.filter((plan) => plan.teacherId === entityId).reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0)
+        : null;
+  const missingForView = expectedForView === null ? null : Math.max(0, expectedForView - viewEntries.length);
+  const viewConflictCount = viewEntries.filter((entry) => conflicts.has(entry.id)).length;
+  const viewFreeSlots = Math.max(0, data.timeSlots.length - viewEntries.length);
+  const canMove = Boolean(selected) && view === 'class' && !selected?.locked && !selectedPlan?.fixedSlotId;
+  const slotAt = (day: number, period: number) => data.timeSlots.find((slot) => slot.day === day && slot.period === period);
+  const entriesAt = (slotId: string) => viewEntries.filter((entry) => entry.slotId === slotId);
+  const canPlaceSelected = (slot: TimeSlot): boolean => {
+    if (!selected || !result || !canMove) return false;
+    if (selectedPlan?.fixedSlotId && selectedPlan.fixedSlotId !== slot.id) return false;
+    if ((data.unavailableSlots ?? []).some((item) => item.teacherId === selected.teacherId && item.slotId === slot.id)) return false;
+    return !result.entries.some((entry) =>
+      entry.id !== selected.id &&
+      entry.slotId === slot.id &&
+      (entry.teacherId === selected.teacherId || entry.roomId === selected.roomId)
+    );
+  };
+  const moveTargets = canMove ? data.timeSlots.filter((slot) => slot.id !== selected?.slotId && canPlaceSelected(slot)) : [];
+  const canSwapSelectedWith = (targetEntry: ScheduleEntry): boolean => {
+    if (!selected || !result || view !== 'class' || targetEntry.id === selected.id) return false;
+    if (selected.locked || targetEntry.locked) return false;
+    if (targetEntry.classId !== selected.classId) return false;
+    if (targetEntry.coursePlanId === selected.coursePlanId) return false;
+    const targetPlan = planOf(data, targetEntry);
+    if (selectedPlan?.fixedSlotId || targetPlan?.fixedSlotId) return false;
+    const unavailable = data.unavailableSlots ?? [];
+    if (unavailable.some((item) => item.teacherId === selected.teacherId && item.slotId === targetEntry.slotId)) return false;
+    if (unavailable.some((item) => item.teacherId === targetEntry.teacherId && item.slotId === selected.slotId)) return false;
+    const blocksTarget = result.entries.some((entry) =>
+      entry.id !== selected.id && entry.id !== targetEntry.id && entry.slotId === targetEntry.slotId &&
+      (entry.teacherId === selected.teacherId || entry.roomId === selected.roomId)
+    );
+    const blocksSource = result.entries.some((entry) =>
+      entry.id !== selected.id && entry.id !== targetEntry.id && entry.slotId === selected.slotId &&
+      (entry.teacherId === targetEntry.teacherId || entry.roomId === targetEntry.roomId)
+    );
+    return !blocksTarget && !blocksSource;
+  };
+  const swapTargets = selected && view === 'class' && result ? result.entries.filter(canSwapSelectedWith) : [];
+  const swapTargetIds = new Set(swapTargets.map((entry) => entry.id));
+  const moveLabel = selected ? planSubjectName(data, selectedPlan) : '';
 
   if (!result) {
     return (
       <EmptyState
         title="还没有候选课表"
-        message="先到排课任务运行一次自动排课，然后在这里检查、交换和锁定课程。"
+        message="先运行一次自动排课，候选课表会显示在这里；之后可以拖动课程、锁定位置并导出。"
         action={
-          <button className="action-button" onClick={onRun} disabled={running}>
-            {running ? '计算中…' : '去排课'} <span>↗</span>
+          <button className="tt-btn tt-btn-primary" onClick={onRun} disabled={running}>
+            {running ? '正在排课…' : '开始排课'} <span>↗</span>
           </button>
         }
       />
@@ -1471,62 +1579,177 @@ function TimetablePage({
   }
 
   return (
-    <div className="timetable-layout">
-      <section className="section-panel">
-        <div className="timetable-page-head"><div><span className="kicker">// TIMETABLE WORKSPACE</span><h2>课表预览与手动调整</h2><p>选择班级、教师或教室查看课表；在班级视图中拖动课程即可调整时间。</p></div><Chip color={result.hasFeasibleSolution ? 'success' : 'warning'} variant="flat">{result.status}</Chip></div>
-        <div className="toolbar">
-          <Tabs selectedKey={view} onSelectionChange={(key) => setView(String(key) as View)} aria-label="课表视图">
-            <Tab key="class" title="班级视图" />
-            <Tab key="teacher" title="教师视图" />
-            <Tab key="room" title="教室视图" />
-          </Tabs>
-          <Select className="business-select" label={viewLabel} selectedKeys={entityId ? [entityId] : []} onSelectionChange={(keys) => setEntityId(Array.from(keys)[0] as string)}>
-            {entities.map((item) => <SelectItem key={item.id}>{item.name}</SelectItem>)}
-          </Select>
-          <div className="toolbar-spacer" />
-          {selected ? <Button size="sm" color={selected.locked ? 'default' : 'primary'} onPress={() => onToggleLock(selected.id)}>{selected.locked ? '解锁选中' : '锁定选中'}</Button> : null}
-          <Button size="sm" variant="flat" onPress={onUndo} isDisabled={!canUndo}>撤销</Button>
-          <Button size="sm" variant="flat" onPress={onRun} isDisabled={running}>前往排课向导</Button>
-          <Button size="sm" variant="flat" onPress={onExportCsv}>导出 CSV</Button>
-          <Button size="sm" variant="flat" onPress={onExportExcel}>导出 Excel</Button>
+    <div
+      className={'timetable-layout' + (focus ? ' is-focus' : '') + (immersive ? ' is-immersive' : '') + (swapMode ? ' is-swapping' : '')}
+      role={overlay ? 'dialog' : undefined}
+      aria-modal={overlay ? true : undefined}
+      aria-label={immersive ? '沉浸式课表预览' : focus ? '全屏课表预览' : undefined}
+    >
+      <div className="tt-head">
+        <div className="tt-head-copy">
+          <span className="kicker">// TIMETABLE WORKSPACE</span>
+          <h2>课表预览与手动调整</h2>
+          <p>选择班级、教师或教室查看课表；在班级视图中拖动课程，或选中课程后点击空白时间格移动。</p>
         </div>
-        {view === 'class' ? (
-          <p className="panel-note">拖动课程卡片可以移动或交换时间；锁定后重新排课会保留该课程位置。</p>
+        <div className="tt-head-actions">
+          <span className={'tt-status ' + (result.hasFeasibleSolution ? 'is-ok' : 'is-warn')}>
+            <i />
+            {result.status} · {result.entries.length} 课时
+          </span>
+          <button
+            className="tt-btn tt-btn-quiet"
+            onClick={() => setFocus((value) => !value)}
+            aria-pressed={focus}
+            title={focus ? '退出全屏（Esc）' : '放大到全屏查看和调整课表'}
+          >
+            {focus ? '退出全屏' : '全屏预览'}
+          </button>
+          <button className="tt-btn tt-btn-quiet" onClick={() => setImmersive(true)} title="隐藏状态栏和工具栏，最大化课表区域">
+            隐藏工具栏
+          </button>
+          <button className="tt-btn tt-btn-primary" onClick={onRun} disabled={running}>
+            {running ? '正在排课…' : '重新排课'}
+          </button>
+        </div>
+      </div>
+
+      <div className="tt-command">
+        <div className="tt-view-tabs" role="tablist" aria-label="课表视图">
+          {([['class', '班级'], ['teacher', '教师'], ['room', '教室']] as [View, string][]).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={view === value}
+              className={view === value ? 'active' : ''}
+              onClick={() => setView(value)}
+            >
+              {label}视图
+            </button>
+          ))}
+        </div>
+        <label className="tt-entity">
+          <span>{viewLabel}</span>
+          <select value={entityId} onChange={(event) => setEntityId(event.target.value)}>
+            {entities.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="tt-command-spacer" />
+        <div className="tt-stats" aria-label="课表统计">
+          <span><b>{viewEntries.length}</b><em>已排</em></span>
+          <span><b>{expectedForView ?? '—'}</b><em>计划</em></span>
+          <span><b className={missingForView ? 'is-warn' : ''}>{missingForView ?? '—'}</b><em>未排</em></span>
+          <span><b className={viewConflictCount ? 'is-danger' : ''}>{viewConflictCount}</b><em>冲突</em></span>
+        </div>
+        <div className="tt-command-actions">
+          <button type="button" className="tt-btn tt-btn-quiet" onClick={onUndo} disabled={!canUndo}>
+            撤销
+          </button>
+          <button type="button" className="tt-btn tt-btn-quiet" onClick={onExportCsv}>
+            导出 CSV
+          </button>
+          <button type="button" className="tt-btn tt-btn-quiet" onClick={onExportExcel}>
+            导出 Excel
+          </button>
+          <button type="button" className="tt-btn tt-btn-quiet" onClick={onPrint}>
+            打印
+          </button>
+        </div>
+      </div>
+
+      <div className={'tt-selection' + (selected ? ' has-selection' : '')} aria-live="polite">
+        {selected ? (
+          <>
+            <div className="tt-selection-copy">
+              <span className="tt-selection-kicker">SELECTED LESSON</span>
+              <strong>{planSubjectName(data, selectedPlan)}</strong>
+              <span>
+                {selectedClass?.name ?? ''} · {selectedTeacher?.name ?? ''} · {selectedRoom?.name ?? ''} ·{' '}
+                {selectedSlot?.label ?? '未知时间'}
+              </span>
+            </div>
+            <div className="tt-selection-actions">
+              {swapMode ? <span className={'tt-move-hint' + (swapTargets.length === 0 ? ' is-muted' : '')}>{swapTargets.length > 0 ? '交换模式：点击高亮课程（' + swapTargets.length + ' 个可交换）' : '交换模式：没有可交换的课程'}</span> : null}
+              {!swapMode && canMove && moveTargets.length > 0 ? <span className="tt-move-hint">点击空白时间格移动（{moveTargets.length} 个可用）</span> : null}
+              {!swapMode && canMove && moveTargets.length === 0 ? <span className="tt-move-hint is-muted" title="教师或教室在该时段已被占用；增加时间段或教师可释放空间">没有无冲突的移动目标</span> : null}
+              {!swapMode && selected.locked ? <span className="tt-move-hint is-muted">已锁定，不可移动</span> : null}
+              {!swapMode && selectedPlan?.fixedSlotId && !selected.locked ? <span className="tt-move-hint is-muted">固定时间，不可移动</span> : null}
+              {view === 'class' && !selected.locked && !selectedPlan?.fixedSlotId ? <button className={'tt-btn' + (swapMode ? ' tt-btn-primary' : '')} onClick={() => setSwapMode((value) => !value)}>{swapMode ? '退出交换' : '交换课程'}</button> : null}
+              <button className="tt-btn tt-btn-primary" onClick={() => onToggleLock(selected.id)}>
+                {selected.locked ? '解锁课程' : '锁定课程'}
+              </button>
+              <button className="tt-btn tt-btn-quiet" onClick={onUndo} disabled={!canUndo}>
+                撤销
+              </button>
+              <button className="tt-btn tt-btn-quiet" onClick={() => setSelectedEntryId('')}>
+                取消选择
+              </button>
+            </div>
+          </>
         ) : (
-          <p className="panel-note">教师/教室视图用于检查冲突；请切换到班级视图进行拖动调整。</p>
+          <span className="tt-selection-empty">
+            点击课程查看详情；选中课程后可以在班级视图点击空白时间格移动，或使用拖动交换。
+          </span>
         )}
-        {missing.length ? (
-          <div className="inline-warning">
-            <b>还有 {missing.reduce((sum, item) => sum + item.missing, 0)} 课时未排：</b>{' '}
-            {missing.map((item) => (findClass(data, item.plan.classId)?.name ?? '') + ' ' + planSubjectName(data, item.plan)).join('、')}
-          </div>
-        ) : null}
-        <div className="timetable-wrap">
-          <table className="timetable">
+      </div>
+
+      {viewFreeSlots === 0 ? (
+        <div className="tt-warning">
+          <b>本视图已排满</b>
+          <span>没有空档可用于移动。可在基础资料增加时间段或教师，或使用交换课程。</span>
+        </div>
+      ) : null}
+      {missing.length ? (
+        <div className="tt-warning">
+          <b>还有 {totalMissing} 课时未排</b>
+          <span>{missing.map((item) => (findClass(data, item.plan.classId)?.name ?? '') + ' ' + planSubjectName(data, item.plan)).join('；')}</span>
+        </div>
+      ) : null}
+
+      <div className="tt-board">
+        <div className="tt-board-scroll" style={{ ['--tt-rows' as string]: Math.max(periods.length, 1) } as React.CSSProperties}>
+          <table className="tt-table">
             <thead>
               <tr>
-                <th className="period-head">节次</th>
+                <th className="tt-period-head">
+                  <span>节次</span>
+                  <small>PERIOD</small>
+                </th>
                 {days.map((day) => (
-                  <th key={day}>{DAYS[day] ?? '第' + day + '天'}</th>
+                  <th key={day} className="tt-day-head">
+                    <span>{DAYS[day] ?? '第' + day + '天'}</span>
+                    <small>DAY {String(day).padStart(2, '0')}</small>
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {periods.map((period) => (
                 <tr key={period}>
-                  <th className="period-head">第{period}节</th>
+                  <th className="tt-period-cell">
+                    <span>第{period}节</span>
+                    <small>P{period}</small>
+                  </th>
                   {days.map((day) => {
                     const slot = slotAt(day, period);
-                    const entries = slot ? entriesAt(slot.id) : [];
+                    const cellEntries = slot ? entriesAt(slot.id) : [];
                     const isDragOver = dragOver === slot?.id;
+                    const moveHere = Boolean(slot) && canMove && cellEntries.length === 0 && (slot ? canPlaceSelected(slot) : false);
                     return (
                       <td
                         key={day + '-' + period}
+                        data-slot-id={slot?.id ?? ''}
                         className={
-                          'slot-cell' +
-                          (entries.length ? ' filled' : ' empty') +
-                          (isDragOver ? ' drop-target' : '')
+                          'tt-cell' +
+                          (cellEntries.length ? ' is-filled' : ' is-empty') +
+                          (isDragOver ? ' is-drop' : '') +
+                          (moveHere ? ' can-move' : '')
                         }
+                        title={moveHere && selected ? '把「' + moveLabel + '」移动到这里' : undefined}
                         onDragOver={(event) => {
                           if (view !== 'class' || !slot) return;
                           event.preventDefault();
@@ -1542,50 +1765,92 @@ function TimetablePage({
                           if (entryId) onSwap(entryId, slot.id);
                         }}
                         onClick={() => {
-                          if (!entries.length) setSelectedEntryId('');
+                          if (cellEntries.length > 0) return;
+                          if (moveHere && selected && slot) onSwap(selected.id, slot.id);
+                          else if (!canMove) setSelectedEntryId('');
                         }}
                       >
-                        {entries.length ? (
-                          entries.map((entry) => {
+                        {cellEntries.length ? (
+                          cellEntries.map((entry) => {
                             const plan = planOf(data, entry);
                             const isConflict = conflicts.has(entry.id);
+                            const teacher = findTeacher(data, entry.teacherId)?.name ?? '';
+                            const room = findRoom(data, entry.roomId)?.name ?? '';
+                            const className = findClass(data, entry.classId)?.name ?? '';
                             return (
-                              <div
+                              <button
                                 key={entry.id}
+                                type="button"
+                                data-entry-id={entry.id}
                                 className={
-                                  'slot-card' +
-                                  (entry.locked ? ' locked' : '') +
-                                  (isConflict ? ' conflict' : '') +
-                                  (entry.id === selectedEntryId ? ' selected' : '')
+                                  'tt-card' +
+                                  (entry.locked ? ' is-locked' : '') +
+                                  (isConflict ? ' is-conflict' : '') +
+                                  (entry.id === selectedEntryId ? ' is-selected' : '') +
+                                  (swapMode && swapTargetIds.has(entry.id) ? ' is-swap-target' : '')
                                 }
                                 draggable={view === 'class' && !entry.locked}
+                                aria-pressed={entry.id === selectedEntryId}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (swapMode && selected && view === 'class') {
+                                    if (swapTargetIds.has(entry.id)) {
+                                      onSwap(selected.id, entry.slotId);
+                                      setSwapMode(false);
+                                    }
+                                    return;
+                                  }
+                                  setSelectedEntryId(entry.id);
+                                }}
                                 onDragStart={(event) => {
-                                  if (view !== 'class' || entry.locked) return;
+                                  if (view !== 'class' || entry.locked) {
+                                    event.preventDefault();
+                                    return;
+                                  }
+                                  event.dataTransfer.effectAllowed = 'move';
                                   event.dataTransfer.setData('text/plain', entry.id);
                                   setDragId(entry.id);
                                 }}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setSelectedEntryId(entry.id);
-                                }}
-                                title={entry.locked ? '已锁定' : '拖动调整时间'}
+                                onDragEnd={() => setDragId('')}
+                                title={
+                                  entry.locked
+                                    ? '已锁定，重新排课时保留位置'
+                                    : view === 'class'
+                                      ? '拖动课程交换时间，或选中后点击空白格移动'
+                                      : planSubjectName(data, plan)
+                                }
                               >
-                                <span className="slot-course">{planSubjectName(data, plan)}</span>
-                                <span className="slot-meta">
+                                <span className="tt-card-top">
+                                  <span className="tt-card-subject">{planSubjectName(data, plan)}</span>
+                                  {entry.locked ? <span className="tt-card-lock">锁定</span> : null}
+                                </span>
+                                <span className="tt-card-meta">
                                   {view === 'class'
-                                    ? (findTeacher(data, entry.teacherId)?.name ?? '') + ' · ' + (findRoom(data, entry.roomId)?.name ?? '')
-                                    : (findClass(data, entry.classId)?.name ?? '') + ' · ' + (findRoom(data, entry.roomId)?.name ?? '')}
+                                    ? teacher + ' · ' + room
+                                    : view === 'teacher'
+                                      ? className + ' · ' + room
+                                      : className + ' · ' + teacher}
                                 </span>
-                                <span className="slot-badges">
-                                  {entry.locked ? <em>锁定</em> : null}
-                                  {entry.source === 'MANUAL' ? <em>手工</em> : null}
-                                  {isConflict ? <em className="danger">冲突</em> : null}
-                                </span>
-                              </div>
+                                {entry.source === 'MANUAL' || isConflict ? (
+                                  <span className="tt-card-badges">
+                                    {entry.source === 'MANUAL' ? <em>手工</em> : null}
+                                    {isConflict ? <em className="is-danger">冲突</em> : null}
+                                  </span>
+                                ) : null}
+                              </button>
                             );
                           })
                         ) : (
-                          <span className="slot-empty">—</span>
+                          <span className="tt-empty">
+                            {moveHere ? (
+                              <>
+                                <b>+</b>
+                                <em>移动到这里</em>
+                              </>
+                            ) : (
+                              '·'
+                            )}
+                          </span>
                         )}
                       </td>
                     );
@@ -1595,19 +1860,24 @@ function TimetablePage({
             </tbody>
           </table>
         </div>
-        <div className="timetable-legend">
-          <span><i className="legend-dot" />普通课程</span>
-          <span><i className="legend-dot locked" />已锁定</span>
-          <span><i className="legend-dot conflict" />冲突</span>
-          <span><i className="legend-dot manual" />手工调整</span>
-          {selected ? (
-            <span className="selected-detail">
-              已选：{planSubjectName(data, planOf(data, selected))} · {findClass(data, selected.classId)?.name ?? ''} ·{' '}
-              {findTeacher(data, selected.teacherId)?.name ?? ''} · {findRoom(data, selected.roomId)?.name ?? ''}
-            </span>
-          ) : null}
+      </div>
+
+      <div className="tt-footer">
+        <div className="tt-legend">
+          <span><i className="tt-dot is-normal" />普通课程</span>
+          <span><i className="tt-dot is-locked" />已锁定</span>
+          <span><i className="tt-dot is-conflict" />冲突</span>
+          <span><i className="tt-dot is-manual" />手工调整</span>
         </div>
-      </section>
+        <span className="tt-footer-note">本视图空档 {viewFreeSlots} 个 · 拖动课程可交换位置 · 锁定后重新排课保留原时间</span>
+      </div>
+      {immersive ? (
+        <div className="tt-immersive-bar">
+          <span><b>{entityName}</b> · {viewLabel}视图 · {viewEntries.length} 课时</span>
+          <button type="button" className="tt-btn tt-btn-quiet" onClick={() => setImmersive(false)}>显示工具栏</button>
+          <button type="button" className="tt-btn tt-btn-quiet" onClick={() => { setImmersive(false); setFocus(false); }}>退出</button>
+        </div>
+      ) : null}
     </div>
   );
 }
