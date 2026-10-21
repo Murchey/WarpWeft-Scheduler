@@ -1,6 +1,52 @@
+# JavaScript dependencies and package-manager caches
 node_modules/
+.npm/
+.pnpm-store/
+
+# Frontend, Electron and installer build output
 dist/
+build/
+release/
+out/
+*.appimage
+*.dmg
+*.exe
+*.msi
+*.nsis.*
+
+# Local application data and SQLite runtime files
 data/
 *.db
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+
+# Python runtime and packaging artifacts
 __pycache__/
+*.py[cod]
 .pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+*.spec.bak
+
+# Test, coverage and diagnostic output
+coverage/
+.coverage
+*.log
+reports/
+
+# Local configuration and editor files
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+Thumbs.db
+Desktop.ini
