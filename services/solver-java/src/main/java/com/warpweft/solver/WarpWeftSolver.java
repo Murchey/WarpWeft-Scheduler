@@ -21,7 +21,7 @@ import java.util.TreeSet;
 public final class WarpWeftSolver {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String[] SCORE_KEYS = {
-        "subjectDistribution", "teacherContinuous", "teacherGaps", "teacherWorkloadBalance"
+        "subjectDistribution", "teacherContinuous", "teacherGaps", "teacherWorkloadBalance", "rules"
     };
 
     private record Slot(String id, int day, int period, String label) {}
@@ -38,6 +38,24 @@ public final class WarpWeftSolver {
     private record Task(Plan plan, int occurrence) {}
     private record Placement(Slot slot, Room room) {}
 
+    private record Rule(
+        String kind, String importance, String scopeType, String scopeId,
+        String timeType, List<Integer> days, int from, int to, JsonNode params
+    ) {
+        boolean applies(String teacherId, String subjectId, int day, int period) {
+            if ("teacher".equals(scopeType) && !scopeId.equals(teacherId)) return false;
+            if ("subject".equals(scopeType) && !scopeId.equals(subjectId)) return false;
+            if ("weekday".equals(timeType) && !days.contains(day)) return false;
+            if ("periodRange".equals(timeType) && (period < from || period > to)) return false;
+            return true;
+        }
+
+        int number(String key, int fallback) {
+            JsonNode value = params == null ? null : params.get(key);
+            return value == null || value.isNull() ? fallback : value.asInt(fallback);
+        }
+    }
+
     private static final class State {
         final Map<String, Slot> slots = new LinkedHashMap<>();
         final Map<String, Room> rooms = new LinkedHashMap<>();
@@ -48,21 +66,49 @@ public final class WarpWeftSolver {
         final Set<String> roomSlot = new HashSet<>();
         final Map<String, Integer> teacherLoad = new HashMap<>();
         final List<Entry> entries = new ArrayList<>();
+        final List<Rule> rules = new ArrayList<>();
 
-        State(Map<String, Slot> sourceSlots, Map<String, Room> sourceRooms, Map<String, ClassInfo> sourceClasses, Set<String> sourceUnavailable) {
+        State(Map<String, Slot> sourceSlots, Map<String, Room> sourceRooms, Map<String, ClassInfo> sourceClasses, Set<String> sourceUnavailable, List<Rule> sourceRules) {
             slots.putAll(sourceSlots);
             rooms.putAll(sourceRooms);
             classes.putAll(sourceClasses);
             unavailable.addAll(sourceUnavailable);
+            rules.addAll(sourceRules);
         }
 
         boolean canPlace(Plan plan, Slot slot, Room room) {
             if (unavailable.contains(plan.teacherId() + "|" + slot.id())) return false;
             if (room.capacity() < classes.get(plan.classId()).size()) return false;
             if (plan.roomType() != null && !plan.roomType().isBlank() && !plan.roomType().equals(room.type())) return false;
-            return !classSlot.contains(plan.classId() + "|" + slot.id())
+            if (!classSlot.contains(plan.classId() + "|" + slot.id())
                 && !teacherSlot.contains(plan.teacherId() + "|" + slot.id())
-                && !roomSlot.contains(room.id() + "|" + slot.id());
+                && !roomSlot.contains(room.id() + "|" + slot.id())) {
+                for (Rule rule : rules) {
+                    if (!"must".equals(rule.importance()) || !rule.applies(plan.teacherId(), plan.subjectId(), slot.day(), slot.period())) continue;
+                    if ("TEACHER_MAX_DAILY".equals(rule.kind()) && teacherDayLoad(plan.teacherId(), slot.day()) >= rule.number("maxPerDay", 1)) return false;
+                    if ("SUBJECT_MAX_PER_DAY".equals(rule.kind()) && subjectDayCount(plan.classId(), slot.day(), plan.subjectId()) >= rule.number("maxPerDay", 1)) return false;
+                    if ("TEACHER_MAX_CONSECUTIVE".equals(rule.kind())) {
+                        TreeSet<Integer> periods = teacherPeriods(plan.teacherId(), slot.day());
+                        periods.add(slot.period());
+                        int run = 1;
+                        for (int p = slot.period() - 1; periods.contains(p); p--) run++;
+                        for (int p = slot.period() + 1; periods.contains(p); p++) run++;
+                        if (run > rule.number("maxConsecutive", 1)) return false;
+                    }
+                }
+                return true;
+            }
+            return false;
+        }
+
+        TreeSet<Integer> teacherPeriods(String teacherId, int day) {
+            TreeSet<Integer> periods = new TreeSet<>();
+            for (Entry entry : entries) {
+                if (!entry.teacherId().equals(teacherId)) continue;
+                Slot slot = slots.get(entry.slotId());
+                if (slot != null && slot.day() == day) periods.add(slot.period());
+            }
+            return periods;
         }
 
         void add(Entry entry) {
@@ -206,6 +252,21 @@ public final class WarpWeftSolver {
             if (!plan.fixedSlotId().isBlank() && !data.slots.containsKey(plan.fixedSlotId())) data.violations.add("教学计划 " + plan.id() + " 引用了不存在的固定时间");
             data.plans.add(plan);
         }
+        for (JsonNode node : root.path("rules")) {
+            if (!node.path("enabled").asBoolean(true)) continue;
+            JsonNode scope = node.path("scope");
+            JsonNode time = node.path("time");
+            List<Integer> days = new ArrayList<>();
+            for (JsonNode day : time.path("days")) days.add(day.asInt());
+            data.rules.add(new Rule(
+                text(node, "kind", ""), text(node, "importance", "prefer"),
+                text(scope, "type", "all"),
+                text(scope, "teacherId", text(scope, "subjectId", "")),
+                text(time, "type", "all"), days,
+                integer(time, "from", 1), integer(time, "to", 12),
+                node.path("params")
+            ));
+        }
         for (JsonNode node : root.path("lockedEntries")) {
             final String planId = text(node, "coursePlanId", "");
             Entry entry = new Entry(
@@ -256,7 +317,7 @@ public final class WarpWeftSolver {
         System.err.println("[java] solve start: " + tasks.size() + " tasks, " + data.locked.size() + " locked");
         for (int attempt = 0; attempt < attempts && System.nanoTime() < deadline; attempt++) {
             Random random = new Random(randomSeed + attempt * 7919L);
-            State state = new State(data.slots, data.rooms, data.classes, data.unavailable);
+            State state = new State(data.slots, data.rooms, data.classes, data.unavailable, data.rules);
             List<String> attemptViolations = new ArrayList<>();
             for (Entry entry : data.locked) {
                 Plan plan = data.plans.stream().filter(p -> p.id().equals(entry.coursePlanId())).findFirst().orElse(null);
@@ -344,6 +405,7 @@ public final class WarpWeftSolver {
                     + state.teacherDayLoad(plan.teacherId(), slot.day()) * 2
                     + state.subjectDayCount(plan.classId(), slot.day(), plan.subjectId()) * 10
                     + Math.max(0, room.capacity() - state.classes.get(plan.classId()).size()) / 10
+                    + rulePlacementPenalty(state, plan, slot)
                     + random.nextInt(3);
                 if (score < bestScore) {
                     bestScore = score;
@@ -384,7 +446,111 @@ public final class WarpWeftSolver {
         }
     }
 
-    private record Score(int total, int subjectDistribution, int teacherContinuous, int teacherGaps, int teacherWorkloadBalance) {}
+    private static int rulePlacementPenalty(State state, Plan plan, Slot slot) {
+        int penalty = 0;
+        Map<Integer, Integer> minDay = new HashMap<>();
+        Map<Integer, Integer> maxDay = new HashMap<>();
+        for (Slot item : state.slots.values()) {
+            minDay.merge(item.day(), item.period(), Math::min);
+            maxDay.merge(item.day(), item.period(), Math::max);
+        }
+        for (Rule rule : state.rules) {
+            if (!rule.applies(plan.teacherId(), plan.subjectId(), slot.day(), slot.period())) continue;
+            if ("TEACHER_MAX_DAILY".equals(rule.kind()) && state.teacherDayLoad(plan.teacherId(), slot.day()) >= rule.number("maxPerDay", 1)) penalty += 60;
+            if ("SUBJECT_MAX_PER_DAY".equals(rule.kind()) && state.subjectDayCount(plan.classId(), slot.day(), plan.subjectId()) >= rule.number("maxPerDay", 1)) penalty += 60;
+            if ("SUBJECT_SPREAD".equals(rule.kind()) && state.subjectDayCount(plan.classId(), slot.day(), plan.subjectId()) >= rule.number("maxPerDay", 1)) penalty += 40;
+            if ("SUBJECT_TIME_PREFERENCE".equals(rule.kind())) {
+                int mid = (minDay.getOrDefault(slot.day(), slot.period()) + maxDay.getOrDefault(slot.day(), slot.period())) / 2;
+                boolean morning = slot.period() <= mid;
+                if (("morning".equals(rule.params().path("preference").asText()) && !morning)
+                    || ("afternoon".equals(rule.params().path("preference").asText()) && morning)) penalty += 4;
+            }
+            if ("SUBJECT_AVOID_FIRST_LAST".equals(rule.kind())) {
+                boolean first = slot.period() == minDay.getOrDefault(slot.day(), slot.period());
+                boolean last = slot.period() == maxDay.getOrDefault(slot.day(), slot.period());
+                if (("first".equals(rule.params().path("avoid").asText()) && first)
+                    || ("last".equals(rule.params().path("avoid").asText()) && last)) penalty += 4;
+            }
+            if ("TEACHER_MAX_CONSECUTIVE".equals(rule.kind())) {
+                TreeSet<Integer> periods = state.teacherPeriods(plan.teacherId(), slot.day());
+                int run = 1;
+                for (int p = slot.period() - 1; periods.contains(p); p--) run++;
+                for (int p = slot.period() + 1; periods.contains(p); p++) run++;
+                if (run > rule.number("maxConsecutive", 1)) penalty += 20;
+            }
+        }
+        return penalty;
+    }
+
+    private static int rulePenalty(State state) {
+        int penalty = 0;
+        Map<Integer, Integer> minDay = new HashMap<>();
+        Map<Integer, Integer> maxDay = new HashMap<>();
+        for (Slot slot : state.slots.values()) {
+            minDay.merge(slot.day(), slot.period(), Math::min);
+            maxDay.merge(slot.day(), slot.period(), Math::max);
+        }
+        for (Rule rule : state.rules) {
+            if ("TEACHER_MAX_DAILY".equals(rule.kind())) {
+                Map<String, Integer> counts = new HashMap<>();
+                for (Entry entry : state.entries) {
+                    Slot slot = state.slots.get(entry.slotId());
+                    if (slot == null || !rule.applies(entry.teacherId(), entry.subjectId(), slot.day(), slot.period())) continue;
+                    counts.merge(entry.teacherId() + "|" + slot.day(), 1, Integer::sum);
+                }
+                int max = rule.number("maxPerDay", 1);
+                for (int count : counts.values()) if (count > max) penalty += (count - max) * 3;
+            }
+            if ("SUBJECT_MAX_PER_DAY".equals(rule.kind()) || "SUBJECT_SPREAD".equals(rule.kind())) {
+                Map<String, Integer> counts = new HashMap<>();
+                for (Entry entry : state.entries) {
+                    Slot slot = state.slots.get(entry.slotId());
+                    if (slot == null || !rule.applies(entry.teacherId(), entry.subjectId(), slot.day(), slot.period())) continue;
+                    counts.merge(entry.classId() + "|" + slot.day() + "|" + entry.subjectId(), 1, Integer::sum);
+                }
+                int max = rule.number("maxPerDay", 1);
+                for (int count : counts.values()) if (count > max) penalty += (count - max) * 3;
+            }
+            if ("SUBJECT_TIME_PREFERENCE".equals(rule.kind()) || "SUBJECT_AVOID_FIRST_LAST".equals(rule.kind())) {
+                for (Entry entry : state.entries) {
+                    Slot slot = state.slots.get(entry.slotId());
+                    if (slot == null || !rule.applies(entry.teacherId(), entry.subjectId(), slot.day(), slot.period())) continue;
+                    int mid = (minDay.getOrDefault(slot.day(), slot.period()) + maxDay.getOrDefault(slot.day(), slot.period())) / 2;
+                    boolean morning = slot.period() <= mid;
+                    if ("SUBJECT_TIME_PREFERENCE".equals(rule.kind())) {
+                        String preference = rule.params().path("preference").asText();
+                        if (("morning".equals(preference) && !morning) || ("afternoon".equals(preference) && morning)) penalty += 3;
+                    } else {
+                        boolean first = slot.period() == minDay.getOrDefault(slot.day(), slot.period());
+                        boolean last = slot.period() == maxDay.getOrDefault(slot.day(), slot.period());
+                        String avoid = rule.params().path("avoid").asText();
+                        if (("first".equals(avoid) && first) || ("last".equals(avoid) && last)) penalty += 3;
+                    }
+                }
+            }
+            if ("TEACHER_MAX_CONSECUTIVE".equals(rule.kind())) {
+                Map<String, TreeSet<Integer>> periods = new HashMap<>();
+                for (Entry entry : state.entries) {
+                    Slot slot = state.slots.get(entry.slotId());
+                    if (slot == null || !rule.applies(entry.teacherId(), entry.subjectId(), slot.day(), slot.period())) continue;
+                    periods.computeIfAbsent(entry.teacherId() + "|" + slot.day(), key -> new TreeSet<>()).add(slot.period());
+                }
+                int max = rule.number("maxConsecutive", 1);
+                for (TreeSet<Integer> set : periods.values()) {
+                    int run = 0;
+                    Integer previous = null;
+                    for (Integer period : set) {
+                        run = previous != null && period == previous + 1 ? run + 1 : 1;
+                        if (run > max) penalty += 3;
+                        previous = period;
+                    }
+                }
+            }
+        }
+        return penalty;
+    }
+
+    private record Score(int total, int subjectDistribution, int teacherContinuous, int teacherGaps, int teacherWorkloadBalance, int rulePenalty) {}
 
     private static Score softScore(State state) {
         int subject = 0;
@@ -410,8 +576,9 @@ public final class WarpWeftSolver {
         }
         double average = teacherLoads.values().stream().mapToInt(Integer::intValue).average().orElse(0);
         int balance = (int) Math.round(teacherLoads.values().stream().mapToDouble(load -> Math.abs(load - average)).average().orElse(0) * 2);
-        int total = subject + gaps + balance;
-        return new Score(Math.max(0, 100 - total), subject, 0, gaps, balance);
+        int rulePenalty = rulePenalty(state);
+        int total = subject + gaps + balance + rulePenalty;
+        return new Score(Math.max(0, 100 - total), subject, 0, gaps, balance, rulePenalty);
     }
 
     private static ObjectNode success(String protocolVersion, State state, long started) {
@@ -423,6 +590,7 @@ public final class WarpWeftSolver {
         breakdown.put("teacherContinuous", score.teacherContinuous());
         breakdown.put("teacherGaps", score.teacherGaps());
         breakdown.put("teacherWorkloadBalance", score.teacherWorkloadBalance());
+        breakdown.put("rules", score.rulePenalty());
         result.put("explanation", "Java 21 求解器已生成可行课表");
         result.put("elapsedMs", (System.nanoTime() - started) / 1_000_000);
         result.put("hasFeasibleSolution", true);
@@ -437,6 +605,7 @@ public final class WarpWeftSolver {
         final Set<String> unavailable = new HashSet<>();
         final List<Plan> plans = new ArrayList<>();
         final List<Entry> locked = new ArrayList<>();
+        final List<Rule> rules = new ArrayList<>();
         final List<String> violations = new ArrayList<>();
 
         SolverData(String protocolVersion) {

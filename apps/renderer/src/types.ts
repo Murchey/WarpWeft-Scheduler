@@ -81,6 +81,44 @@ export interface SolverOutput {
   hasFeasibleSolution: boolean;
 }
 
+
+export type RuleImportance = 'must' | 'prefer' | 'avoid';
+
+export type RuleKind =
+  | 'TEACHER_MAX_DAILY'
+  | 'TEACHER_MAX_CONSECUTIVE'
+  | 'TEACHER_FREE_HALF_DAY'
+  | 'SUBJECT_MAX_PER_DAY'
+  | 'SUBJECT_TIME_PREFERENCE'
+  | 'SUBJECT_AVOID_FIRST_LAST'
+  | 'SUBJECT_SPREAD'
+  | 'DOUBLE_PERIOD';
+
+export type RuleScope =
+  | { type: 'all' }
+  | { type: 'grade'; grade: string }
+  | { type: 'class'; classId: string }
+  | { type: 'teacher'; teacherId: string }
+  | { type: 'subject'; subjectId: string }
+  | { type: 'room'; roomId: string };
+
+export type RuleTime =
+  | { type: 'all' }
+  | { type: 'weekday'; days: number[] }
+  | { type: 'periodRange'; days?: number[]; from: number; to: number };
+
+export interface RuleInstance {
+  id: string;
+  kind: RuleKind;
+  scope: RuleScope;
+  time: RuleTime;
+  importance: RuleImportance;
+  params: Record<string, string | number>;
+  enabled: boolean;
+  note?: string;
+  createdAt: string;
+  source: 'preset' | 'manual' | 'import' | 'migration';
+}
 export interface SolverInput {
   protocolVersion: string;
   dataSnapshotVersion: string;
@@ -92,6 +130,7 @@ export interface SolverInput {
   unavailableSlots: { teacherId: string; slotId: string }[];
   lockedEntries: ScheduleEntry[];
   hardConstraints: string[];
+  rules?: RuleInstance[];
   softConstraints: {
     kind:
       | 'SUBJECT_DISTRIBUTION'
@@ -113,6 +152,7 @@ export interface SchoolData {
   timeSlots: TimeSlot[];
   coursePlans: CoursePlan[];
   unavailableSlots?: { teacherId: string; slotId: string }[];
+  rules?: RuleInstance[];
   softConstraints?: { kind: SolverInput['softConstraints'][number]['kind']; weight: number }[];
   publishedVersions?: { id: string; createdAt: string; result: SolverOutput; note?: string }[];
   auditLog?: { id: string; at: string; action: string; detail: string }[];

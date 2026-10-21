@@ -4,6 +4,8 @@ import { HeroUIProvider, Button, Card, CardBody, Chip, Progress, Select, SelectI
 import { validateInput } from '../../../packages/validation/src';
 import { buildImportTemplate, exportCsv, exportWorkbook, readWorkbook } from '../../../packages/import-export/src';
 import { fetchServerJobs, fetchServerLogs, fetchServerStats, loadData, saveData, solveSchedule } from './api';
+import { RulesPage } from './RulesPage';
+import { activeRules, unscheduledHints } from './rules';
 import type { ServerJob, ServerLog, ServerStats } from './api';
 import type {
   ClassRoom,
@@ -20,12 +22,11 @@ import type {
 } from './types';
 import './style.css';
 
-const TABS = ['工作台', '基础资料', '教学计划', '排课任务', '课表预览', '报表发布', '服务端', '设置'] as const;
+const TABS = ['工作台', '排课准备', '排课任务', '课表预览', '报表发布', '服务端', '设置'] as const;
 type Tab = (typeof TABS)[number];
 const EN: Record<Tab, string> = {
   工作台: 'OVERVIEW',
-  基础资料: 'RESOURCES',
-  教学计划: 'COURSE PLANS',
+  排课准备: 'PREPARE',
   排课任务: 'SCHEDULE RUNS',
   课表预览: 'TIMETABLE PREVIEW',
   报表发布: 'RELEASE',
@@ -124,6 +125,7 @@ function toSolverInput(
     unavailableSlots: data.unavailableSlots ?? [],
     lockedEntries: locked,
     hardConstraints: ['NO_CLASS_CONFLICT', 'NO_TEACHER_CONFLICT', 'ROOM_CAPACITY'],
+    rules: data.rules ?? [],
     softConstraints: data.softConstraints ?? [
       { kind: 'SUBJECT_DISTRIBUTION', weight: 3 },
       { kind: 'TEACHER_CONTINUOUS', weight: 2 },
@@ -436,10 +438,20 @@ function EmptyDataScreen({ message, onRetry, onSettings }: { message: string; on
 
 function App() {
   const params = new URLSearchParams(window.location.search);
-  const initialTab = params.get('tab');
+  const requestedTab = params.get('tab');
+  const normalizedTab = requestedTab === '基础资料' || requestedTab === '教学计划' ? '排课准备' : requestedTab;
   const initialTheme = params.get('theme');
   const [tab, setTab] = useState<Tab>(
-    initialTab && (TABS as readonly string[]).includes(initialTab) ? (initialTab as Tab) : '工作台',
+    normalizedTab && (TABS as readonly string[]).includes(normalizedTab) ? (normalizedTab as Tab) : '工作台',
+  );
+  const validSections: PrepareSection[] = ['import', 'classes', 'teachers', 'subjects', 'rooms', 'timeSlots', 'plans', 'availability', 'rules'];
+  const requestedSection = params.get('section') as PrepareSection | null;
+  const [prepareSection, setPrepareSection] = useState<PrepareSection>(
+    requestedSection && validSections.includes(requestedSection)
+      ? requestedSection
+      : requestedTab === '教学计划'
+        ? 'plans'
+        : 'classes',
   );
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (initialTheme === 'dark' || initialTheme === 'light') return initialTheme;
@@ -619,11 +631,12 @@ function App() {
       }
       setSelectedEntryId('');
       setHistory([]);
-      setTab('课表预览');
       if (output.hasFeasibleSolution) {
+        setTab('课表预览');
         setProgress({ phase: 'completed', message: '排课完成：共 ' + output.entries.length + ' 条课表', startedAt: Date.now() });
         setNotice('排课完成：共 ' + output.entries.length + ' 条课表');
       } else {
+        setTab('排课任务');
         setProgress({ phase: 'failed', message: output.explanation || '未找到可行课表', startedAt: Date.now() });
         setError(output.explanation || '未找到可行课表');
       }
@@ -878,12 +891,23 @@ function App() {
             issues={issues}
             running={running}
             progress={progress}
-            onPrepare={() => setTab('排课任务')}
+            onPrepare={() => { setPrepareSection('plans'); setTab('排课准备'); }}
+            onRun={() => setTab('排课任务')}
             onTimetable={() => setTab('课表预览')}
           />
         ) : null}
-        {tab === '基础资料' ? <ResourcesPage data={data} commit={commit} setError={setError} setNotice={setNotice} /> : null}
-        {tab === '教学计划' ? <PlansPage data={data} commit={commit} setError={setError} /> : null}
+        {tab === '排课准备' ? (
+          <PreparePage
+            data={data}
+            commit={commit}
+            issues={issues}
+            section={prepareSection}
+            setSection={setPrepareSection}
+            setError={setError}
+            setNotice={setNotice}
+            onGoRun={() => setTab('排课任务')}
+          />
+        ) : null}
         {tab === '排课任务' ? (
           <RunsPage
             data={data}
@@ -949,6 +973,7 @@ function Dashboard({
   issues,
   running,
   onPrepare,
+  onRun,
   progress,
   onTimetable,
 }: {
@@ -958,6 +983,7 @@ function Dashboard({
   running: boolean;
   progress: RunProgress;
   onPrepare: () => void;
+  onRun: () => void;
   onTimetable: () => void;
 }) {
   const periods = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
@@ -1031,8 +1057,8 @@ function Dashboard({
             <b>{data.coursePlans.length}</b>
           </div>
           <div className="hero-actions">
-            <button className="action-button" onClick={onPrepare} disabled={running}>
-              {running ? '计算中…' : '进入排课向导'} <span>→</span>
+            <button className="action-button" onClick={onRun} disabled={running}>
+              {running ? '计算中…' : '进入排课任务'} <span>→</span>
             </button>
             {result ? (
               <button className="ghost-button" onClick={onTimetable}>
@@ -1221,14 +1247,19 @@ function ResourcesPage({
   commit,
   setError,
   setNotice,
+  kind = 'import',
 }: {
   data: SchoolData;
   commit: Commit;
   setError: (value: string) => void;
   setNotice: (value: string) => void;
+  kind?: 'import' | 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots';
 }) {
   const days = DAYS.slice(1).map((label, index) => ({ value: String(index + 1), label }));
   const [replaceOnImport, setReplaceOnImport] = useState(false);
+  const [batchDays, setBatchDays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [batchFrom, setBatchFrom] = useState(1);
+  const [batchTo, setBatchTo] = useState(2);
   const update = (
     collection: 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots',
     id: string,
@@ -1279,6 +1310,29 @@ function ResourcesPage({
     commit({ ...data, [collection]: [...(data[collection] as unknown as Array<Record<string, unknown>>), row] } as unknown as SchoolData, {
       invalidate: true,
     });
+  };
+
+  const addBatchSlots = () => {
+    const from = Math.max(1, Math.floor(Number(batchFrom) || 1));
+    const to = Math.max(from, Math.floor(Number(batchTo) || from));
+    if (batchDays.length === 0) {
+      setError('请至少选择一个星期');
+      return;
+    }
+    const existing = new Set(data.timeSlots.map((slot) => slot.day + '|' + slot.period));
+    const additions: TimeSlot[] = [];
+    for (const day of [...batchDays].sort((a, b) => a - b)) {
+      for (let period = from; period <= to; period += 1) {
+        if (existing.has(day + '|' + period)) continue;
+        additions.push({ id: uid('slot'), day, period, label: DAYS[day] + ' 第' + period + '节' });
+      }
+    }
+    if (additions.length === 0) {
+      setNotice('这些时间段已经存在，没有新增。');
+      return;
+    }
+    commit({ ...data, timeSlots: [...data.timeSlots, ...additions] }, { invalidate: true });
+    setNotice('已批量新增 ' + additions.length + ' 个时间段。');
   };
 
   const importWorkbookFile = async (file: File) => {
@@ -1345,6 +1399,8 @@ function ResourcesPage({
         if (schoolName) next.school = { ...next.school, name: schoolName };
       }
       if (replaceOnImport) {
+        next.rules = [];
+        next.unavailableSlots = [];
         next.classes = [];
         next.teachers = [];
         next.subjects = [];
@@ -1543,104 +1599,166 @@ function ResourcesPage({
     }
   };
 
-  return (
-    <div className="resource-grid">
-      <section className="section-panel resource-panel import-panel">
-        <div className="panel-head"><SectionHeading english="IMPORT / VALIDATE" title="Excel 导入" /></div>
-        <p className="panel-note">支持学校、班级、教师、学科、教室、时间段和教学计划。建议先下载模板；基础资料按名称复用，教学计划会整体替换，导入后自动清空候选课表。</p>
-        <div className="import-actions">
-          <label className="file-button file-button-primary">
-            <span>选择 Excel 文件</span>
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) void importWorkbookFile(file);
-                event.currentTarget.value = '';
-              }}
-            />
+  if (kind === 'import') {
+    return (
+      <div className="resource-single">
+        <section className="section-panel resource-panel import-panel">
+          <div className="panel-head"><SectionHeading english="IMPORT / VALIDATE" title="Excel 导入" /></div>
+          <p className="panel-note">支持学校、班级、教师、学科、教室、时间段和教学计划。建议先下载模板；基础资料按名称复用，教学计划会整体替换，导入后自动清空候选课表。</p>
+          <div className="import-actions">
+            <label className="file-button file-button-primary">
+              <span>选择 Excel 文件</span>
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void importWorkbookFile(file);
+                  event.currentTarget.value = '';
+                }}
+              />
+            </label>
+            <button type="button" className="file-button" onClick={() => void downloadTemplate()}>
+              下载模板
+            </button>
+          </div>
+          <label className="import-replace">
+            <input type="checkbox" checked={replaceOnImport} onChange={(event) => setReplaceOnImport(event.target.checked)} />
+            <span>导入前清空当前工作区</span>
           </label>
-          <button type="button" className="file-button" onClick={() => void downloadTemplate()}>
-            下载模板
-          </button>
-        </div>
-        <label className="import-replace">
-          <input type="checkbox" checked={replaceOnImport} onChange={(event) => setReplaceOnImport(event.target.checked)} />
-          <span>导入前清空当前工作区</span>
-        </label>
-        <p className="panel-note">仅支持 Excel（.xlsx/.xls）；模板包含“说明、学校、班级、教师、学科、教室、时间段、教学计划”工作表。测试完整数据集时建议勾选上方清空选项。</p>
-      </section>
-      <EditableTable<ClassRoom>
-        title="班级"
-        english="CLASS REGISTER"
-        rows={data.classes}
-        columns={[
-          { key: 'name', label: '班级名称', width: '38%' },
-          { key: 'grade', label: '年级', width: '30%' },
-          { key: 'size', label: '人数', type: 'number', width: '22%' },
-        ]}
-        onChange={(id, key, value) => update('classes', id, key, value)}
-        onAdd={() => add('classes')}
-        onRemove={(id) => remove('classes', id)}
-        addLabel="新增班级"
-        note="班级人数会影响教室容量校验；被教学计划引用的班级不能删除。"
-      />
-      <EditableTable<Teacher>
-        title="教师"
-        english="TEACHER REGISTER"
-        rows={data.teachers}
-        columns={[{ key: 'name', label: '教师姓名', width: '78%' }]}
-        onChange={(id, key, value) => update('teachers', id, key, value)}
-        onAdd={() => add('teachers')}
-        onRemove={(id) => remove('teachers', id)}
-        addLabel="新增教师"
-        note="教师不能在同一时间上两门课；被教学计划引用的教师不能删除。"
-      />
-      <EditableTable<Subject>
-        title="学科"
-        english="SUBJECT REGISTER"
-        rows={data.subjects}
-        columns={[{ key: 'name', label: '学科名称', width: '78%' }]}
-        onChange={(id, key, value) => update('subjects', id, key, value)}
-        onAdd={() => add('subjects')}
-        onRemove={(id) => remove('subjects', id)}
-        addLabel="新增学科"
-        note="教学计划通过学科引用课程名称。"
-      />
-      <EditableTable<Room>
-        title="教室"
-        english="ROOM REGISTER"
-        rows={data.rooms}
-        columns={[
-          { key: 'name', label: '教室名称', width: '38%' },
-          { key: 'capacity', label: '容量', type: 'number', width: '22%' },
-          { key: 'type', label: '类型', width: '34%' },
-        ]}
-        onChange={(id, key, value) => update('rooms', id, key, value)}
-        onAdd={() => add('rooms')}
-        onRemove={(id) => remove('rooms', id)}
-        addLabel="新增教室"
-        note="教室类型会与教学计划的教室类型要求匹配；容量必须大于等于班级人数。"
-      />
-      <EditableTable<TimeSlot>
-        title="时间段"
-        english="TIME SLOTS"
-        rows={data.timeSlots}
-        columns={[
-          { key: 'day', label: '星期', type: 'select', options: days, width: '28%' },
-          { key: 'period', label: '节次', type: 'number', width: '18%' },
-          { key: 'label', label: '显示名称', width: '44%' },
-        ]}
-        onChange={(id, key, value) => update('timeSlots', id, key, value)}
-        onAdd={() => add('timeSlots')}
-        onRemove={(id) => remove('timeSlots', id)}
-        addLabel="新增时间段"
-        note="修改星期或节次会清空候选课表；请先确认课表结构。"
-      />
-      <AvailabilityEditor data={data} commit={commit} />
-    </div>
-  );
+          <p className="panel-note">仅支持 Excel（.xlsx/.xls）；模板包含“说明、学校、班级、教师、学科、教室、时间段、教学计划”工作表。测试完整数据集时建议勾选上方清空选项。</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (kind === 'classes') {
+    return (
+      <div className="resource-single">
+        <EditableTable<ClassRoom>
+          title="班级"
+          english="CLASS REGISTER"
+          rows={data.classes}
+          columns={[
+            { key: 'name', label: '班级名称', width: '38%' },
+            { key: 'grade', label: '年级', width: '30%' },
+            { key: 'size', label: '人数', type: 'number', width: '22%' },
+          ]}
+          onChange={(id, key, value) => update('classes', id, key, value)}
+          onAdd={() => add('classes')}
+          onRemove={(id) => remove('classes', id)}
+          addLabel="新增班级"
+          note="班级人数会影响教室容量校验；被教学计划引用的班级不能删除。"
+        />
+      </div>
+    );
+  }
+
+  if (kind === 'teachers') {
+    return (
+      <div className="resource-single">
+        <EditableTable<Teacher>
+          title="教师"
+          english="TEACHER REGISTER"
+          rows={data.teachers}
+          columns={[{ key: 'name', label: '教师姓名', width: '78%' }]}
+          onChange={(id, key, value) => update('teachers', id, key, value)}
+          onAdd={() => add('teachers')}
+          onRemove={(id) => remove('teachers', id)}
+          addLabel="新增教师"
+          note="教师不能在同一时间上两门课；被教学计划引用的教师不能删除。"
+        />
+      </div>
+    );
+  }
+
+  if (kind === 'subjects') {
+    return (
+      <div className="resource-single">
+        <EditableTable<Subject>
+          title="学科"
+          english="SUBJECT REGISTER"
+          rows={data.subjects}
+          columns={[{ key: 'name', label: '学科名称', width: '78%' }]}
+          onChange={(id, key, value) => update('subjects', id, key, value)}
+          onAdd={() => add('subjects')}
+          onRemove={(id) => remove('subjects', id)}
+          addLabel="新增学科"
+          note="教学计划通过学科引用课程名称。"
+        />
+      </div>
+    );
+  }
+
+  if (kind === 'rooms') {
+    return (
+      <div className="resource-single">
+        <EditableTable<Room>
+          title="教室"
+          english="ROOM REGISTER"
+          rows={data.rooms}
+          columns={[
+            { key: 'name', label: '教室名称', width: '38%' },
+            { key: 'capacity', label: '容量', type: 'number', width: '22%' },
+            { key: 'type', label: '类型', width: '34%' },
+          ]}
+          onChange={(id, key, value) => update('rooms', id, key, value)}
+          onAdd={() => add('rooms')}
+          onRemove={(id) => remove('rooms', id)}
+          addLabel="新增教室"
+          note="教室类型会与教学计划的教室类型要求匹配；容量必须大于等于班级人数。"
+        />
+      </div>
+    );
+  }
+
+  if (kind === 'timeSlots') {
+    return (
+      <div className="resource-single resource-stack">
+        <section className="section-panel slot-batch">
+          <div className="panel-head"><SectionHeading english="BATCH TIME SLOTS" title="批量生成时间段" /><span className="status-tag muted">多选</span></div>
+          <p className="panel-note">勾选星期并设置节次范围，一次生成整周时间段；已存在的节次会自动跳过。</p>
+          <div className="slot-batch-form">
+            <div className="slot-day-picker">
+              {DAYS.slice(1).map((label, index) => {
+                const day = index + 1;
+                return (
+                  <label key={day} className={batchDays.includes(day) ? 'slot-day active' : 'slot-day'}>
+                    <input
+                      type="checkbox"
+                      checked={batchDays.includes(day)}
+                      onChange={() => setBatchDays((current) => current.includes(day) ? current.filter((item) => item !== day) : [...current, day])}
+                    />
+                    {label}
+                  </label>
+                );
+              })}
+            </div>
+            <label className="slot-range">起始节次<input type="number" min={1} max={12} value={batchFrom} onChange={(event) => setBatchFrom(Number(event.target.value))} /></label>
+            <label className="slot-range">结束节次<input type="number" min={1} max={12} value={batchTo} onChange={(event) => setBatchTo(Number(event.target.value))} /></label>
+            <button type="button" className="mini-button" onClick={addBatchSlots}>生成时间段</button>
+          </div>
+        </section>
+        <EditableTable<TimeSlot>
+          title="时间段"
+          english="TIME SLOTS"
+          rows={data.timeSlots}
+          columns={[
+            { key: 'day', label: '星期', type: 'select', options: days, width: '28%' },
+            { key: 'period', label: '节次', type: 'number', width: '18%' },
+            { key: 'label', label: '显示名称', width: '44%' },
+          ]}
+          onChange={(id, key, value) => update('timeSlots', id, key, value)}
+          onAdd={() => add('timeSlots')}
+          onRemove={(id) => remove('timeSlots', id)}
+          addLabel="新增时间段"
+          note="修改星期或节次会清空候选课表；请先确认课表结构。"
+        />
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function AvailabilityEditor({ data, commit }: { data: SchoolData; commit: Commit }) {
@@ -1726,6 +1844,237 @@ function AvailabilityEditor({ data, commit }: { data: SchoolData; commit: Commit
   );
 }
 
+type PrepareSection = 'import' | 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots' | 'plans' | 'availability' | 'rules';
+
+function PreparePage({
+  data,
+  commit,
+  issues,
+  section,
+  setSection,
+  setError,
+  setNotice,
+  onGoRun,
+}: {
+  data: SchoolData;
+  commit: Commit;
+  issues: string[];
+  section: PrepareSection;
+  setSection: (value: PrepareSection) => void;
+  setError: (value: string) => void;
+  setNotice: (value: string) => void;
+  onGoRun: () => void;
+}) {
+  const [importOpen, setImportOpen] = useState(false);
+  const unavailableCount = data.teachers.filter((teacher) => (data.unavailableSlots ?? []).some((item) => item.teacherId === teacher.id)).length;
+  const items: { id: PrepareSection; label: string; english: string; count: string }[] = [
+    { id: 'import', label: '数据导入', english: 'IMPORT', count: 'Excel' },
+    { id: 'classes', label: '班级', english: 'CLASSES', count: String(data.classes.length) },
+    { id: 'teachers', label: '教师', english: 'TEACHERS', count: String(data.teachers.length) },
+    { id: 'subjects', label: '学科', english: 'SUBJECTS', count: String(data.subjects.length) },
+    { id: 'rooms', label: '教室', english: 'ROOMS', count: String(data.rooms.length) },
+    { id: 'timeSlots', label: '时间段', english: 'TIME SLOTS', count: String(data.timeSlots.length) },
+    { id: 'plans', label: '教学计划', english: 'COURSE PLANS', count: String(data.coursePlans.length) },
+    { id: 'availability', label: '教师时间', english: 'AVAILABILITY', count: unavailableCount > 0 ? unavailableCount + ' 人' : '未设置' },
+    { id: 'rules', label: '排课规则', english: 'RULES', count: (data.rules ?? []).length > 0 ? (data.rules ?? []).length + ' 条' : '系统保证' },
+  ];
+  const selectSection = (next: PrepareSection) => {
+    setSection(next);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', '排课准备');
+    url.searchParams.set('section', next);
+    window.history.replaceState(null, '', url);
+  };
+  const resourceKinds = ['import', 'classes', 'teachers', 'subjects', 'rooms', 'timeSlots'] as const;
+  const isResource = resourceKinds.includes(section as (typeof resourceKinds)[number]);
+  return (
+    <div className="prepare-layout">
+      <aside className="prepare-nav" aria-label="排课准备子导航">
+        <div className="prepare-nav-head">
+          <span className="kicker">// PREPARE</span>
+          <strong>数据与规则</strong>
+          <small>所有排课前的资料集中在这里，不再来回切换页面。</small>
+        </div>
+        <div className="prepare-nav-list">
+          {items.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={'prepare-nav-item' + (section === item.id ? ' active' : '')}
+              onClick={() => item.id === 'import' ? setImportOpen(true) : selectSection(item.id)}
+              aria-current={section === item.id ? 'page' : undefined}
+            >
+              <span><b>{item.label}</b><em>{item.english}</em></span>
+              <small>{item.count}</small>
+            </button>
+          ))}
+        </div>
+        <div className={issues.length > 0 ? 'prepare-nav-check has-issues' : 'prepare-nav-check'}>
+          <span>{issues.length > 0 ? '还有 ' + issues.length + ' 项待处理' : '数据检查通过'}</span>
+          <small>{issues[0] ?? '可以进入排课任务'}</small>
+        </div>
+      </aside>
+      <div className="prepare-content">
+        <div className="prepare-head">
+          <div>
+            <span className="kicker">// PREPARE WORKSPACE</span>
+            <h2>排课准备</h2>
+            <p>导入、基础资料、教学计划、教师时间和规则都在同一个工作区；左侧切换不会丢失数据。</p>
+          </div>
+          <button type="button" className="action-button" onClick={() => setImportOpen(true)}>导入 Excel <span>↗</span></button>
+        </div>
+        {section === 'plans' ? (
+          <PlansPage data={data} commit={commit} setError={setError} />
+        ) : section === 'availability' ? (
+          <AvailabilityEditor data={data} commit={commit} />
+        ) : section === 'rules' ? (
+          <RulesPage data={data} commit={commit} setError={setError} />
+        ) : isResource ? (
+          <ResourcesPage data={data} commit={commit} setError={setError} setNotice={setNotice} kind={section as (typeof resourceKinds)[number]} />
+        ) : null}
+        <div className={issues.length > 0 ? 'prepare-readiness has-issues' : 'prepare-readiness'}>
+          <div><span>数据检查</span><strong>{issues.length > 0 ? issues.length + ' 项待处理' : '通过'}</strong><small>{issues[0] ?? '基础资料和教学计划已就绪'}</small></div>
+          <button type="button" className="action-button" onClick={onGoRun}>去排课任务 <span>→</span></button>
+        </div>
+      </div>
+      {importOpen ? (
+        <div className="import-overlay" role="dialog" aria-modal="true">
+          <div className="import-drawer">
+            <div className="import-drawer-head"><div><span className="kicker">// IMPORT</span><h2>导入 Excel</h2></div><button type="button" className="banner-close" onClick={() => setImportOpen(false)} aria-label="关闭导入">×</button></div>
+            <ResourcesPage data={data} commit={commit} setError={setError} setNotice={setNotice} kind="import" />
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PlanComposer({
+  data,
+  commit,
+  setError,
+  onClose,
+}: {
+  data: SchoolData;
+  commit: Commit;
+  setError: (value: string) => void;
+  onClose: () => void;
+}) {
+  const roomTypes = Array.from(new Set(data.rooms.map((room) => room.type).filter(Boolean)));
+  const [classIds, setClassIds] = useState<string[]>(data.classes[0] ? [data.classes[0].id] : []);
+  const [subjectId, setSubjectId] = useState(data.subjects[0]?.id ?? '');
+  const [teacherId, setTeacherId] = useState(data.teachers[0]?.id ?? '');
+  const [customSubject, setCustomSubject] = useState('');
+  const [customTeacher, setCustomTeacher] = useState('');
+  const [weeklyPeriods, setWeeklyPeriods] = useState(1);
+  const [roomType, setRoomType] = useState(data.rooms[0]?.type ?? '');
+  const [fixedSlotId, setFixedSlotId] = useState('');
+  const toggleClass = (id: string) => {
+    setClassIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  };
+  const submit = () => {
+    if (classIds.length === 0) {
+      setError('请至少选择一个班级');
+      return;
+    }
+    if (!Number.isFinite(weeklyPeriods) || weeklyPeriods < 1) {
+      setError('周课时必须是大于 0 的整数');
+      return;
+    }
+    let nextSubjects = data.subjects;
+    let nextTeachers = data.teachers;
+    let nextSubjectId = subjectId;
+    let nextTeacherId = teacherId;
+    const subjectName = customSubject.trim();
+    const teacherName = customTeacher.trim();
+    if (subjectName) {
+      const existing = data.subjects.find((item) => item.name.trim() === subjectName);
+      if (existing) {
+        nextSubjectId = existing.id;
+      } else {
+        nextSubjectId = uid('subject');
+        nextSubjects = [...data.subjects, { id: nextSubjectId, name: subjectName }];
+      }
+    }
+    if (teacherName) {
+      const existing = data.teachers.find((item) => item.name.trim() === teacherName);
+      if (existing) {
+        nextTeacherId = existing.id;
+      } else {
+        nextTeacherId = uid('teacher');
+        nextTeachers = [...data.teachers, { id: nextTeacherId, name: teacherName }];
+      }
+    }
+    if (!nextSubjectId || !nextSubjects.some((item) => item.id === nextSubjectId)) {
+      setError('请选择学科，或填写一个新学科');
+      return;
+    }
+    if (!nextTeacherId || !nextTeachers.some((item) => item.id === nextTeacherId)) {
+      setError('请选择教师，或填写一位新教师');
+      return;
+    }
+    const duplicate = data.coursePlans.find((plan) => classIds.includes(plan.classId) && plan.subjectId === nextSubjectId && plan.teacherId === nextTeacherId);
+    if (duplicate) {
+      setError('所选班级中已存在同学科、同教师的教学计划，请调整后再添加');
+      return;
+    }
+    const plans: CoursePlan[] = classIds.map((classId) => ({
+      id: uid('plan'),
+      classId,
+      subjectId: nextSubjectId,
+      teacherId: nextTeacherId,
+      weeklyPeriods: Math.floor(weeklyPeriods),
+      roomType: roomType.trim(),
+      fixedSlotId,
+    }));
+    setError('');
+    commit(
+      { ...data, subjects: nextSubjects, teachers: nextTeachers, coursePlans: [...data.coursePlans, ...plans] },
+      { invalidate: true },
+    );
+    onClose();
+  };
+  return (
+    <div className="composer-overlay" role="dialog" aria-modal="true">
+      <div className="composer-dialog">
+        <div className="composer-head">
+          <div><span className="kicker">// BATCH COURSE PLAN</span><h2>批量新增教学计划</h2><p>一次为多个班级创建同一门课；学科和教师也可以直接填写新的名称。</p></div>
+          <button type="button" className="banner-close" onClick={onClose} aria-label="关闭">×</button>
+        </div>
+        <div className="composer-body">
+          <div className="composer-field full">
+            <span>选择班级（可多选）</span>
+            <div className="composer-options">
+              <button type="button" className="composer-mini" onClick={() => setClassIds(data.classes.map((item) => item.id))}>全选</button>
+              <button type="button" className="composer-mini" onClick={() => setClassIds([])}>清空</button>
+              {data.classes.map((item) => (
+                <button type="button" key={item.id} className={classIds.includes(item.id) ? 'composer-choice active' : 'composer-choice'} onClick={() => toggleClass(item.id)}>
+                  {item.name}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="composer-fields">
+            <label>已有学科<select value={subjectId} onChange={(event) => setSubjectId(event.target.value)}><option value="">选择学科</option>{data.subjects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label>新建学科<input value={customSubject} onChange={(event) => setCustomSubject(event.target.value)} placeholder="留空则使用左侧学科" /></label>
+            <label>已有教师<select value={teacherId} onChange={(event) => setTeacherId(event.target.value)}><option value="">选择教师</option>{data.teachers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label>新建教师<input value={customTeacher} onChange={(event) => setCustomTeacher(event.target.value)} placeholder="留空则使用左侧教师" /></label>
+          </div>
+          <div className="composer-fields">
+            <label>周课时<input type="number" min={1} value={weeklyPeriods} onChange={(event) => setWeeklyPeriods(Number(event.target.value))} /></label>
+            <label>教室类型<input list="composer-room-types" value={roomType} onChange={(event) => setRoomType(event.target.value)} placeholder="不限 / 普通教室" /><datalist id="composer-room-types">{roomTypes.map((type) => <option key={type} value={type} />)}</datalist></label>
+            <label>固定时间<select value={fixedSlotId} onChange={(event) => setFixedSlotId(event.target.value)}><option value="">不固定</option>{data.timeSlots.map((slot) => <option key={slot.id} value={slot.id}>{slot.label}</option>)}</select></label>
+          </div>
+        </div>
+        <div className="composer-actions">
+          <button type="button" className="ghost-button" onClick={onClose}>取消</button>
+          <button type="button" className="action-button" onClick={submit}>创建 {classIds.length} 条计划 <span>→</span></button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PlansPage({
   data,
   commit,
@@ -1736,6 +2085,7 @@ function PlansPage({
   setError: (value: string) => void;
 }) {
   const roomTypes = Array.from(new Set(data.rooms.map((room) => room.type).filter(Boolean)));
+  const [composerOpen, setComposerOpen] = useState(false);
   const total = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
   const update = (id: string, patch: Partial<CoursePlan>) => {
     const plans = data.coursePlans.map((plan) => (plan.id === id ? { ...plan, ...patch } : plan));
@@ -1745,31 +2095,15 @@ function PlansPage({
     if (!window.confirm('删除这条教学计划？相关候选课表会被清空。')) return;
     commit({ ...data, coursePlans: data.coursePlans.filter((plan) => plan.id !== id) }, { invalidate: true });
   };
-  const add = () => {
-    if (!data.classes.length || !data.subjects.length || !data.teachers.length) {
-      setError('请先在基础资料中至少添加一个班级、一个学科和一位教师');
-      return;
-    }
-    const plan: CoursePlan = {
-      id: uid('plan'),
-      classId: data.classes[0].id,
-      subjectId: data.subjects[0].id,
-      teacherId: data.teachers[0].id,
-      weeklyPeriods: 1,
-      roomType: data.rooms[0]?.type ?? '',
-      fixedSlotId: '',
-    };
-    commit({ ...data, coursePlans: [...data.coursePlans, plan] }, { invalidate: true });
-  };
-
   return (
     <section className="section-panel table-panel">
       <div className="panel-head">
         <SectionHeading english="COURSE PLAN REGISTER" title="教学计划" />
-        <button className="mini-button" onClick={add}>
-          + 新增计划
+        <button className="mini-button" onClick={() => { if (!data.classes.length) { setError('请先添加至少一个班级'); return; } setError(''); setComposerOpen(true); }}>
+          + 批量新增
         </button>
       </div>
+      <datalist id="plan-room-types">{roomTypes.map((type) => <option key={type} value={type} />)}</datalist>
       <div className="plan-summary">
         <span>
           共 <b>{data.coursePlans.length}</b> 条计划
@@ -1840,14 +2174,7 @@ function PlansPage({
                     />
                   </td>
                   <td>
-                    <select value={plan.roomType ?? ''} onChange={(event) => update(plan.id, { roomType: event.target.value })}>
-                      <option value="">不限</option>
-                      {roomTypes.map((type) => (
-                        <option key={type} value={type}>
-                          {type}
-                        </option>
-                      ))}
-                    </select>
+                    <input list="plan-room-types" value={plan.roomType ?? ''} onChange={(event) => update(plan.id, { roomType: event.target.value })} placeholder="不限" />
                   </td>
                   <td>
                     <select value={plan.fixedSlotId ?? ''} onChange={(event) => update(plan.id, { fixedSlotId: event.target.value })}>
@@ -1873,7 +2200,31 @@ function PlansPage({
       <p className="panel-note">
         固定时间会优先占用指定时间格；修改教学计划会清空候选课表，避免旧课表与新计划混用。
       </p>
+      {composerOpen ? <PlanComposer data={data} commit={commit} setError={setError} onClose={() => setComposerOpen(false)} /> : null}
     </section>
+  );
+}
+
+function MissingReasons({ data, missing }: { data: SchoolData; missing: { plan: CoursePlan; missing: number }[] }) {
+  if (missing.length === 0) return null;
+  return (
+    <div className="missing-reasons">
+      <div className="missing-head">
+        <div><span className="kicker">// UNSCHEDULED</span><h3>未排原因</h3></div>
+        <span className="status-tag danger">{missing.length} 条计划未排完</span>
+      </div>
+      <p className="panel-note">以下是基于当前教师时间、教室和已启用规则的可能原因；不是数学证明。</p>
+      {missing.slice(0, 6).map((item) => {
+        const hints = unscheduledHints(item.plan, data);
+        return (
+          <div className="missing-reason" key={item.plan.id}>
+            <div className="missing-reason-title"><b>{findClass(data, item.plan.classId)?.name ?? item.plan.classId} · {planSubjectName(data, item.plan)}</b><span>还缺 {item.missing} 课时</span></div>
+            {hints.length > 0 ? <ul>{hints.map((hint) => <li key={hint}>{hint}</li>)}</ul> : <p>时间格、教师或教室资源不足；可先检查教师时间和教室容量。</p>}
+          </div>
+        );
+      })}
+      {missing.length > 6 ? <p className="panel-note">还有 {missing.length - 6} 条未展开。</p> : null}
+    </div>
   );
 }
 
@@ -1905,14 +2256,14 @@ function RunsPage({ data, result, issues, running, progress, timeLimit, setTimeL
                 <div className="rule-item" key={number}><span>{number}</span><div><b>{title}</b><small>{description}</small></div><em>自动</em></div>
               ))}
             </div>
-            <p className="panel-note">这些是硬性规则，不需要手动配置；求解器会优先保证。本版本使用内置均衡优化，不提供权重滑块。</p>
+            <p className="panel-note">这些是硬性规则，不需要手动配置；求解器会优先保证。当前已启用 <b>{activeRules(data).length}</b> 条自定义偏好规则。</p>
           </>
         )}
       </section>
       <section className={'section-panel wizard-card ' + (!checked ? 'wizard-locked' : '')}><div className="wizard-card-head"><span className="wizard-number">03</span><div><span className="kicker">SOLVER SETTINGS</span><h2>计算设置</h2></div><span className="status-tag">{checked ? '已就绪' : '待检查'}</span></div>{!checked ? <p className="panel-note">完成数据检查后配置计算时限。</p> : <><div className="run-controls"><label>计算时限<select value={timeLimit} disabled={!canConfigure} onChange={(event) => setTimeLimit(Number(event.target.value))}><option value={10}>10 秒</option><option value={30}>30 秒</option><option value={60}>60 秒</option><option value={120}>120 秒</option></select></label></div><div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div></>}</section>
       <section className={'section-panel wizard-card wizard-final ' + (!checked ? 'wizard-locked' : '')}><div className="wizard-card-head"><span className="wizard-number">04</span><div><span className="kicker">RUN SCHEDULE</span><h2>开始排课</h2></div><span className={result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{result ? result.status : '尚未运行'}</span></div>{result && lockedCount > 0 ? <p className="panel-note">本次重新排课将保留 {lockedCount} 条锁定课程的位置。</p> : <p className="panel-note">确认前面三步后，开始生成候选课表。</p>}<button className="action-button wizard-run-button" onClick={onRun} disabled={!checked || running}>{running ? '正在计算…' : result ? '确认配置并重新排课' : '确认配置并开始排课'} <span>↗</span></button></section>
     </div>
-    <section className="section-panel candidate-panel"><div className="panel-head"><SectionHeading english="CURRENT CANDIDATE" title="当前候选" /><span className={result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{result?.status ?? '尚未生成'}</span></div>{result ? <div className="result-summary"><div className="summary-grid"><div><span>已排课时</span><b>{result.entries.length}</b></div><div><span>计划课时</span><b>{expected}</b></div><div><span>未排课时</span><b>{Math.max(0, expected - result.entries.length)}</b></div><div><span>耗时</span><b>{result.elapsedMs} ms</b></div></div><p className="panel-note">{result.explanation || '求解器没有返回说明。'}</p>{result.hardConstraintViolations.length ? <ul className="issue-list">{result.hardConstraintViolations.map((item) => <li key={item}>{item}</li>)}</ul> : null}{missing.length ? <ul className="issue-list">{missing.map((item) => <li key={item.plan.id}>{findClass(data, item.plan.classId)?.name ?? item.plan.classId} · {planSubjectName(data, item.plan)} 还缺 {item.missing} 课时</li>)}</ul> : null}<div className="hero-actions"><button className="action-button" onClick={onTimetable}>查看并调整课表 <span>→</span></button><button className="ghost-button" onClick={onClear}>清空候选</button></div></div> : <EmptyState title="尚未生成候选课表" message="完成向导后，候选课表会显示在这里。" />}</section>
+    <section className="section-panel candidate-panel"><div className="panel-head"><SectionHeading english="CURRENT CANDIDATE" title="当前候选" /><span className={result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{result?.status ?? '尚未生成'}</span></div>{result ? <div className="result-summary"><div className="summary-grid"><div><span>已排课时</span><b>{result.entries.length}</b></div><div><span>计划课时</span><b>{expected}</b></div><div><span>未排课时</span><b>{Math.max(0, expected - result.entries.length)}</b></div><div><span>耗时</span><b>{result.elapsedMs} ms</b></div></div><p className="panel-note">{result.explanation || '求解器没有返回说明。'}</p>{result.hardConstraintViolations.length ? <ul className="issue-list">{result.hardConstraintViolations.map((item) => <li key={item}>{item}</li>)}</ul> : null}{missing.length ? <MissingReasons data={data} missing={missing} /> : null}<div className="hero-actions"><button className="action-button" onClick={onTimetable}>查看并调整课表 <span>→</span></button><button className="ghost-button" onClick={onClear}>清空候选</button></div></div> : <EmptyState title="尚未生成候选课表" message="完成向导后，候选课表会显示在这里。" />}</section>
   </div>;
 }
 

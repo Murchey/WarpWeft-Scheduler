@@ -8,7 +8,7 @@ function emptyWorkspace() {
   return {
     school: { id: 'school-local', name: '未设置学校' },
     classes: [], teachers: [], subjects: [], rooms: [], timeSlots: [], coursePlans: [],
-    unavailableSlots: [], softConstraints: [
+    unavailableSlots: [], rules: [], softConstraints: [
       { kind: 'SUBJECT_DISTRIBUTION', weight: 3 },
       { kind: 'TEACHER_CONTINUOUS', weight: 2 },
       { kind: 'TEACHER_GAPS', weight: 1 },
