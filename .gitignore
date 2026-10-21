@@ -50,3 +50,7 @@ reports/
 *.sln.docstates
 Thumbs.db
 Desktop.ini
+
+# Java build artifacts and third-party jars (fetch with npm run build:solver)
+*.jar
+services/solver-java/build/

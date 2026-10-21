@@ -17,6 +17,46 @@ if (-not (Get-Command $javac -ErrorAction SilentlyContinue)) {
     throw '找不到 javac。请安装 JDK 21，并设置 JAVA_HOME 或把 bin 目录加入 PATH。'
 }
 
+$dependencies = @(
+    @{
+        Name = 'jackson-annotations-2.17.2.jar'
+        CachePath = 'com\fasterxml\jackson\core\jackson-annotations\2.17.2\jackson-annotations-2.17.2.jar'
+        Url = 'https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-annotations/2.17.2/jackson-annotations-2.17.2.jar'
+    },
+    @{
+        Name = 'jackson-core-2.17.2.jar'
+        CachePath = 'com\fasterxml\jackson\core\jackson-core\2.17.2\jackson-core-2.17.2.jar'
+        Url = 'https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-core/2.17.2/jackson-core-2.17.2.jar'
+    },
+    @{
+        Name = 'jackson-databind-2.17.2.jar'
+        CachePath = 'com\fasterxml\jackson\core\jackson-databind\2.17.2\jackson-databind-2.17.2.jar'
+        Url = 'https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.17.2/jackson-databind-2.17.2.jar'
+    }
+)
+
+New-Item -ItemType Directory -Force -Path $libDir | Out-Null
+foreach ($dependency in $dependencies) {
+    $target = Join-Path $libDir $dependency.Name
+    if (Test-Path -LiteralPath $target) { continue }
+    $cache = Join-Path $env:USERPROFILE ('.m2\repository\' + $dependency.CachePath)
+    if (Test-Path -LiteralPath $cache) {
+        Copy-Item -LiteralPath $cache -Destination $target -Force
+        Write-Host ('使用本地 Maven 缓存：' + $dependency.Name) -ForegroundColor DarkGray
+        continue
+    }
+    Write-Host ('下载依赖：' + $dependency.Name) -ForegroundColor DarkGray
+    try {
+        Invoke-WebRequest -Uri $dependency.Url -OutFile $target -UseBasicParsing
+    } catch {
+        if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force }
+        throw ('无法获取 Java 依赖 ' + $dependency.Name + '：' + $_.Exception.Message + '。可以手动下载后放入 services/solver-java/lib。')
+    }
+    if (-not (Test-Path -LiteralPath $target)) {
+        throw ('Java 依赖下载失败：' + $dependency.Name)
+    }
+}
+
 & $javac -version
 & $javac --release 21 -encoding UTF-8 -cp (Join-Path $libDir '*') -d $classesDir (Get-ChildItem -Path $sourceDir -Recurse -Filter '*.java' | ForEach-Object { $_.FullName })
 if ($LASTEXITCODE -ne 0) { throw 'Java 编译失败' }

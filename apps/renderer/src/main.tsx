@@ -887,7 +887,6 @@ function App() {
         {tab === '排课任务' ? (
           <RunsPage
             data={data}
-            commit={commit}
             result={result}
             issues={issues}
             running={running}
@@ -1646,12 +1645,85 @@ function ResourcesPage({
 
 function AvailabilityEditor({ data, commit }: { data: SchoolData; commit: Commit }) {
   const unavailable = data.unavailableSlots ?? [];
-  const toggle = (teacherId: string, slotId: string) => {
-    const exists = unavailable.some((item) => item.teacherId === teacherId && item.slotId === slotId);
-    const next = exists ? unavailable.filter((item) => !(item.teacherId === teacherId && item.slotId === slotId)) : [...unavailable, { teacherId, slotId }];
-    commit({ ...data, unavailableSlots: next }, { invalidate: true });
+  const slots = [...data.timeSlots].sort((a, b) => a.day - b.day || a.period - b.period);
+  const add = (teacherId: string, slotId: string) => {
+    if (!slotId || unavailable.some((item) => item.teacherId === teacherId && item.slotId === slotId)) return;
+    commit({ ...data, unavailableSlots: [...unavailable, { teacherId, slotId }] }, { invalidate: true });
   };
-  return <section className="section-panel resource-panel"><div className="panel-head"><SectionHeading english="TEACHER AVAILABILITY" title="教师不可用时间" /></div><p className="panel-note">勾选后，求解器会把这些时间视为教师不可用。</p><div className="availability-grid">{data.teachers.map((teacher) => <div className="availability-row" key={teacher.id}><strong>{teacher.name}</strong>{data.timeSlots.map((slot) => <label key={slot.id} title={slot.label}><input type="checkbox" checked={unavailable.some((item) => item.teacherId === teacher.id && item.slotId === slot.id)} onChange={() => toggle(teacher.id, slot.id)} />{slot.label}</label>)}</div>)}</div></section>;
+  const remove = (teacherId: string, slotId: string) => {
+    commit(
+      { ...data, unavailableSlots: unavailable.filter((item) => !(item.teacherId === teacherId && item.slotId === slotId)) },
+      { invalidate: true },
+    );
+  };
+  const clear = (teacherId: string) => {
+    commit(
+      { ...data, unavailableSlots: unavailable.filter((item) => item.teacherId !== teacherId) },
+      { invalidate: true },
+    );
+  };
+
+  return (
+    <section className="section-panel resource-panel availability-panel">
+      <div className="panel-head">
+        <SectionHeading english="TEACHER AVAILABILITY" title="教师不可用时间" />
+        <span className="status-tag muted">下拉选择</span>
+      </div>
+      <p className="panel-note">从下拉框选择教师不可用的时间段，添加后会显示为标签；点击标签即可移除。排课时会自动避开这些时间。</p>
+      {data.teachers.length === 0 ? (
+        <p className="panel-note">还没有教师，请先在教师资料中添加。</p>
+      ) : slots.length === 0 ? (
+        <p className="panel-note">还没有时间段，请先在时间段资料中添加。</p>
+      ) : (
+        <div className="availability-list">
+          {data.teachers.map((teacher) => {
+            const own = slots.filter((slot) => unavailable.some((item) => item.teacherId === teacher.id && item.slotId === slot.id));
+            const remaining = slots.filter((slot) => !own.some((item) => item.id === slot.id));
+            return (
+              <div className="availability-person" key={teacher.id}>
+                <div className="availability-person-head">
+                  <strong>{teacher.name}</strong>
+                  <small>{own.length > 0 ? own.length + ' 个不可用时间' : '全部时间可用'}</small>
+                </div>
+                <div className="availability-chips">
+                  {own.length > 0 ? own.map((slot) => (
+                    <button
+                      type="button"
+                      key={slot.id}
+                      className="availability-chip"
+                      onClick={() => remove(teacher.id, slot.id)}
+                      title="点击移除"
+                    >
+                      {slot.label}<span>×</span>
+                    </button>
+                  )) : <span className="availability-empty">未设置</span>}
+                </div>
+                <div className="availability-actions">
+                  <select
+                    className="availability-select"
+                    value=""
+                    aria-label={'为 ' + teacher.name + ' 添加不可用时间'}
+                    disabled={remaining.length === 0}
+                    onChange={(event) => {
+                      add(teacher.id, event.target.value);
+                      event.currentTarget.value = '';
+                    }}
+                  >
+                    <option value="">{remaining.length === 0 ? '全部时间已设置' : '+ 添加不可用时间'}</option>
+                    {remaining.map((slot) => <option key={slot.id} value={slot.id}>{slot.label}</option>)}
+                  </select>
+                  {own.length > 0 ? (
+                    <button type="button" className="availability-clear" onClick={() => clear(teacher.id)}>清空</button>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <p className="panel-note">修改教师不可用时间会清空候选课表，需重新排课。</p>
+    </section>
+  );
 }
 
 function PlansPage({
@@ -1805,26 +1877,38 @@ function PlansPage({
   );
 }
 
-function RunsPage({ data, commit, result, issues, running, progress, timeLimit, setTimeLimit, onRun, onTimetable, onClear, runMode }: {
-  data: SchoolData; commit: Commit; result: SolverOutput | null; issues: string[]; running: boolean; progress: RunProgress;
+function RunsPage({ data, result, issues, running, progress, timeLimit, setTimeLimit, onRun, onTimetable, onClear, runMode }: {
+  data: SchoolData; result: SolverOutput | null; issues: string[]; running: boolean; progress: RunProgress;
   timeLimit: number; setTimeLimit: (value: number) => void; onRun: () => void; onTimetable: () => void; onClear: () => void; runMode?: RunMode | null;
 }) {
   const expected = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
   const missing = result ? missingPlans(data, result) : [];
-  const soft = data.softConstraints ?? [
-    { kind: 'SUBJECT_DISTRIBUTION' as const, weight: 3 }, { kind: 'TEACHER_CONTINUOUS' as const, weight: 2 },
-    { kind: 'TEACHER_GAPS' as const, weight: 1 }, { kind: 'TEACHER_WORKLOAD_BALANCE' as const, weight: 2 },
-  ];
-  const labels: Record<string, string> = { SUBJECT_DISTRIBUTION: '学科分布', TEACHER_CONTINUOUS: '教师连堂', TEACHER_GAPS: '教师空档', TEACHER_WORKLOAD_BALANCE: '教师日负荷均衡' };
   const checked = issues.length === 0;
   const canConfigure = checked && !running;
   const lockedCount = data.candidate?.entries.filter((entry) => entry.locked).length ?? 0;
   const modeLabel = RUN_MODE_OPTIONS.find((item) => item.value === runMode)?.title ?? '当前模式';
   return <div className="runs-wizard">
-    <section className="section-panel wizard-intro"><SectionHeading english="SCHEDULE RUN" title="排课向导" /><p className="panel-note">按 01 → 02 → 03 → 04 完成配置。数据检查未通过时，后续步骤会锁定。</p><div className="wizard-stepper">{['数据检查', '约束与权重', '计算设置', '开始排课'].map((label, index) => <div key={label} className={'wizard-stepper-item ' + (index === 0 && checked || index > 0 && canConfigure ? 'done' : '')}><b>0{index + 1}</b><span>{label}</span></div>)}</div>{progress.phase !== 'idle' ? <RunProgressView progress={progress} /> : null}</section>
+    <section className="section-panel wizard-intro"><SectionHeading english="SCHEDULE RUN" title="排课向导" /><p className="panel-note">按 01 → 02 → 03 → 04 完成配置。数据检查未通过时，后续步骤会锁定。</p><div className="wizard-stepper">{['数据检查', '排课规则', '计算设置', '开始排课'].map((label, index) => <div key={label} className={'wizard-stepper-item ' + (index === 0 && checked || index > 0 && canConfigure ? 'done' : '')}><b>0{index + 1}</b><span>{label}</span></div>)}</div>{progress.phase !== 'idle' ? <RunProgressView progress={progress} /> : null}</section>
     <div className="wizard-grid">
       <section className="section-panel wizard-card"><div className="wizard-card-head"><span className="wizard-number">01</span><div><span className="kicker">PREFLIGHT</span><h2>数据检查</h2></div><span className={issues.length ? 'status-tag danger' : 'status-tag'}>{issues.length ? issues.length + ' 项待处理' : '通过'}</span></div>{issues.length ? <ul className="issue-list">{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul> : <p className="panel-note success-note">检查通过：{expected} 周课时、{data.timeSlots.length} 个可用时间格。</p>}<div className="hero-actions"><button className="ghost-button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>回到顶部查看状态</button></div></section>
-      <section className={'section-panel wizard-card ' + (!checked ? 'wizard-locked' : '')}><div className="wizard-card-head"><span className="wizard-number">02</span><div><span className="kicker">SOFT RULES</span><h2>约束与权重</h2></div><span className="status-tag">{checked ? '可配置' : '待检查'}</span></div>{!checked ? <p className="panel-note">请先修复第 01 步的问题。</p> : <div className="soft-rules">{soft.map((rule) => <label key={rule.kind}>{labels[rule.kind]}<input type="range" min={0} max={10} value={rule.weight} disabled={!canConfigure} onChange={(event) => commit({ ...data, softConstraints: soft.map((item) => item.kind === rule.kind ? { ...item, weight: Number(event.target.value) } : item) })} /><output>{rule.weight}</output></label>)}</div>}</section>
+      <section className={'section-panel wizard-card ' + (!checked ? 'wizard-locked' : '')}>
+        <div className="wizard-card-head"><span className="wizard-number">02</span><div><span className="kicker">BUILT-IN RULES</span><h2>排课规则</h2></div><span className="status-tag">{checked ? '自动保证' : '待检查'}</span></div>
+        {!checked ? <p className="panel-note">请先修复第 01 步的问题。</p> : (
+          <>
+            <div className="rule-summary">
+              {[
+                ['01', '班级不撞课', '同一班级同一时间只安排一门课'],
+                ['02', '教师不撞课', '同一教师同一时间只安排一门课'],
+                ['03', '教室匹配', '教室类型和容量必须满足班级'],
+                ['04', '固定约束', '固定时间和教师不可用时间自动生效'],
+              ].map(([number, title, description]) => (
+                <div className="rule-item" key={number}><span>{number}</span><div><b>{title}</b><small>{description}</small></div><em>自动</em></div>
+              ))}
+            </div>
+            <p className="panel-note">这些是硬性规则，不需要手动配置；求解器会优先保证。本版本使用内置均衡优化，不提供权重滑块。</p>
+          </>
+        )}
+      </section>
       <section className={'section-panel wizard-card ' + (!checked ? 'wizard-locked' : '')}><div className="wizard-card-head"><span className="wizard-number">03</span><div><span className="kicker">SOLVER SETTINGS</span><h2>计算设置</h2></div><span className="status-tag">{checked ? '已就绪' : '待检查'}</span></div>{!checked ? <p className="panel-note">完成数据检查后配置计算时限。</p> : <><div className="run-controls"><label>计算时限<select value={timeLimit} disabled={!canConfigure} onChange={(event) => setTimeLimit(Number(event.target.value))}><option value={10}>10 秒</option><option value={30}>30 秒</option><option value={60}>60 秒</option><option value={120}>120 秒</option></select></label></div><div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div></>}</section>
       <section className={'section-panel wizard-card wizard-final ' + (!checked ? 'wizard-locked' : '')}><div className="wizard-card-head"><span className="wizard-number">04</span><div><span className="kicker">RUN SCHEDULE</span><h2>开始排课</h2></div><span className={result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{result ? result.status : '尚未运行'}</span></div>{result && lockedCount > 0 ? <p className="panel-note">本次重新排课将保留 {lockedCount} 条锁定课程的位置。</p> : <p className="panel-note">确认前面三步后，开始生成候选课表。</p>}<button className="action-button wizard-run-button" onClick={onRun} disabled={!checked || running}>{running ? '正在计算…' : result ? '确认配置并重新排课' : '确认配置并开始排课'} <span>↗</span></button></section>
     </div>
