@@ -54,7 +54,10 @@ public final class Scheduler {
         int pairedEntries = pairedPlans.stream().mapToInt(plan -> ((plan.weeklyPeriods() - lockedByPlan.getOrDefault(plan.id(), 0)) / 2) * 2).sum();
         int totalEntries = tasks.size() + pairedEntries + data.locked.size();
 
-        int attempts = 8;
+        // Keep starting fresh constructions until the deadline. The previous
+        // fixed cap of 8 attempts made anything above ~8 seconds pointless: the
+        // solver returned FAILED while most of the requested budget was unused.
+        int attempts = Math.max(8, timeLimitSeconds * 4);
         System.err.println("[java] solve start: " + totalEntries + " entries, " + data.locked.size() + " locked, " + pairedPlans.size() + " paired plans");
         for (int attempt = 0; attempt < attempts && System.nanoTime() < deadline; attempt++) {
             Random random = new Random(randomSeed + attempt * 7919L);
@@ -82,6 +85,7 @@ public final class Scheduler {
             int unplaced = 0;
             List<Plan> shuffledPlans = new ArrayList<>(pairedPlans);
             java.util.Collections.shuffle(shuffledPlans, random);
+
             for (Plan plan : shuffledPlans) {
                 int pairs = (plan.weeklyPeriods() - lockedByPlan.getOrDefault(plan.id(), 0)) / 2;
                 for (int pair = 0; pair < pairs; pair++) {
