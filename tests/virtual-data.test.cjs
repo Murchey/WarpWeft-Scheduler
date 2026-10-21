@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { spawnSync } = require('node:child_process');
+const { solve } = require('./java-solver-helper.cjs');
 const fs = require('node:fs');
 
 const demo = JSON.parse(fs.readFileSync('database/seeds/demo.json', 'utf8'));
@@ -18,9 +18,9 @@ function runSolver(overrides = {}) {
     randomSeed: 7,
     ...overrides,
   };
-  const process = spawnSync('python', ['services/solver/solver.py'], { input: JSON.stringify(input), encoding: 'utf8' });
-  assert.equal(process.status, 0, process.stderr || 'Solver process failed');
-  return JSON.parse(process.stdout);
+  const result = solve(input);
+  assert.equal(result.status, 0, result.stderr || 'Java solver process failed');
+  return JSON.parse(result.stdout);
 }
 
 test('virtual baseline data is feasible', () => {

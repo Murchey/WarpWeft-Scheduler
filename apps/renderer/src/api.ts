@@ -48,6 +48,93 @@ export async function saveData(data: SchoolData): Promise<SchoolData> {
   return JSON.parse(text) as SchoolData;
 }
 
+export interface ServerStats {
+  at: string;
+  host: string;
+  port: number;
+  platform: string;
+  arch: string;
+  node: string;
+  pid: number;
+  uptimeSeconds: number;
+  osUptimeSeconds: number;
+  cpu: {
+    model: string;
+    cores: number;
+    usage: number;
+    load: number[];
+  };
+  memory: {
+    total: number;
+    free: number;
+    used: number;
+    usage: number;
+    process: number;
+  };
+  java: {
+    available: boolean;
+    version: string | null;
+    command: string;
+    output: string;
+  };
+  solver: {
+    engine: string;
+    jar: string;
+    ready: boolean;
+  };
+  queue: {
+    queued: number;
+    running: number;
+    completed: number;
+    failed: number;
+    activeJob: string | null;
+  };
+  totalJobs: number;
+}
+
+export interface ServerJob {
+  id: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'timeout' | string;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  elapsedMs: number;
+  queuePosition: number;
+  lessons: number;
+  classes: number;
+  plans: number;
+  entries: number;
+  resultStatus: string | null;
+  error: string | null;
+}
+
+export interface ServerLog {
+  seq: number;
+  at: string;
+  level: 'info' | 'warn' | 'error' | 'debug' | string;
+  message: string;
+  jobId?: string | null;
+}
+
+async function getJson<T>(path: string, timeoutMs = 10000): Promise<T> {
+  const response = await request(`${getApiBase()}${path}`, { cache: 'no-store' }, timeoutMs);
+  const text = await response.text();
+  if (!response.ok) throw new Error(await failure(response, text));
+  return JSON.parse(text) as T;
+}
+
+export async function fetchServerStats(): Promise<ServerStats> {
+  return getJson<ServerStats>('/api/server/stats');
+}
+
+export async function fetchServerJobs(): Promise<{ jobs: ServerJob[] }> {
+  return getJson<{ jobs: ServerJob[] }>('/api/server/jobs');
+}
+
+export async function fetchServerLogs(since: number): Promise<{ logs: ServerLog[]; lastSeq: number }> {
+  return getJson<{ logs: ServerLog[]; lastSeq: number }>('/api/server/logs?since=' + since);
+}
+
 export async function solveSchedule(input: SolverInput): Promise<SolverOutput> {
   const response = await request(
     `${getApiBase()}/api/solve`,

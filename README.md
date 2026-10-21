@@ -1,6 +1,6 @@
 # WarpWeft Scheduler
 
-单机小规模排课 MVP：Electron/React + HeroUI 商务界面、本地 JSON 数据层、独立 Python Solver。
+单机/局域网小规模排课 MVP：Electron/React + HeroUI 商务界面、本地 JSON 数据层、独立 Java 21 Solver。
 
 ## 已实现
 
@@ -16,6 +16,7 @@
 - 报表发布：导出 Excel、CSV、打印课表；桌面端直接保存到系统下载目录并提示路径，浏览器回退为普通下载
 - 深色/浅色主题；深色模式使用低饱和黄铜色作为强调色
 - P2：教师不可用时间编辑，软约束权重调节，基础资料 Excel 导入
+- 服务端监控页：CPU/内存、Java 求解器状态、任务队列、排队/运行/完成状态和实时求解日志
 - 正式版版本记录与审计日志；每次发布保留可追溯的版本 ID、时间和课时数量
 
 ## 本地运行
@@ -43,13 +44,13 @@ npm run build
 npm run desktop
 ```
 
-安装 Python Solver 依赖：
+运行环境需要 **Java 21**（`JAVA_HOME` 或 PATH 中的 `java`）。Oracle JDK 21、Microsoft Build of OpenJDK 21、Eclipse Temurin 21 均可；安装版运行只需要 Java 21 运行时，构建 jar 需要 JDK（含 javac）。构建 Java 求解器：
 
 ```powershell
-py -m pip install -r services/solver/requirements.txt
+npm run build:solver
 ```
 
-生成不要求用户安装 Python 的 Windows 安装包：
+生成 Windows 安装包（仍需用户安装 JDK 21）：
 
 ```powershell
 npm run dist:win
@@ -61,13 +62,34 @@ npm run dist:win
 - 安装版数据文件：Electron 的 `userData/warpweft.json`
 - 首次启动创建空工作区，不会向软件界面注入演示或测试数据；`database/seeds/demo.json` 仅供 Solver 自动化测试使用
 - 演示数据为周一至周五每天 3 节（15 个时间格），保留机动空档；如果实际工作区排满，预览会显示空档数并提示增加时间段/教师，或改用交换课程
-- Excel 导入按工作表名称识别“班级/教师/学科/教室”，导入后会触发候选课表失效并写入本地 JSON
+- Excel 导入支持学校、班级、教师、学科、教室、时间段和教学计划；基础资料按名称复用，教学计划整体替换，导入后候选课表失效
+- 服务端模式默认监听 `127.0.0.1`；局域网共享需以 `WARPVEFT_HOST=0.0.0.0` 启动 API，并配置防火墙/访问控制
 - Electron 33 自带的 Node 20 不包含 `node:sqlite`，因此当前 MVP 使用单文件 JSON 存储；数据访问层保留了 `read()/write()` 形态，后续可替换为 SQLite 适配器
 - 打包版界面由本地 HTTP 服务（`http://127.0.0.1:4317/`）提供，避免 `file://` 下 ES module 被拦截导致白屏
 
 ## Solver
 
-Solver 首选 OR-Tools CP-SAT；未安装 OR-Tools 时自动回退到贪心实现。输入输出协议见 `packages/contracts/src.ts`，锁定课程会在重新排课时固定在原时间与教室。
+生产求解器为 `services/solver-java`，要求 Java 21。它使用贪心 + 随机重启 + 局部搜索生成可行课表，支持班级/教师/教室冲突、教室容量与类型、固定时间、教师不可用时间和锁定课程。输入输出协议见 `packages/contracts/src.ts`。
+
+单机和局域网服务端使用同一套 Java 求解器。服务端模式会记录任务队列、耗时、结果和 Java 求解日志；UI 在“服务端”页展示本机 CPU/内存、Java 版本和实时日志。
+
+## 服务端模式
+
+选择“局域网（服务端）”后，导航栏会出现 **服务端** 页面，展示：
+
+- CPU 使用率、内存、进程运行时间和 Java 版本
+- Java 求解器是否就绪
+- 任务队列：排队、运行、完成、失败、耗时和结果
+- 实时求解日志（包含 Java 求解阶段和最终状态）
+
+服务端默认监听 `127.0.0.1:4317`。需要让局域网其他电脑连接时，在启动 API/桌面端前设置监听地址：
+
+```powershell
+$env:WARPVEFT_HOST='0.0.0.0'
+npm run dev:api
+```
+
+局域网模式目前还没有用户鉴权，正式部署前需要补访问控制、防火墙规则和数据库存储。
 
 ## 手动测试数据
 

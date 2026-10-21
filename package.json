@@ -8,12 +8,15 @@
     "dev": "vite --host 127.0.0.1",
     "dev:api": "node scripts/dev-api.cjs",
     "build": "tsc --noEmit && vite build",
-    "test": "node --test tests/*.test.cjs",
-    "solver": "python services/solver/solver.py",
+    "test": "npm run build:solver && node --test tests/*.test.cjs",
+    "solver": "java -jar resources/solver/warpweft-solver.jar",
     "validate": "node scripts/validate-demo.cjs",
     "desktop": "electron .",
-    "build:solver": "powershell -ExecutionPolicy Bypass -File scripts/build-solver.ps1",
-    "dist:win": "npm run build:solver && npm run build && electron-builder --win nsis"
+    "build:solver": "powershell -ExecutionPolicy Bypass -File services/solver-java/build.ps1",
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "prebuild": "npm run build:solver",
+    "predev:api": "npm run build:solver",
+    "prevalidate": "npm run build:solver"
   },
   "dependencies": {
     "@heroui/react": "^2.7.11",
@@ -47,7 +50,7 @@
     ],
     "extraResources": [
       {
-        "from": "dist/solver",
+        "from": "resources/solver",
         "to": "solver",
         "filter": [
           "**/*"

@@ -3,7 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { HeroUIProvider, Button, Card, CardBody, Chip, Progress, Select, SelectItem, Tabs, Tab } from '@heroui/react';
 import { validateInput } from '../../../packages/validation/src';
 import { buildImportTemplate, exportCsv, exportWorkbook, readWorkbook } from '../../../packages/import-export/src';
-import { loadData, saveData, solveSchedule } from './api';
+import { fetchServerJobs, fetchServerLogs, fetchServerStats, loadData, saveData, solveSchedule } from './api';
+import type { ServerJob, ServerLog, ServerStats } from './api';
 import type {
   ClassRoom,
   CoursePlan,
@@ -19,7 +20,7 @@ import type {
 } from './types';
 import './style.css';
 
-const TABS = ['工作台', '基础资料', '教学计划', '排课任务', '课表预览', '报表发布', '设置'] as const;
+const TABS = ['工作台', '基础资料', '教学计划', '排课任务', '课表预览', '报表发布', '服务端', '设置'] as const;
 type Tab = (typeof TABS)[number];
 const EN: Record<Tab, string> = {
   工作台: 'OVERVIEW',
@@ -28,6 +29,7 @@ const EN: Record<Tab, string> = {
   排课任务: 'SCHEDULE RUNS',
   课表预览: 'TIMETABLE PREVIEW',
   报表发布: 'RELEASE',
+  服务端: 'SERVER',
   设置: 'SETTINGS',
 };
 const DAYS = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -502,6 +504,8 @@ function App() {
     setRunMode(nextMode);
     setModeSettingsOpen(false);
     setApiOnline(null);
+    if (nextMode === 'lan-server') setTab('服务端');
+    else if (tab === '服务端') setTab('工作台');
   };
 
   useEffect(() => {
@@ -518,6 +522,10 @@ function App() {
       setEntityId(entities[0]?.id ?? '');
     }
   }, [data, view, entityId]);
+
+  useEffect(() => {
+    if (tab === '服务端' && runMode !== 'lan-server') setTab('工作台');
+  }, [tab, runMode]);
 
   const flush = async (value: SchoolData) => {
     if (saveTimer.current !== null) {
@@ -774,6 +782,7 @@ function App() {
   }
 
   const issues = preflight(data);
+  const visibleTabs = runMode === 'lan-server' ? TABS : TABS.filter((item) => item !== '服务端');
   const saveLabel =
     saveState === 'saving'
       ? '保存中…'
@@ -801,7 +810,7 @@ function App() {
           </div>
         </div>
         <nav className="nav-list" aria-label="主导航">
-          {TABS.map((item, index) => (
+          {visibleTabs.map((item, index) => (
             <button
               key={item}
               className={tab === item ? 'nav-item active' : 'nav-item'}
@@ -927,6 +936,7 @@ function App() {
             }}
           />
         ) : null}
+        {tab === '服务端' && runMode === 'lan-server' ? <ServerPage apiOnline={apiOnline} /> : null}
         {tab === '设置' ? <SettingsPage runMode={runMode} theme={theme} onThemeChange={setTheme} onEditMode={() => setModeSettingsOpen(true)} apiOnline={apiOnline} data={data} commit={commit} /> : null}
       </main>
       {modeSettingsOpen ? <RuntimeModeDialog current={runMode} onSave={saveRunMode} onClose={() => setModeSettingsOpen(false)} /> : null}
@@ -1059,6 +1069,145 @@ function Dashboard({
         </article>
       </section>
     </>
+  );
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = value;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) { size /= 1024; index += 1; }
+  return size.toFixed(size >= 10 ? 0 : 1) + ' ' + units[index];
+}
+
+function formatDuration(seconds: number): string {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return days + '天 ' + hours + '小时';
+  if (hours > 0) return hours + '小时 ' + minutes + '分';
+  return Math.max(0, minutes) + '分 ' + Math.floor(seconds % 60) + '秒';
+}
+
+function jobStateLabel(status: string): string {
+  if (status === 'queued') return '排队中';
+  if (status === 'running') return '求解中';
+  if (status === 'completed') return '已完成';
+  if (status === 'timeout') return '超时';
+  if (status === 'failed') return '失败';
+  return status;
+}
+
+function ServerPage({ apiOnline }: { apiOnline: boolean | null }) {
+  const [stats, setStats] = useState<ServerStats | null>(null);
+  const [jobs, setJobs] = useState<ServerJob[]>([]);
+  const [logs, setLogs] = useState<ServerLog[]>([]);
+  const [error, setError] = useState('');
+  const sinceRef = useRef(0);
+  const logRef = useRef<HTMLDivElement | null>(null);
+
+  const refresh = async () => {
+    try {
+      const [nextStats, nextJobs, nextLogs] = await Promise.all([fetchServerStats(), fetchServerJobs(), fetchServerLogs(sinceRef.current)]);
+      setStats(nextStats);
+      setJobs(nextJobs.jobs);
+      if (nextLogs.logs.length > 0) {
+        setLogs((current) => {
+          const merged = new Map(current.map((item) => [item.seq, item]));
+          for (const item of nextLogs.logs) merged.set(item.seq, item);
+          return Array.from(merged.values()).sort((a, b) => a.seq - b.seq).slice(-400);
+        });
+        sinceRef.current = Math.max(sinceRef.current, nextLogs.lastSeq);
+      }
+      setError('');
+    } catch (cause) {
+      setError('服务端监控连接失败：' + messageOf(cause));
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => { if (!cancelled) await refresh(); };
+    void tick();
+    const timer = window.setInterval(() => { void tick(); }, 2000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
+
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [logs]);
+
+  const queueCount = stats ? stats.queue.queued + stats.queue.running : 0;
+  return (
+    <div className="server-layout">
+      {error ? <Banner tone="error" title="服务端监控异常" onClose={() => setError('')}>{error}</Banner> : null}
+      {apiOnline === false ? <Banner tone="warning" title="本地服务未连接">当前无法读取服务端状态，请先启动本地 API。</Banner> : null}
+      {!stats ? (
+        <div className="server-loading"><span className="kicker">// SERVER TELEMETRY</span><strong>正在读取本机服务端状态…</strong></div>
+      ) : (
+        <>
+          <section className="section-panel server-panel">
+            <div className="server-head">
+              <div><span className="kicker">// SERVER TELEMETRY</span><h2>本机服务端</h2><p>监控本机资源、Java 求解器和排队中的排课任务；单机与局域网服务端使用同一套 Java 求解线路。</p></div>
+              <div className="server-head-status">
+                <span className={stats.solver.ready ? 'server-live' : 'server-live is-offline'}><i />{stats.solver.ready ? '服务在线' : '求解器未就绪'}</span>
+                <button type="button" className="tt-btn tt-btn-quiet" onClick={() => void refresh()}>刷新</button>
+              </div>
+            </div>
+            <div className="server-metrics">
+              <article className="server-metric"><span>CPU 使用率</span><strong>{stats.cpu.usage}%</strong><small>{stats.cpu.cores} 核 · {stats.cpu.model}</small><div className="server-bar"><i style={{ width: stats.cpu.usage + '%' }} /></div></article>
+              <article className="server-metric"><span>内存使用</span><strong>{stats.memory.usage}%</strong><small>{formatBytes(stats.memory.used)} / {formatBytes(stats.memory.total)}</small><div className="server-bar"><i style={{ width: stats.memory.usage + '%' }} /></div></article>
+              <article className="server-metric"><span>任务队列</span><strong>{queueCount}</strong><small>运行 {stats.queue.running} · 等待 {stats.queue.queued} · 完成 {stats.queue.completed}</small><div className="server-bar is-queue"><i style={{ width: queueCount > 0 ? '100%' : '0%' }} /></div></article>
+              <article className="server-metric"><span>服务运行时间</span><strong>{formatDuration(stats.uptimeSeconds)}</strong><small>OS 运行 {formatDuration(stats.osUptimeSeconds)}</small><div className="server-meta-inline">PID {stats.pid} · Node {stats.node}</div></article>
+            </div>
+            <div className="server-meta">
+              <span><b>监听</b> {stats.host}:{stats.port}</span>
+              <span><b>Java</b> {stats.java.version ?? '未检测'}</span>
+              <span><b>求解器</b> {stats.solver.engine} · {stats.solver.ready ? '就绪' : '未就绪'}</span>
+              <span><b>系统</b> {stats.platform}/{stats.arch}</span>
+            </div>
+            {stats.host === '127.0.0.1' ? <div className="server-warning">当前仅监听本机回环地址。如果其他电脑需要通过局域网连接，请以 WARPVEFT_HOST=0.0.0.0 启动服务端。</div> : null}
+          </section>
+          <section className="section-panel">
+            <div className="panel-head">
+              <SectionHeading english="TASK QUEUE" title="任务队列" />
+              <span className={stats.queue.running > 0 ? 'status-tag' : 'status-tag muted'}>{stats.queue.running > 0 ? '正在求解' : '空闲'}</span>
+            </div>
+            {jobs.length === 0 ? <EmptyState title="还没有求解任务" message="在排课任务页发起一次排课，这里会显示队列、耗时和结果。" /> : (
+              <div className="table-scroll">
+                <table className="server-job-table">
+                  <thead><tr><th>状态</th><th>任务</th><th>规模</th><th>耗时</th><th>结果</th></tr></thead>
+                  <tbody>
+                    {jobs.map((job) => (
+                      <tr key={job.id}>
+                        <td><span className={'server-job-state is-' + job.status}><i />{jobStateLabel(job.status)}</span></td>
+                        <td><b>{job.id}</b><small>{fmtTime(job.createdAt)}</small></td>
+                        <td>{job.classes} 班 / {job.lessons} 课时</td>
+                        <td>{job.elapsedMs > 0 ? Math.round(job.elapsedMs) + ' ms' : '—'}</td>
+                        <td><span className={job.error ? 'server-job-result is-error' : 'server-job-result'}>{job.error ? job.error : (job.resultStatus ?? '—')}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+          <section className="section-panel">
+            <div className="panel-head"><SectionHeading english="SOLVER LOGS" title="求解状态日志" /><span className="server-live is-small"><i /> 实时 · 2s</span></div>
+            <div className="server-log" ref={logRef}>
+              {logs.length === 0 ? <div className="server-log-empty">等待服务端日志…</div> : logs.map((item) => (
+                <div key={item.seq} className={'server-log-line is-' + item.level}>
+                  <time>{new Date(item.at).toLocaleTimeString('zh-CN', { hour12: false })}</time>
+                  <b>{item.level}</b>
+                  <span>{item.message}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        </>
+      )}
+    </div>
   );
 }
 
