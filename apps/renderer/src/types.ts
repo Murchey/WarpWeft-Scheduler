@@ -129,3 +129,5 @@ export interface SchoolData {
 }
 
 export type RunMode = 'single' | 'lan-server' | 'lan-client' | 'cloud';
+
+export type Commit = (next: SchoolData, options?: { invalidate?: boolean; immediate?: boolean }) => void;

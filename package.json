@@ -11,6 +11,7 @@
     "test": "npm run build:solver && node --test tests/*.test.cjs",
     "solver": "java -jar resources/solver/warpweft-solver.jar",
     "validate": "node scripts/validate-demo.cjs",
+    "load:lan": "node scripts/load-lan.cjs",
     "desktop": "electron .",
     "build:solver": "powershell -ExecutionPolicy Bypass -File services/solver-java/build.ps1",
     "dist:win": "npm run build && electron-builder --win nsis",

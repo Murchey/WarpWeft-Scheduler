@@ -12,8 +12,11 @@ function startLocalApi() {
     rootDir,
     dataDir,
     port: 4317,
-    host: process.env.WARPVEFT_HOST || '127.0.0.1',
+    // The persisted server config decides loopback vs LAN; WARPVEFT_HOST is
+    // kept as a development override.
+    host: process.env.WARPVEFT_HOST || undefined,
     packaged: app.isPackaged,
+    configFile: path.join(dataDir, 'server-config.json'),
   });
   instance.on('error', (error) => console.error('Local API error:', error));
   return instance;

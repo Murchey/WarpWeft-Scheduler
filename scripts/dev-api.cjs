@@ -2,5 +2,12 @@ const path = require('node:path');
 const { startApi } = require('../apps/desktop/api.cjs');
 
 const rootDir = path.resolve(__dirname, '..');
-startApi({ rootDir, dataDir: path.join(rootDir, 'data'), port: 4317, host: process.env.WARPVEFT_HOST || '127.0.0.1', packaged: false });
+startApi({
+  rootDir,
+  dataDir: path.join(rootDir, 'data'),
+  port: 4317,
+  host: process.env.WARPVEFT_HOST || undefined,
+  packaged: false,
+  configFile: path.join(rootDir, 'data', 'server-config.json'),
+});
 console.log('WarpWeft local API: http://127.0.0.1:4317');

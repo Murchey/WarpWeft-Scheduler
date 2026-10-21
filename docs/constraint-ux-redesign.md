@@ -13,17 +13,19 @@
 
 - 排课准备工作区、导入抽屉、批量时间段、批量教学计划。
 - 规则模型、规则卡片、规则构建器、影响预览、规则警告。
-- 8 条规则已接入 Java：教师每日上限、教师连续上限、教师半天无课、学科每日上限、学科时间偏好、避开首末节、学科分散、硬性连堂/双节。
+- 8 条规则已接入 Java：教师每日上限、教师连续上限、教师半天无课、学科每日上限、学科时间偏好、避开首末节、学科分散、硬性连堂/双节。连堂支持锁定课程保留并继续成对安排剩余课时。
 - 排课失败后保留在排课任务页，并显示未排原因。
 - 规则支持影响预览、近似冲突提醒、自然语言输入和“模拟放宽”。
 - 排课任务支持按班级/教师/规则局部重排，范围外课程保留位置。
-- 规则注册表已迁移到 packages/constraints，AvailabilityEditor 和 PlanComposer 已从 main.tsx 拆出。
+- PreparePage、ResourcesPage、PlansPage、AvailabilityEditor、PlanComposer、RulesPage、RunsPage 已从 main.tsx 拆出；页面统一从各自模块导入，共享的 selectors/runViews/runConfig 也已独立。
+- 规则注册表已迁移到 packages/constraints，PreparePage/ResourcesPage/PlansPage 等已从 main.tsx 拆出。
 - 15 项自动化测试通过。
 
 仍待：
 
-- 规则冲突的精确最小不可行集合（当前为近似检测）。
-- 继续拆分 PreparePage / ResourcesPage / PlansPage / RunsPage。
+- 规则冲突的精确最小不可行集合（当前为近似检测）：已拆为独立项目 ..\WarpWeft-FullSolver（以 MVP 求解器为可行性判定器，输出 MUS / 最小势冲突集）。
+- ~~RunsPage 仍在 main.tsx。~~（已拆出，见上）
+- Java 文件尚未分块：正在按 模型 / 规则 / 引擎 / 协议 四个包拆分（com.warpweft.solver.model|rules|engine|protocol），入口类与 jar 名称不变。
 
 ---
 
@@ -673,3 +675,16 @@ Java 端先支持 P0 中最有价值的 4~6 类：
 
 这份方案先做小、做实、可解释，再逐步扩展结构约束。  
 先把 8 条高频规则做对，比做 50 条没人看得懂的规则更有价值。
+## 页面与求解器拆分记录（2026-10-21）
+
+前端：`RunsPage` 从 `main.tsx` 拆到 `apps/renderer/src/RunsPage.tsx`（1190–1247 行原样迁出），同时把被多个页面复用的部分独立：
+
+- `selectors.ts`：`findClass/findTeacher/findRoom/findSubject/planOf/planSubjectName/missingPlans`
+- `runViews.tsx`：`EmptyState/RunProgressView/MissingReasons`
+- `runConfig.ts`：`RunPhase/RunProgress/RUN_STEPS/RUN_MODE_OPTIONS`
+
+`main.tsx` 1766 → 1607 行，改为从上述模块导入；`npm run build` 与 `npm test`（15 项）均通过。
+
+后端：`services/solver-java` 按 模型 / 规则 / 引擎 / 协议 四包拆分，入口类名与 jar 位置不变；详见 `README.md` 的 Solver 一节。
+
+完整求解器（精确最小冲突集）：独立项目 `..\WarpWeft-FullSolver`，`build.ps1` 构建、`verify.ps1` 三个场景验证（可行 / MUS / 最小势），与调度器只通过 solver input/output JSON 通信。

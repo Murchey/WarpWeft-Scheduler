@@ -5,3 +5,7 @@ export function uid(prefix: string): string {
       : Math.random().toString(36).slice(2);
   return prefix + '-' + random.slice(0, 8);
 }
+
+export function messageOf(value: unknown): string {
+  return value instanceof Error ? value.message : String(value);
+}
