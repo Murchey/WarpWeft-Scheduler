@@ -1,9 +1,24 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const seed = require('../../database/seeds/demo.json');
-
 function clone(value) {
   return structuredClone(value);
+}
+
+function emptyWorkspace() {
+  return {
+    school: { id: 'school-local', name: '未设置学校' },
+    classes: [], teachers: [], subjects: [], rooms: [], timeSlots: [], coursePlans: [],
+    unavailableSlots: [], softConstraints: [
+      { kind: 'SUBJECT_DISTRIBUTION', weight: 3 },
+      { kind: 'TEACHER_CONTINUOUS', weight: 2 },
+      { kind: 'TEACHER_GAPS', weight: 1 },
+      { kind: 'TEACHER_WORKLOAD_BALANCE', weight: 2 },
+    ], candidate: null, published: null, publishedVersions: [], auditLog: [],
+  };
+}
+
+function isDemoWorkspace(value) {
+  return value?.school?.id === 'school-demo' || value?.school?.name === '演示中学';
 }
 
 function writeJson(file, value) {
@@ -28,8 +43,8 @@ function openDatabase(rootDir, dataDir = path.join(rootDir, 'data')) {
       data = null;
     }
   }
-  if (!data || !Array.isArray(data.classes) || !Array.isArray(data.coursePlans)) {
-    data = clone(seed);
+  if (!data || !Array.isArray(data.classes) || !Array.isArray(data.coursePlans) || isDemoWorkspace(data)) {
+    data = emptyWorkspace();
     writeJson(file, data);
   }
   return {

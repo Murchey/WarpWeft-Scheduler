@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import demo from '../../../database/seeds/demo.json';
+import { HeroUIProvider, Button, Card, CardBody, Chip, Progress, Select, SelectItem, Tabs, Tab } from '@heroui/react';
 import { validateInput } from '../../../packages/validation/src';
 import { exportCsv, exportWorkbook, readWorkbook } from '../../../packages/import-export/src';
 import { loadData, saveData, solveSchedule } from './api';
@@ -19,31 +19,32 @@ import type {
 } from './types';
 import './style.css';
 
-const TABS = ['工作台', '基础资料', '教学计划', '排课任务', '课表调整', '报表发布'] as const;
+const TABS = ['工作台', '基础资料', '教学计划', '排课任务', '课表预览', '报表发布', '设置'] as const;
 type Tab = (typeof TABS)[number];
 const EN: Record<Tab, string> = {
   工作台: 'OVERVIEW',
   基础资料: 'RESOURCES',
   教学计划: 'COURSE PLANS',
   排课任务: 'SCHEDULE RUNS',
-  课表调整: 'TIMETABLE',
+  课表预览: 'TIMETABLE PREVIEW',
   报表发布: 'RELEASE',
+  设置: 'SETTINGS',
 };
 const DAYS = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 type SaveState = 'idle' | 'saving' | 'saved' | 'offline' | 'error';
 type View = 'class' | 'teacher' | 'room';
 type Commit = (next: SchoolData, options?: { invalidate?: boolean; immediate?: boolean }) => void;
-type RunPhase = 'idle' | 'preparing' | 'solving' | 'finalizing' | 'completed' | 'failed';
+type RunPhase = 'idle' | 'checking' | 'preparing' | 'solving' | 'finalizing' | 'completed' | 'failed';
 interface RunProgress { phase: RunPhase; message: string; startedAt?: number; }
 
 const RUN_STEPS: { phase: RunPhase; label: string }[] = [
+  { phase: 'checking', label: '检查' },
   { phase: 'preparing', label: '准备' },
   { phase: 'solving', label: '计算' },
   { phase: 'finalizing', label: '保存' },
   { phase: 'completed', label: '完成' },
 ];
 
-const demoData = structuredClone(demo) as unknown as SchoolData;
 
 const RUN_MODE_OPTIONS: { value: RunMode; title: string; english: string; description: string; endpoint: string }[] = [
   { value: 'single', title: '单机', english: 'SINGLE MACHINE', description: '数据和 Solver 都运行在本机，适合个人教务工作站。', endpoint: 'http://127.0.0.1:4317' },
@@ -398,6 +399,12 @@ function EditableTable<T extends { id: string }>({
 }
 
 function RunProgressView({ progress }: { progress: RunProgress }) {
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if (!progress.startedAt || progress.phase === 'completed' || progress.phase === 'failed' || progress.phase === 'idle') return;
+    const timer = window.setInterval(() => forceTick((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [progress.phase, progress.startedAt]);
   const activeIndex = progress.phase === 'failed' ? 2 : progress.phase === 'idle' ? -1 : RUN_STEPS.findIndex((step) => step.phase === progress.phase);
   return (
     <div className={'run-progress ' + progress.phase} aria-live="polite">
@@ -408,9 +415,14 @@ function RunProgressView({ progress }: { progress: RunProgress }) {
       <div className="run-progress-track">
         {RUN_STEPS.map((step, index) => <div key={step.phase} className={'run-progress-step' + (index <= activeIndex ? ' active' : '') + (step.phase === progress.phase ? ' current' : '')}><i /> <span>{step.label}</span></div>)}
       </div>
+      <Progress className="hero-ui-progress" size="sm" aria-label="排课阶段进度" value={activeIndex < 0 ? 0 : ((activeIndex + 1) / RUN_STEPS.length) * 100} color={progress.phase === 'failed' ? 'danger' : 'primary'} />
       {progress.phase === 'solving' ? <div className="run-progress-pulse" /> : null}
     </div>
   );
+}
+
+function EmptyDataScreen({ message, onRetry, onSettings }: { message: string; onRetry: () => void; onSettings: () => void }) {
+  return <div className="empty-data-screen"><div className="empty-data-mark">W</div><span className="kicker">// WORKSPACE NOT LOADED</span><h1>还没有加载工作区</h1><p>{message || '请启动本地服务，或检查运行模式中的服务地址。'}</p><div className="hero-actions"><button className="action-button" onClick={onRetry}>重新连接 <span>↗</span></button><button className="ghost-button" onClick={onSettings}>打开设置</button></div></div>;
 }
 
 function App() {
@@ -432,6 +444,7 @@ function App() {
   });
   const [modeSettingsOpen, setModeSettingsOpen] = useState(false);
   const [data, setData] = useState<SchoolData | null>(null);
+  const [loadError, setLoadError] = useState('');
   const [result, setResult] = useState<SolverOutput | null>(null);
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('idle');
@@ -460,18 +473,15 @@ function App() {
       .then((loaded) => {
         if (cancelled) return;
         setData(loaded);
+        setLoadError('');
         setApiOnline(true);
         setSelectedClassId(loaded.classes[0]?.id ?? '');
         setResult(loaded.candidate ?? loaded.published ?? null);
       })
       .catch(() => {
         if (cancelled) return;
-        const fallback = structuredClone(demoData);
-        setData(fallback);
         setApiOnline(false);
-        setSaveState('offline');
-        setSelectedClassId(fallback.classes[0]?.id ?? '');
-        setResult(fallback.candidate ?? null);
+        setLoadError('本地服务未连接，当前没有加载任何测试数据。');
       });
     return () => {
       cancelled = true;
@@ -563,6 +573,7 @@ function App() {
 
   const run = async () => {
     if (!data || running) return;
+    setProgress({ phase: 'checking', message: '正在检查排课配置', startedAt: Date.now() });
     const issues = preflight(data);
     if (issues.length > 0) {
       setProgress({ phase: 'failed', message: '配置检查未通过，请先处理提示项' });
@@ -572,10 +583,11 @@ function App() {
     }
     const locked = data.candidate?.entries.filter((entry) => entry.locked) ?? [];
     if (locked.length > 0 && !window.confirm('重新排课会重新计算全部课程，已锁定的课程会保留在原位置。继续？')) {
+      setProgress({ phase: 'idle', message: '等待开始排课' });
       return;
     }
     setRunning(true);
-    setProgress({ phase: 'preparing', message: '正在检查配置并准备排课数据', startedAt: Date.now() });
+    setProgress({ phase: 'preparing', message: '正在整理锁定课程和 Solver 输入', startedAt: Date.now() });
     setError('');
     setNotice('');
     try {
@@ -588,11 +600,11 @@ function App() {
       pending.current = updated;
       if (apiOnline) {
         setSaveState('saving');
-        void flush(updated);
+        await flush(updated);
       }
       setSelectedEntryId('');
       setHistory([]);
-      setTab('课表调整');
+      setTab('课表预览');
       if (output.hasFeasibleSolution) {
         setProgress({ phase: 'completed', message: '排课完成：共 ' + output.entries.length + ' 条课表', startedAt: Date.now() });
         setNotice('排课完成：共 ' + output.entries.length + ' 条课表');
@@ -622,7 +634,13 @@ function App() {
       return;
     }
     if (moving.slotId === targetSlotId) return;
-    setHistory((current) => [...current.slice(-19), result]);
+    const blocking = result.entries.find((entry) => entry.id !== moving.id && entry.id !== target?.id && entry.slotId === targetSlotId && (
+      entry.teacherId === moving.teacherId || entry.roomId === moving.roomId
+    ));
+    if (blocking) {
+      setError('目标时间已有同一教师或教室的课程，不能移动到这里');
+      return;
+    }
     const entries = result.entries.map((entry) => ({ ...entry }));
     const source = entries.find((entry) => entry.id === moving.id);
     if (!source) return;
@@ -637,6 +655,12 @@ function App() {
       source.slotId = targetSlotId;
     }
     source.source = 'MANUAL';
+    const conflicts = conflictIds(entries);
+    if (conflicts.has(source.id) || (target && conflicts.has(target.id))) {
+      setError('调整后会产生教师、教室或班级冲突，请选择其他时间');
+      return;
+    }
+    setHistory((current) => [...current.slice(-19), result]);
     applyResult({ ...result, entries });
   };
 
@@ -708,6 +732,9 @@ function App() {
   }
 
   if (!data) {
+    if (apiOnline === false) {
+      return <EmptyDataScreen message={loadError} onRetry={() => window.location.reload()} onSettings={() => setRunMode(null)} />;
+    }
     return (
       <div className="boot-screen">
         <div className="boot-mark">W</div>
@@ -761,7 +788,7 @@ function App() {
         <div className="rail-footer">
           <span>DATA SOURCE</span>
           <strong>{data.school.name}</strong>
-          <small>{apiOnline === false ? 'DEMO DATA / NOT SAVED' : 'LOCAL FILE / OFFLINE'}</small>
+          <small>{apiOnline === false ? 'LOCAL DATA / NOT SAVED' : 'LOCAL FILE / OFFLINE'}</small>
           <small>{data.updatedAt ? '更新 ' + fmtTime(data.updatedAt) : '尚未保存'}</small>
         </div>
       </aside>
@@ -776,6 +803,7 @@ function App() {
               <i />
               {apiOnline === null ? '连接本地服务…' : apiOnline ? '本地服务在线' : '本地服务未连接'}
             </span>
+            {running ? <span className="run-phase-pill">{progress.message}</span> : null}
             {saveLabel ? <span className={'save-state ' + saveState}>{saveLabel}</span> : null}
             <button className="mode-pill" onClick={() => setModeSettingsOpen(true)} title="修改运行模式">
               运行：{RUN_MODE_OPTIONS.find((item) => item.value === runMode)?.title}
@@ -792,7 +820,7 @@ function App() {
         </header>
         {apiOnline === false ? (
           <Banner tone="warning" title="本地服务未连接">
-            当前展示的是内置演示数据，修改不会保存。请通过桌面端启动，或先运行 <code>npm run dev:api</code> 再打开界面。
+            当前服务未连接，修改不会保存。请通过桌面端启动，或先运行 <code>npm run dev:api</code> 再打开界面。
           </Banner>
         ) : null}
         {error ? (
@@ -812,9 +840,8 @@ function App() {
             issues={issues}
             running={running}
             progress={progress}
-            onPrepare={() => setTab('教学计划')}
-            onRun={run}
-            onTimetable={() => setTab('课表调整')}
+            onPrepare={() => setTab('排课任务')}
+            onTimetable={() => setTab('课表预览')}
           />
         ) : null}
         {tab === '基础资料' ? <ResourcesPage data={data} commit={commit} setError={setError} /> : null}
@@ -827,14 +854,15 @@ function App() {
             issues={issues}
             running={running}
             progress={progress}
+            runMode={runMode}
             timeLimit={timeLimit}
             setTimeLimit={setTimeLimit}
             onRun={run}
-            onTimetable={() => setTab('课表调整')}
+            onTimetable={() => setTab('课表预览')}
             onClear={clearCandidate}
           />
         ) : null}
-        {tab === '课表调整' ? (
+        {tab === '课表预览' ? (
           <TimetablePage
             data={data}
             result={result}
@@ -848,7 +876,7 @@ function App() {
             onToggleLock={toggleLock}
             onUndo={undo}
             canUndo={history.length > 0}
-            onRun={run}
+            onRun={() => setTab('排课任务')}
             running={running}
             onExportCsv={exportCsvFile}
             onExportExcel={exportExcelFile}
@@ -864,11 +892,12 @@ function App() {
             onExportExcel={exportExcelFile}
             onPrint={() => {
               if (!result) return;
-              setTab('课表调整');
+              setTab('课表预览');
               window.setTimeout(() => window.print(), 350);
             }}
           />
         ) : null}
+        {tab === '设置' ? <SettingsPage runMode={runMode} theme={theme} onThemeChange={setTheme} onEditMode={() => setModeSettingsOpen(true)} apiOnline={apiOnline} data={data} commit={commit} /> : null}
       </main>
       {modeSettingsOpen ? <RuntimeModeDialog current={runMode} onSave={saveRunMode} onClose={() => setModeSettingsOpen(false)} /> : null}
     </div>
@@ -881,15 +910,15 @@ function Dashboard({
   issues,
   running,
   onPrepare,
-  onRun,
+  progress,
   onTimetable,
 }: {
   data: SchoolData;
   result: SolverOutput | null;
   issues: string[];
   running: boolean;
+  progress: RunProgress;
   onPrepare: () => void;
-  onRun: () => void;
   onTimetable: () => void;
 }) {
   const periods = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
@@ -955,6 +984,7 @@ function Dashboard({
           <div className="mechanical-progress">
             <i style={{ width: ready ? '100%' : '42%' }} />
           </div>
+          {progress.phase !== 'idle' ? <RunProgressView progress={progress} /> : null}
           <div className="field-row">
             <span>DATA SNAPSHOT</span>
             <b>{data.updatedAt ? fmtTime(data.updatedAt) : 'LOCAL'}</b>
@@ -962,8 +992,8 @@ function Dashboard({
             <b>{data.coursePlans.length}</b>
           </div>
           <div className="hero-actions">
-            <button className="action-button" onClick={onRun} disabled={running || !ready}>
-              {running ? '计算中…' : '开始排课'} <span>↗</span>
+            <button className="action-button" onClick={onPrepare} disabled={running}>
+              {running ? '计算中…' : '进入排课向导'} <span>→</span>
             </button>
             {result ? (
               <button className="ghost-button" onClick={onTimetable}>
@@ -1000,6 +1030,12 @@ function Dashboard({
       </section>
     </>
   );
+}
+
+function SettingsPage({ runMode, theme, onThemeChange, onEditMode, apiOnline, data, commit }: { runMode: RunMode | null; theme: 'light' | 'dark'; onThemeChange: (theme: 'light' | 'dark') => void; onEditMode: () => void; apiOnline: boolean | null; data: SchoolData; commit: Commit }) {
+  const mode = RUN_MODE_OPTIONS.find((item) => item.value === runMode);
+  const endpoint = window.localStorage.getItem('warpweft-runtime-endpoint') || 'http://127.0.0.1:4317';
+  return <div className="settings-layout"><Card className="business-card settings-card"><CardBody><SectionHeading english="RUNTIME" title="运行模式" /><p className="panel-note">决定数据和排课服务连接到哪里。修改后会重新连接工作区。</p><div className="settings-value"><span>当前模式</span><strong>{mode?.title ?? '未选择'}</strong><small>{mode?.english ?? 'NOT CONFIGURED'}</small></div><div className="settings-value"><span>服务地址</span><strong className="settings-endpoint">{endpoint}</strong></div><Button color="primary" onPress={onEditMode}>修改运行模式</Button></CardBody></Card><Card className="business-card settings-card"><CardBody><SectionHeading english="APPEARANCE" title="外观" /><p className="panel-note">调整工作台的显示主题。</p><Tabs selectedKey={theme} onSelectionChange={(key) => onThemeChange(String(key) as 'light' | 'dark')} aria-label="主题"><Tab key="light" title="浅色" /><Tab key="dark" title="深色" /></Tabs><div className="settings-value"><span>深色背景</span><strong>#1C1C1C</strong></div></CardBody></Card><Card className="business-card settings-card"><CardBody><SectionHeading english="WORKSPACE" title="当前工作区" /><label className="settings-value"><span>学校名称</span><input className="settings-input" value={data.school.name} onChange={(event) => commit({ ...data, school: { ...data.school, name: event.target.value } })} /></label><div className="settings-stats"><span>班级 <b>{data.classes.length}</b></span><span>教师 <b>{data.teachers.length}</b></span><span>教学计划 <b>{data.coursePlans.length}</b></span><span>服务状态 <Chip size="sm" color={apiOnline ? 'success' : 'warning'}>{apiOnline ? '在线' : apiOnline === false ? '离线' : '检测中'}</Chip></span></div><p className="panel-note">工作区数据由当前服务端管理。设置页不会自动填充演示数据。</p></CardBody></Card></div>;
 }
 
 function ResourcesPage({
@@ -1338,127 +1374,31 @@ function PlansPage({
   );
 }
 
-function RunsPage({
-  data,
-  commit,
-  result,
-  issues,
-  running,
-  timeLimit,
-  setTimeLimit,
-  onRun,
-  onTimetable,
-  onClear,
-}: {
-  data: SchoolData;
-  commit: Commit;
-  result: SolverOutput | null;
-  issues: string[];
-  running: boolean;
-  timeLimit: number;
-  setTimeLimit: (value: number) => void;
-  onRun: () => void;
-  onTimetable: () => void;
-  onClear: () => void;
+function RunsPage({ data, commit, result, issues, running, progress, timeLimit, setTimeLimit, onRun, onTimetable, onClear, runMode }: {
+  data: SchoolData; commit: Commit; result: SolverOutput | null; issues: string[]; running: boolean; progress: RunProgress;
+  timeLimit: number; setTimeLimit: (value: number) => void; onRun: () => void; onTimetable: () => void; onClear: () => void; runMode?: RunMode | null;
 }) {
   const expected = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
   const missing = result ? missingPlans(data, result) : [];
   const soft = data.softConstraints ?? [
-    { kind: 'SUBJECT_DISTRIBUTION' as const, weight: 3 },
-    { kind: 'TEACHER_CONTINUOUS' as const, weight: 2 },
-    { kind: 'TEACHER_GAPS' as const, weight: 1 },
-    { kind: 'TEACHER_WORKLOAD_BALANCE' as const, weight: 2 },
+    { kind: 'SUBJECT_DISTRIBUTION' as const, weight: 3 }, { kind: 'TEACHER_CONTINUOUS' as const, weight: 2 },
+    { kind: 'TEACHER_GAPS' as const, weight: 1 }, { kind: 'TEACHER_WORKLOAD_BALANCE' as const, weight: 2 },
   ];
   const labels: Record<string, string> = { SUBJECT_DISTRIBUTION: '学科分布', TEACHER_CONTINUOUS: '教师连堂', TEACHER_GAPS: '教师空档', TEACHER_WORKLOAD_BALANCE: '教师日负荷均衡' };
-  return (
-    <div className="runs-layout">
-      <section className="section-panel">
-        <div className="panel-head">
-          <SectionHeading english="PREFLIGHT" title="排课前检查" />
-          <span className={issues.length ? 'status-tag danger' : 'status-tag'}>{issues.length ? issues.length + ' 项待处理' : '通过'}</span>
-        </div>
-        {issues.length ? (
-          <ul className="issue-list">
-            {issues.map((issue) => (
-              <li key={issue}>{issue}</li>
-            ))}
-          </ul>
-        ) : (
-          <p className="panel-note success-note">数据检查通过。当前每周 {expected} 课时，可用时间格 {data.timeSlots.length} 个。</p>
-        )}
-        <div className="run-controls">
-          <label>
-            计算时限
-            <select value={timeLimit} onChange={(event) => setTimeLimit(Number(event.target.value))}>
-              <option value={10}>10 秒</option>
-              <option value={30}>30 秒</option>
-              <option value={60}>60 秒</option>
-              <option value={120}>120 秒</option>
-            </select>
-          </label>
-          <button className="action-button" onClick={onRun} disabled={running || issues.length > 0}>
-            {running ? '正在计算…' : '创建并开始任务'} <span>↗</span>
-          </button>
-        </div>
-        <div className="soft-rules"><h3>软约束权重</h3>{soft.map((rule) => <label key={rule.kind}>{labels[rule.kind]}<input type="range" min={0} max={10} value={rule.weight} onChange={(event) => commit({ ...data, softConstraints: soft.map((item) => item.kind === rule.kind ? { ...item, weight: Number(event.target.value) } : item) })} /><output>{rule.weight}</output></label>)}</div>
-      </section>
-      <section className="section-panel">
-        <div className="panel-head">
-          <SectionHeading english="CURRENT CANDIDATE" title="当前候选" />
-          <span className={result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{result?.status ?? '尚未生成'}</span>
-        </div>
-        {result ? (
-          <div className="result-summary">
-            <div className="summary-grid">
-              <div>
-                <span>已排课时</span>
-                <b>{result.entries.length}</b>
-              </div>
-              <div>
-                <span>计划课时</span>
-                <b>{expected}</b>
-              </div>
-              <div>
-                <span>未排课时</span>
-                <b>{Math.max(0, expected - result.entries.length)}</b>
-              </div>
-              <div>
-                <span>耗时</span>
-                <b>{result.elapsedMs} ms</b>
-              </div>
-            </div>
-            <p className="panel-note">{result.explanation || '求解器没有返回说明。'}</p>
-            {result.hardConstraintViolations.length ? (
-              <ul className="issue-list">
-                {result.hardConstraintViolations.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            ) : null}
-            {missing.length ? (
-              <ul className="issue-list">
-                {missing.map((item) => (
-                  <li key={item.plan.id}>
-                    {findClass(data, item.plan.classId)?.name ?? item.plan.classId} · {planSubjectName(data, item.plan)} 还缺 {item.missing} 课时
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            <div className="hero-actions">
-              <button className="action-button" onClick={onTimetable}>
-                查看并调整课表 <span>→</span>
-              </button>
-              <button className="ghost-button" onClick={onClear}>
-                清空候选
-              </button>
-            </div>
-          </div>
-        ) : (
-          <EmptyState title="尚未生成候选课表" message="确认检查通过后，点击“创建并开始任务”。" />
-        )}
-      </section>
+  const checked = issues.length === 0;
+  const canConfigure = checked && !running;
+  const lockedCount = data.candidate?.entries.filter((entry) => entry.locked).length ?? 0;
+  const modeLabel = RUN_MODE_OPTIONS.find((item) => item.value === runMode)?.title ?? '当前模式';
+  return <div className="runs-wizard">
+    <section className="section-panel wizard-intro"><SectionHeading english="SCHEDULE RUN" title="排课向导" /><p className="panel-note">按 01 → 02 → 03 → 04 完成配置。数据检查未通过时，后续步骤会锁定。</p><div className="wizard-stepper">{['数据检查', '约束与权重', '计算设置', '开始排课'].map((label, index) => <div key={label} className={'wizard-stepper-item ' + (index === 0 && checked || index > 0 && canConfigure ? 'done' : '')}><b>0{index + 1}</b><span>{label}</span></div>)}</div>{progress.phase !== 'idle' ? <RunProgressView progress={progress} /> : null}</section>
+    <div className="wizard-grid">
+      <section className="section-panel wizard-card"><div className="wizard-card-head"><span className="wizard-number">01</span><div><span className="kicker">PREFLIGHT</span><h2>数据检查</h2></div><span className={issues.length ? 'status-tag danger' : 'status-tag'}>{issues.length ? issues.length + ' 项待处理' : '通过'}</span></div>{issues.length ? <ul className="issue-list">{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul> : <p className="panel-note success-note">检查通过：{expected} 周课时、{data.timeSlots.length} 个可用时间格。</p>}<div className="hero-actions"><button className="ghost-button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>回到顶部查看状态</button></div></section>
+      <section className={'section-panel wizard-card ' + (!checked ? 'wizard-locked' : '')}><div className="wizard-card-head"><span className="wizard-number">02</span><div><span className="kicker">SOFT RULES</span><h2>约束与权重</h2></div><span className="status-tag">{checked ? '可配置' : '待检查'}</span></div>{!checked ? <p className="panel-note">请先修复第 01 步的问题。</p> : <div className="soft-rules">{soft.map((rule) => <label key={rule.kind}>{labels[rule.kind]}<input type="range" min={0} max={10} value={rule.weight} disabled={!canConfigure} onChange={(event) => commit({ ...data, softConstraints: soft.map((item) => item.kind === rule.kind ? { ...item, weight: Number(event.target.value) } : item) })} /><output>{rule.weight}</output></label>)}</div>}</section>
+      <section className={'section-panel wizard-card ' + (!checked ? 'wizard-locked' : '')}><div className="wizard-card-head"><span className="wizard-number">03</span><div><span className="kicker">SOLVER SETTINGS</span><h2>计算设置</h2></div><span className="status-tag">{checked ? '已就绪' : '待检查'}</span></div>{!checked ? <p className="panel-note">完成数据检查后配置计算时限。</p> : <><div className="run-controls"><label>计算时限<select value={timeLimit} disabled={!canConfigure} onChange={(event) => setTimeLimit(Number(event.target.value))}><option value={10}>10 秒</option><option value={30}>30 秒</option><option value={60}>60 秒</option><option value={120}>120 秒</option></select></label></div><div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div></>}</section>
+      <section className={'section-panel wizard-card wizard-final ' + (!checked ? 'wizard-locked' : '')}><div className="wizard-card-head"><span className="wizard-number">04</span><div><span className="kicker">RUN SCHEDULE</span><h2>开始排课</h2></div><span className={result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{result ? result.status : '尚未运行'}</span></div>{result && lockedCount > 0 ? <p className="panel-note">本次重新排课将保留 {lockedCount} 条锁定课程的位置。</p> : <p className="panel-note">确认前面三步后，开始生成候选课表。</p>}<button className="action-button wizard-run-button" onClick={onRun} disabled={!checked || running}>{running ? '正在计算…' : result ? '确认配置并重新排课' : '确认配置并开始排课'} <span>↗</span></button></section>
     </div>
-  );
+    <section className="section-panel candidate-panel"><div className="panel-head"><SectionHeading english="CURRENT CANDIDATE" title="当前候选" /><span className={result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{result?.status ?? '尚未生成'}</span></div>{result ? <div className="result-summary"><div className="summary-grid"><div><span>已排课时</span><b>{result.entries.length}</b></div><div><span>计划课时</span><b>{expected}</b></div><div><span>未排课时</span><b>{Math.max(0, expected - result.entries.length)}</b></div><div><span>耗时</span><b>{result.elapsedMs} ms</b></div></div><p className="panel-note">{result.explanation || '求解器没有返回说明。'}</p>{result.hardConstraintViolations.length ? <ul className="issue-list">{result.hardConstraintViolations.map((item) => <li key={item}>{item}</li>)}</ul> : null}{missing.length ? <ul className="issue-list">{missing.map((item) => <li key={item.plan.id}>{findClass(data, item.plan.classId)?.name ?? item.plan.classId} · {planSubjectName(data, item.plan)} 还缺 {item.missing} 课时</li>)}</ul> : null}<div className="hero-actions"><button className="action-button" onClick={onTimetable}>查看并调整课表 <span>→</span></button><button className="ghost-button" onClick={onClear}>清空候选</button></div></div> : <EmptyState title="尚未生成候选课表" message="完成向导后，候选课表会显示在这里。" />}</section>
+  </div>;
 }
 
 function TimetablePage({
@@ -1533,50 +1473,22 @@ function TimetablePage({
   return (
     <div className="timetable-layout">
       <section className="section-panel">
+        <div className="timetable-page-head"><div><span className="kicker">// TIMETABLE WORKSPACE</span><h2>课表预览与手动调整</h2><p>选择班级、教师或教室查看课表；在班级视图中拖动课程即可调整时间。</p></div><Chip color={result.hasFeasibleSolution ? 'success' : 'warning'} variant="flat">{result.status}</Chip></div>
         <div className="toolbar">
-          <div className="segmented" aria-label="课表视图">
-            {[
-              ['class', '班级'],
-              ['teacher', '教师'],
-              ['room', '教室'],
-            ].map(([value, label]) => (
-              <button
-                key={value}
-                className={view === value ? 'active' : ''}
-                onClick={() => setView(value as View)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <label className="select-inline">
-            {viewLabel}
-            <select value={entityId} onChange={(event) => setEntityId(event.target.value)}>
-              {entities.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Tabs selectedKey={view} onSelectionChange={(key) => setView(String(key) as View)} aria-label="课表视图">
+            <Tab key="class" title="班级视图" />
+            <Tab key="teacher" title="教师视图" />
+            <Tab key="room" title="教室视图" />
+          </Tabs>
+          <Select className="business-select" label={viewLabel} selectedKeys={entityId ? [entityId] : []} onSelectionChange={(keys) => setEntityId(Array.from(keys)[0] as string)}>
+            {entities.map((item) => <SelectItem key={item.id}>{item.name}</SelectItem>)}
+          </Select>
           <div className="toolbar-spacer" />
-          {selected ? (
-            <button className="mini-button" onClick={() => onToggleLock(selected.id)}>
-              {selected.locked ? '解锁选中' : '锁定选中'}
-            </button>
-          ) : null}
-          <button className="ghost-button" onClick={onUndo} disabled={!canUndo}>
-            撤销
-          </button>
-          <button className="ghost-button" onClick={onRun} disabled={running}>
-            {running ? '计算中…' : '重新排课'}
-          </button>
-          <button className="ghost-button" onClick={onExportCsv}>
-            导出 CSV
-          </button>
-          <button className="ghost-button" onClick={onExportExcel}>
-            导出 Excel
-          </button>
+          {selected ? <Button size="sm" color={selected.locked ? 'default' : 'primary'} onPress={() => onToggleLock(selected.id)}>{selected.locked ? '解锁选中' : '锁定选中'}</Button> : null}
+          <Button size="sm" variant="flat" onPress={onUndo} isDisabled={!canUndo}>撤销</Button>
+          <Button size="sm" variant="flat" onPress={onRun} isDisabled={running}>前往排课向导</Button>
+          <Button size="sm" variant="flat" onPress={onExportCsv}>导出 CSV</Button>
+          <Button size="sm" variant="flat" onPress={onExportExcel}>导出 Excel</Button>
         </div>
         {view === 'class' ? (
           <p className="panel-note">拖动课程卡片可以移动或交换时间；锁定后重新排课会保留该课程位置。</p>
@@ -1766,4 +1678,4 @@ function ReleasePage({
   );
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+createRoot(document.getElementById('root')!).render(<HeroUIProvider><App /></HeroUIProvider>);

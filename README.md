@@ -1,6 +1,6 @@
 # WarpWeft Scheduler
 
-单机小规模排课 MVP：Electron/React 界面、本地 JSON 数据层、独立 Python Solver。
+单机小规模排课 MVP：Electron/React + HeroUI 商务界面、本地 JSON 数据层、独立 Python Solver。
 
 ## 已实现
 
@@ -9,7 +9,7 @@
 - 排课前检查：重复编码、缺失引用、班级/教师课时上限、教室容量、固定时间冲突
 - 本地自动排课：Electron 主进程启动本地 API，Solver 通过标准 JSON 通信
 - 周课表网格：按班级/教师/教室查看，显示课程、教师、教室和冲突
-- 课表调整：拖动移动/交换、锁定、撤销；重新排课时保留锁定课程
+- 课表预览与调整：独立页面按班级/教师/教室查看，拖动移动/交换、锁定、撤销；冲突移动会被阻止，重新排课时保留锁定课程
 - 候选与正式版：自动保存候选，可保存为正式版
 - 报表发布：导出 Excel、CSV、打印课表
 - 深色/浅色主题；深色模式使用低饱和黄铜色作为强调色
@@ -57,7 +57,7 @@ npm run dist:win
 
 - 开发模式数据文件：`data/warpweft.json`
 - 安装版数据文件：Electron 的 `userData/warpweft.json`
-- 首次启动自动从 `database/seeds/demo.json` 写入演示数据
+- 首次启动创建空工作区，不会向软件界面注入演示或测试数据；`database/seeds/demo.json` 仅供 Solver 自动化测试使用
 - Excel 导入按工作表名称识别“班级/教师/学科/教室”，导入后会触发候选课表失效并写入本地 JSON
 - Electron 33 自带的 Node 20 不包含 `node:sqlite`，因此当前 MVP 使用单文件 JSON 存储；数据访问层保留了 `read()/write()` 形态，后续可替换为 SQLite 适配器
 - 打包版界面由本地 HTTP 服务（`http://127.0.0.1:4317/`）提供，避免 `file://` 下 ES module 被拦截导致白屏

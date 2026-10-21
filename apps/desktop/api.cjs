@@ -66,11 +66,30 @@ function validateData(data) {
   const classIds = new Set(data.classes.map((item) => item.id));
   const teacherIds = new Set(data.teachers.map((item) => item.id));
   const subjectIds = new Set(data.subjects.map((item) => item.id));
+  const roomIds = new Set(data.rooms.map((item) => item.id));
+  const slotIds = new Set(data.timeSlots.map((item) => item.id));
+  for (const room of data.rooms) {
+    if (!(Number(room.capacity) > 0)) return '教室 ' + room.id + ' 的容量必须大于 0';
+  }
+  for (const slot of data.timeSlots) {
+    if (!(Number(slot.day) > 0) || !(Number(slot.period) > 0)) return '时间段 ' + slot.id + ' 的星期和节次必须大于 0';
+  }
   for (const plan of data.coursePlans) {
     if (!classIds.has(plan.classId)) return '教学计划 ' + plan.id + ' 引用了不存在的班级';
     if (!teacherIds.has(plan.teacherId)) return '教学计划 ' + plan.id + ' 引用了不存在的教师';
     if (!subjectIds.has(plan.subjectId)) return '教学计划 ' + plan.id + ' 引用了不存在的学科';
+    if (plan.fixedSlotId && !slotIds.has(plan.fixedSlotId)) return '教学计划 ' + plan.id + ' 引用了不存在的固定时间';
     if (!(Number(plan.weeklyPeriods) > 0)) return '教学计划 ' + plan.id + ' 的周课时必须大于 0';
+  }
+  for (const item of data.unavailableSlots || []) {
+    if (!teacherIds.has(item.teacherId)) return '教师不可用时间引用了不存在的教师';
+    if (!slotIds.has(item.slotId)) return '教师不可用时间引用了不存在的时间段';
+  }
+  for (const collection of [data.candidate, data.published]) {
+    if (!collection || !Array.isArray(collection.entries)) continue;
+    for (const entry of collection.entries) {
+      if (!classIds.has(entry.classId) || !teacherIds.has(entry.teacherId) || !roomIds.has(entry.roomId) || !slotIds.has(entry.slotId)) return '课表条目 ' + entry.id + ' 引用了不存在的资源';
+    }
   }
   return null;
 }
