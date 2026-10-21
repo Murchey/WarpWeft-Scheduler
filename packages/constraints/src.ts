@@ -193,13 +193,12 @@ export const RULE_DEFINITIONS: RuleDefinition[] = [
     kind: 'DOUBLE_PERIOD',
     category: 'structure',
     label: '连堂/双节',
-    description: '让同一学科尽量连续排两节；当前版本是软偏好，不强制占用连续时间格。',
+    description: '为指定学科安排连续两节；当前版本会成对占用连续时间格。',
     scopeType: 'subject',
-    importanceOptions: ['prefer'],
-    defaultImportance: 'prefer',
+    importanceOptions: ['must'],
+    defaultImportance: 'must',
     paramFields: [{ key: 'periods', label: '连续节数', type: 'number', min: 2, max: 4 }],
     available: true,
-    supportNote: '当前版本以软偏好方式鼓励连堂，硬性连续排课仍在后续阶段。',
   },
 ];
 
@@ -275,7 +274,7 @@ export function describeRule(rule: RuleInstance, data: RuleData): string {
     case 'SUBJECT_TIME_PREFERENCE': return scope + ' 尽量安排在' + (rule.params.preference === 'afternoon' ? '下午' : '上午');
     case 'SUBJECT_AVOID_FIRST_LAST': return scope + ' 避免' + (rule.params.avoid === 'last' ? '最后一节' : '第一节');
     case 'SUBJECT_SPREAD': return scope + ' 分散到一周（每天最多 ' + max + ' 节）';
-    case 'DOUBLE_PERIOD': return scope + ' 尽量连续排 ' + Number(rule.params.periods ?? 2) + ' 节';
+    case 'DOUBLE_PERIOD': return scope + ' 连续排 ' + Number(rule.params.periods ?? 2) + ' 节';
     default: return definition.label;
   }
 }
@@ -333,6 +332,12 @@ export function ruleWarnings(rule: RuleInstance, data: RuleData, allRules: RuleI
     const halfDays = new Set(data.timeSlots.map((slot) => slot.day)).size * 2 || 10;
     if (!Number.isFinite(min) || min < 1) warnings.push('半天无课目标至少为 1。');
     if (min > halfDays) warnings.push('目标超过可用半天数（约 ' + halfDays + ' 个）。');
+  }
+  if (rule.kind === 'DOUBLE_PERIOD') {
+    for (const plan of plans) {
+      if (plan.weeklyPeriods < 2) warnings.push('周课时少于 2 节，无法形成连堂。');
+      else if (plan.weeklyPeriods % 2 === 1) warnings.push('周课时为奇数，最后一节会单排。');
+    }
   }
   if (rule.importance === 'must' && definition.available) {
     warnings.push('设为“必须”可能导致无解；建议先用“尽量”试排。');
@@ -440,7 +445,7 @@ export function parseRuleText(text: string, data: RuleData): ParsedRuleText {
     return { rule: { ...base, kind: 'TEACHER_MAX_CONSECUTIVE', scope: { type: 'teacher', teacherId: teacher.id }, importance, params: { maxConsecutive: numberInText(source, 2) } } };
   }
   if (subject && (source.includes('连堂') || source.includes('连续'))) {
-    return { rule: { ...base, kind: 'DOUBLE_PERIOD', scope: { type: 'subject', subjectId: subject.id }, importance: 'prefer', params: { periods: numberInText(source, 2) } } };
+    return { rule: { ...base, kind: 'DOUBLE_PERIOD', scope: { type: 'subject', subjectId: subject.id }, importance: 'must', params: { periods: numberInText(source, 2) } } };
   }
   if (subject && (source.includes('上午') || source.includes('下午')) && !source.includes('不')) {
     return { rule: { ...base, kind: 'SUBJECT_TIME_PREFERENCE', scope: { type: 'subject', subjectId: subject.id }, importance: 'prefer', params: { preference: source.includes('下午') ? 'afternoon' : 'morning' } } };

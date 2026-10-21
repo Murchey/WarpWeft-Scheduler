@@ -50,6 +50,12 @@ public final class WarpWeftSolver {
             return true;
         }
 
+        boolean matchesPlan(String teacherId, String subjectId) {
+            if ("teacher".equals(scopeType) && !scopeId.equals(teacherId)) return false;
+            if ("subject".equals(scopeType) && !scopeId.equals(subjectId)) return false;
+            return true;
+        }
+
         int number(String key, int fallback) {
             JsonNode value = params == null ? null : params.get(key);
             return value == null || value.isNull() ? fallback : value.asInt(fallback);
@@ -67,6 +73,7 @@ public final class WarpWeftSolver {
         final Map<String, Integer> teacherLoad = new HashMap<>();
         final List<Entry> entries = new ArrayList<>();
         final List<Rule> rules = new ArrayList<>();
+        final Set<String> pairedPlans = new HashSet<>();
 
         State(Map<String, Slot> sourceSlots, Map<String, Room> sourceRooms, Map<String, ClassInfo> sourceClasses, Set<String> sourceUnavailable, List<Rule> sourceRules) {
             slots.putAll(sourceSlots);
@@ -307,17 +314,28 @@ public final class WarpWeftSolver {
             return result;
         }
 
+        List<Plan> pairedPlans = new ArrayList<>();
         List<Task> tasks = new ArrayList<>();
         for (Plan plan : data.plans) {
             int locked = lockedByPlan.getOrDefault(plan.id(), 0);
-            for (int occurrence = locked; occurrence < plan.weeklyPeriods(); occurrence++) tasks.add(new Task(plan, occurrence));
+            boolean isDouble = locked == 0 && plan.weeklyPeriods() >= 2
+                && data.rules.stream().anyMatch(rule -> "DOUBLE_PERIOD".equals(rule.kind()) && rule.matchesPlan(plan.teacherId(), plan.subjectId()));
+            if (isDouble) {
+                pairedPlans.add(plan);
+                if (plan.weeklyPeriods() % 2 == 1) tasks.add(new Task(plan, plan.weeklyPeriods() - 1));
+            } else {
+                for (int occurrence = locked; occurrence < plan.weeklyPeriods(); occurrence++) tasks.add(new Task(plan, occurrence));
+            }
         }
+        int pairedEntries = pairedPlans.stream().mapToInt(plan -> (plan.weeklyPeriods() / 2) * 2).sum();
+        int totalEntries = tasks.size() + pairedEntries;
 
         int attempts = 8;
-        System.err.println("[java] solve start: " + tasks.size() + " tasks, " + data.locked.size() + " locked");
+        System.err.println("[java] solve start: " + totalEntries + " entries, " + data.locked.size() + " locked, " + pairedPlans.size() + " paired plans");
         for (int attempt = 0; attempt < attempts && System.nanoTime() < deadline; attempt++) {
             Random random = new Random(randomSeed + attempt * 7919L);
             State state = new State(data.slots, data.rooms, data.classes, data.unavailable, data.rules);
+            for (Plan plan : pairedPlans) state.pairedPlans.add(plan.id());
             List<String> attemptViolations = new ArrayList<>();
             for (Entry entry : data.locked) {
                 Plan plan = data.plans.stream().filter(p -> p.id().equals(entry.coursePlanId())).findFirst().orElse(null);
@@ -332,25 +350,34 @@ public final class WarpWeftSolver {
             if (!attemptViolations.isEmpty()) {
                 if (best == null) {
                     best = state;
-                    bestUnplaced = tasks.size();
+                    bestUnplaced = totalEntries;
                 }
                 violations = attemptViolations;
                 continue;
+            }
+            int unplaced = 0;
+            List<Plan> shuffledPlans = new ArrayList<>(pairedPlans);
+            java.util.Collections.shuffle(shuffledPlans, random);
+            for (Plan plan : shuffledPlans) {
+                for (int pair = 0; pair < plan.weeklyPeriods() / 2; pair++) {
+                    if (System.nanoTime() >= deadline || !placePair(state, plan, random, attempt, pair)) {
+                        unplaced += 2;
+                    }
+                }
             }
             List<Task> shuffled = new ArrayList<>(tasks);
             java.util.Collections.shuffle(shuffled, random);
             shuffled.sort(Comparator
                 .comparing((Task task) -> task.plan().fixedSlotId() == null)
                 .thenComparing((Task task) -> -task.plan().weeklyPeriods()));
-            List<Task> unplaced = new ArrayList<>();
             for (Task task : shuffled) {
                 if (System.nanoTime() >= deadline) {
-                    unplaced.add(task);
+                    unplaced += 1;
                     continue;
                 }
                 Placement bestPlacement = choosePlacement(state, task.plan(), random);
                 if (bestPlacement == null) {
-                    unplaced.add(task);
+                    unplaced += 1;
                     continue;
                 }
                 state.add(new Entry(
@@ -360,13 +387,13 @@ public final class WarpWeftSolver {
                 ));
             }
             int score = softScore(state).total();
-            System.err.println("[java] attempt " + (attempt + 1) + ": placed " + (tasks.size() - unplaced.size()) + "/" + tasks.size() + ", score " + score);
-            if (unplaced.size() < bestUnplaced || (unplaced.size() == bestUnplaced && score > bestScore)) {
+            System.err.println("[java] attempt " + (attempt + 1) + ": placed " + (totalEntries - unplaced) + "/" + totalEntries + ", score " + score);
+            if (unplaced < bestUnplaced || (unplaced == bestUnplaced && score > bestScore)) {
                 best = state;
-                bestUnplaced = unplaced.size();
+                bestUnplaced = unplaced;
                 bestScore = score;
             }
-            if (unplaced.isEmpty()) {
+            if (unplaced == 0) {
                 localSearch(state, data, random, deadline);
                 ObjectNode result = success(data.protocolVersion, state, started);
                 System.err.println("[java] completed in " + result.get("elapsedMs").asLong() + " ms");
@@ -386,6 +413,29 @@ public final class WarpWeftSolver {
         result.put("elapsedMs", (System.nanoTime() - started) / 1_000_000);
         result.put("hasFeasibleSolution", false);
         return result;
+    }
+
+    private static boolean placePair(State state, Plan plan, Random random, int attempt, int pair) {
+        List<Slot> slots = new ArrayList<>(state.slots.values());
+        java.util.Collections.shuffle(slots, random);
+        for (Slot first : slots) {
+            for (Slot second : slots) {
+                if (first.day() != second.day() || second.period() != first.period() + 1) continue;
+                for (Room room : state.rooms.values()) {
+                    if (!state.canPlace(plan, first, room) || !state.canPlace(plan, second, room)) continue;
+                    Entry a = new Entry("entry-" + plan.id() + "-pair-" + pair + "-a-" + attempt, plan.id(), plan.classId(), plan.subjectId(), plan.teacherId(), room.id(), first.id(), "AUTO", false);
+                    Entry b = new Entry("entry-" + plan.id() + "-pair-" + pair + "-b-" + attempt, plan.id(), plan.classId(), plan.subjectId(), plan.teacherId(), room.id(), second.id(), "AUTO", false);
+                    state.add(a);
+                    if (!state.canPlace(plan, second, room)) {
+                        state.remove(a);
+                        continue;
+                    }
+                    state.add(b);
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static Placement choosePlacement(State state, Plan plan, Random random) {
@@ -420,7 +470,7 @@ public final class WarpWeftSolver {
         int iterations = Math.min(1500, 200 + state.entries.size() * 10);
         int currentScore = softScore(state).total();
         for (int i = 0; i < iterations && System.nanoTime() < deadline; i++) {
-            List<Entry> movable = state.entries.stream().filter(entry -> !entry.locked()).toList();
+            List<Entry> movable = state.entries.stream().filter(entry -> !entry.locked() && !state.pairedPlans.contains(entry.coursePlanId())).toList();
             if (movable.isEmpty()) return;
             Entry entry = movable.get(random.nextInt(movable.size()));
             Plan plan = data.plans.stream().filter(item -> item.id().equals(entry.coursePlanId())).findFirst().orElse(null);
@@ -543,7 +593,7 @@ public final class WarpWeftSolver {
                         if (previous != null && period == previous + 1) adjacent++;
                         previous = period;
                     }
-                    int expectedPairs = Math.max(1, set.size() / desired);
+                    int expectedPairs = set.size() / desired;
                     if (adjacent < expectedPairs) penalty += (expectedPairs - adjacent) * 4;
                 }
             }

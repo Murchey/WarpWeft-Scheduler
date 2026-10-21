@@ -81,3 +81,46 @@ test('free half-day rule produces a penalty when target is impossible', () => {
   assert.equal(output.status, 'COMPLETED');
   assert.ok(Number(output.scoreBreakdown.rules || 0) > 0);
 });
+
+test('hard double-period rule places adjacent pairs', () => {
+  const input = demoInput();
+  const subject = input.subjects.find((item) => item.name === '数学');
+  input.rules = [{
+    id: 'rule-double',
+    kind: 'DOUBLE_PERIOD',
+    scope: { type: 'subject', subjectId: subject.id },
+    time: { type: 'all' },
+    importance: 'must',
+    params: { periods: 2 },
+    enabled: true,
+    createdAt: new Date().toISOString(),
+    source: 'manual',
+  }];
+  const result = solve(input);
+  assert.equal(result.status, 0, result.stderr || 'Java solver process failed');
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, 'COMPLETED');
+  assert.equal(output.entries.length, 21);
+  const planSubject = new Map(input.coursePlans.map((plan) => [plan.id, plan.subjectId]));
+  const byClass = new Map();
+  for (const entry of output.entries) {
+    if (planSubject.get(entry.coursePlanId) !== subject.id) continue;
+    const slot = input.timeSlots.find((item) => item.id === entry.slotId);
+    const key = entry.classId;
+    if (!byClass.has(key)) byClass.set(key, []);
+    byClass.get(key).push(slot);
+  }
+  for (const slots of byClass.values()) {
+    const byDay = new Map();
+    for (const slot of slots) {
+      if (!byDay.has(slot.day)) byDay.set(slot.day, []);
+      byDay.get(slot.day).push(slot.period);
+    }
+    let hasPair = false;
+    for (const periods of byDay.values()) {
+      periods.sort((a, b) => a - b);
+      for (let i = 1; i < periods.length; i += 1) if (periods[i] === periods[i - 1] + 1) hasPair = true;
+    }
+    assert.equal(hasPair, true);
+  }
+});
