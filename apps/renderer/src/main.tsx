@@ -5,6 +5,7 @@ import { validateInput } from '../../../packages/validation/src';
 import { buildImportTemplate, exportCsv, exportWorkbook, readWorkbook } from '../../../packages/import-export/src';
 import { fetchServerJobs, fetchServerLogs, fetchServerStats, loadData, saveData, solveSchedule } from './api';
 import { RulesPage } from './RulesPage';
+import { AvailabilityEditor } from './AvailabilityEditor';
 import { activeRules, unscheduledHints } from './rules';
 import type { ServerJob, ServerLog, ServerStats } from './api';
 import type {
@@ -25,6 +26,7 @@ import './style.css';
 
 const TABS = ['工作台', '排课准备', '排课任务', '课表预览', '报表发布', '服务端', '设置'] as const;
 type Tab = (typeof TABS)[number];
+type PrepareSection = 'import' | 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots' | 'plans' | 'availability' | 'rules';
 const EN: Record<Tab, string> = {
   工作台: 'OVERVIEW',
   排课准备: 'PREPARE',
@@ -667,6 +669,46 @@ function App() {
     }
   };
 
+  const repairSchedule = async (scope: 'class' | 'teacher', id: string) => {
+    if (!data || !result || running || !id) return;
+    const originalLocked = new Set(result.entries.filter((entry) => entry.locked).map((entry) => entry.id));
+    const originalSources = new Map(result.entries.map((entry) => [entry.id, entry.source]));
+    const locked = result.entries.filter((entry) => entry.locked || (scope === 'class' ? entry.classId !== id : entry.teacherId !== id));
+    setRunning(true);
+    setError('');
+    setProgress({ phase: 'solving', message: '正在局部重排所选范围', startedAt: Date.now() });
+    try {
+      const output = await solveSchedule(toSolverInput(data, timeLimit, locked));
+      const repaired = {
+        ...output,
+        entries: output.entries.map((entry) => ({
+          ...entry,
+          locked: originalLocked.has(entry.id),
+          source: originalSources.get(entry.id) ?? entry.source,
+        })),
+      };
+      setResult(repaired);
+      const updated = { ...data, candidate: repaired };
+      setData(updated);
+      pending.current = updated;
+      if (apiOnline) {
+        setSaveState('saving');
+        await flush(updated);
+      }
+      setProgress({ phase: repaired.hasFeasibleSolution ? 'completed' : 'failed', message: repaired.hasFeasibleSolution ? '局部重排完成' : (repaired.explanation || '局部重排未完成'), startedAt: Date.now() });
+      if (repaired.hasFeasibleSolution) {
+        setNotice('局部重排完成：已保留范围外课程的位置');
+      } else {
+        setError(repaired.explanation || '局部重排未完成');
+      }
+    } catch (cause) {
+      setProgress({ phase: 'failed', message: '局部重排失败：' + messageOf(cause), startedAt: Date.now() });
+      setError('局部重排失败：' + messageOf(cause));
+    } finally {
+      setRunning(false);
+    }
+  };
+
   const swapEntry = (entryId: string, targetSlotId: string) => {
     if (!result || !data || view !== 'class') return;
     const moving = result.entries.find((entry) => entry.id === entryId);
@@ -937,6 +979,7 @@ function App() {
             timeLimit={timeLimit}
             setTimeLimit={setTimeLimit}
             onRun={run}
+            onRepair={repairSchedule}
             onTimetable={() => setTab('课表预览')}
             onClear={clearCandidate}
           />
@@ -1779,91 +1822,6 @@ function ResourcesPage({
   return null;
 }
 
-function AvailabilityEditor({ data, commit }: { data: SchoolData; commit: Commit }) {
-  const unavailable = data.unavailableSlots ?? [];
-  const slots = [...data.timeSlots].sort((a, b) => a.day - b.day || a.period - b.period);
-  const add = (teacherId: string, slotId: string) => {
-    if (!slotId || unavailable.some((item) => item.teacherId === teacherId && item.slotId === slotId)) return;
-    commit({ ...data, unavailableSlots: [...unavailable, { teacherId, slotId }] }, { invalidate: true });
-  };
-  const remove = (teacherId: string, slotId: string) => {
-    commit(
-      { ...data, unavailableSlots: unavailable.filter((item) => !(item.teacherId === teacherId && item.slotId === slotId)) },
-      { invalidate: true },
-    );
-  };
-  const clear = (teacherId: string) => {
-    commit(
-      { ...data, unavailableSlots: unavailable.filter((item) => item.teacherId !== teacherId) },
-      { invalidate: true },
-    );
-  };
-
-  return (
-    <section className="section-panel resource-panel availability-panel">
-      <div className="panel-head">
-        <SectionHeading english="TEACHER AVAILABILITY" title="教师不可用时间" />
-        <span className="status-tag muted">下拉选择</span>
-      </div>
-      <p className="panel-note">从下拉框选择教师不可用的时间段，添加后会显示为标签；点击标签即可移除。排课时会自动避开这些时间。</p>
-      {data.teachers.length === 0 ? (
-        <p className="panel-note">还没有教师，请先在教师资料中添加。</p>
-      ) : slots.length === 0 ? (
-        <p className="panel-note">还没有时间段，请先在时间段资料中添加。</p>
-      ) : (
-        <div className="availability-list">
-          {data.teachers.map((teacher) => {
-            const own = slots.filter((slot) => unavailable.some((item) => item.teacherId === teacher.id && item.slotId === slot.id));
-            const remaining = slots.filter((slot) => !own.some((item) => item.id === slot.id));
-            return (
-              <div className="availability-person" key={teacher.id}>
-                <div className="availability-person-head">
-                  <strong>{teacher.name}</strong>
-                  <small>{own.length > 0 ? own.length + ' 个不可用时间' : '全部时间可用'}</small>
-                </div>
-                <div className="availability-chips">
-                  {own.length > 0 ? own.map((slot) => (
-                    <button
-                      type="button"
-                      key={slot.id}
-                      className="availability-chip"
-                      onClick={() => remove(teacher.id, slot.id)}
-                      title="点击移除"
-                    >
-                      {slot.label}<span>×</span>
-                    </button>
-                  )) : <span className="availability-empty">未设置</span>}
-                </div>
-                <div className="availability-actions">
-                  <select
-                    className="availability-select"
-                    value=""
-                    aria-label={'为 ' + teacher.name + ' 添加不可用时间'}
-                    disabled={remaining.length === 0}
-                    onChange={(event) => {
-                      add(teacher.id, event.target.value);
-                      event.currentTarget.value = '';
-                    }}
-                  >
-                    <option value="">{remaining.length === 0 ? '全部时间已设置' : '+ 添加不可用时间'}</option>
-                    {remaining.map((slot) => <option key={slot.id} value={slot.id}>{slot.label}</option>)}
-                  </select>
-                  {own.length > 0 ? (
-                    <button type="button" className="availability-clear" onClick={() => clear(teacher.id)}>清空</button>
-                  ) : null}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-      <p className="panel-note">修改教师不可用时间会清空候选课表，需重新排课。</p>
-    </section>
-  );
-}
-
-type PrepareSection = 'import' | 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots' | 'plans' | 'availability' | 'rules';
-
 function PreparePage({
   data,
   commit,
@@ -2248,12 +2206,16 @@ function MissingReasons({ data, missing }: { data: SchoolData; missing: { plan: 
   );
 }
 
-function RunsPage({ data, result, issues, running, progress, timeLimit, setTimeLimit, onRun, onTimetable, onClear, runMode }: {
+function RunsPage({ data, result, issues, running, progress, timeLimit, setTimeLimit, onRun, onRepair, onTimetable, onClear, runMode }: {
   data: SchoolData; result: SolverOutput | null; issues: string[]; running: boolean; progress: RunProgress;
-  timeLimit: number; setTimeLimit: (value: number) => void; onRun: () => void; onTimetable: () => void; onClear: () => void; runMode?: RunMode | null;
+  timeLimit: number; setTimeLimit: (value: number) => void; onRun: () => void; onRepair: (scope: 'class' | 'teacher', id: string) => Promise<void>; onTimetable: () => void; onClear: () => void; runMode?: RunMode | null;
 }) {
   const expected = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
   const missing = result ? missingPlans(data, result) : [];
+  const [repairScope, setRepairScope] = useState<'class' | 'teacher'>('class');
+  const [repairId, setRepairId] = useState(data.classes[0]?.id ?? '');
+  const repairEntities = repairScope === 'class' ? data.classes : data.teachers;
+  const currentRepairId = repairEntities.some((item) => item.id === repairId) ? repairId : (repairEntities[0]?.id ?? '');
   const checked = issues.length === 0;
   const canConfigure = checked && !running;
   const lockedCount = data.candidate?.entries.filter((entry) => entry.locked).length ?? 0;
@@ -2283,7 +2245,22 @@ function RunsPage({ data, result, issues, running, progress, timeLimit, setTimeL
       <section className={'section-panel wizard-card ' + (!checked ? 'wizard-locked' : '')}><div className="wizard-card-head"><span className="wizard-number">03</span><div><span className="kicker">SOLVER SETTINGS</span><h2>计算设置</h2></div><span className="status-tag">{checked ? '已就绪' : '待检查'}</span></div>{!checked ? <p className="panel-note">完成数据检查后配置计算时限。</p> : <><div className="run-controls"><label>计算时限<select value={timeLimit} disabled={!canConfigure} onChange={(event) => setTimeLimit(Number(event.target.value))}><option value={10}>10 秒</option><option value={30}>30 秒</option><option value={60}>60 秒</option><option value={120}>120 秒</option></select></label></div><div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div></>}</section>
       <section className={'section-panel wizard-card wizard-final ' + (!checked ? 'wizard-locked' : '')}><div className="wizard-card-head"><span className="wizard-number">04</span><div><span className="kicker">RUN SCHEDULE</span><h2>开始排课</h2></div><span className={result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{result ? result.status : '尚未运行'}</span></div>{result && lockedCount > 0 ? <p className="panel-note">本次重新排课将保留 {lockedCount} 条锁定课程的位置。</p> : <p className="panel-note">确认前面三步后，开始生成候选课表。</p>}<button className="action-button wizard-run-button" onClick={onRun} disabled={!checked || running}>{running ? '正在计算…' : result ? '确认配置并重新排课' : '确认配置并开始排课'} <span>↗</span></button></section>
     </div>
-    <section className="section-panel candidate-panel"><div className="panel-head"><SectionHeading english="CURRENT CANDIDATE" title="当前候选" /><span className={result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{result?.status ?? '尚未生成'}</span></div>{result ? <div className="result-summary"><div className="summary-grid"><div><span>已排课时</span><b>{result.entries.length}</b></div><div><span>计划课时</span><b>{expected}</b></div><div><span>未排课时</span><b>{Math.max(0, expected - result.entries.length)}</b></div><div><span>耗时</span><b>{result.elapsedMs} ms</b></div></div><p className="panel-note">{result.explanation || '求解器没有返回说明。'}</p>{result.hardConstraintViolations.length ? <ul className="issue-list">{result.hardConstraintViolations.map((item) => <li key={item}>{item}</li>)}</ul> : null}{missing.length ? <MissingReasons data={data} missing={missing} /> : null}<div className="hero-actions"><button className="action-button" onClick={onTimetable}>查看并调整课表 <span>→</span></button><button className="ghost-button" onClick={onClear}>清空候选</button></div></div> : <EmptyState title="尚未生成候选课表" message="完成向导后，候选课表会显示在这里。" />}</section>
+    <section className="section-panel candidate-panel"><div className="panel-head"><SectionHeading english="CURRENT CANDIDATE" title="当前候选" /><span className={result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{result?.status ?? '尚未生成'}</span></div>{result ? <div className="result-summary"><div className="summary-grid"><div><span>已排课时</span><b>{result.entries.length}</b></div><div><span>计划课时</span><b>{expected}</b></div><div><span>未排课时</span><b>{Math.max(0, expected - result.entries.length)}</b></div><div><span>耗时</span><b>{result.elapsedMs} ms</b></div></div><p className="panel-note">{result.explanation || '求解器没有返回说明。'}</p>{result.hardConstraintViolations.length ? <ul className="issue-list">{result.hardConstraintViolations.map((item) => <li key={item}>{item}</li>)}</ul> : null}{missing.length ? <MissingReasons data={data} missing={missing} /> : null}{result && result.entries.length > 0 ? (
+                <div className="repair-controls">
+                  <div><span className="kicker">// LOCAL REPAIR</span><b>局部重排</b><small>只重排所选范围，其他课程保持当前位置。</small></div>
+                  <div className="repair-actions">
+                    <select value={repairScope} onChange={(event) => { const next = event.target.value as 'class' | 'teacher'; setRepairScope(next); setRepairId((next === 'class' ? data.classes[0]?.id : data.teachers[0]?.id) ?? ''); }}>
+                      <option value="class">按班级</option>
+                      <option value="teacher">按教师</option>
+                    </select>
+                    <select value={currentRepairId} onChange={(event) => setRepairId(event.target.value)}>
+                      {repairEntities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                    </select>
+                    <button type="button" className="ghost-button" disabled={running || !currentRepairId} onClick={() => void onRepair(repairScope, currentRepairId)}>{running ? '重排中…' : '开始局部重排'}</button>
+                  </div>
+                </div>
+              ) : null}
+              <div className="hero-actions"><button className="action-button" onClick={onTimetable}>查看并调整课表 <span>→</span></button><button className="ghost-button" onClick={onClear}>清空候选</button></div></div> : <EmptyState title="尚未生成候选课表" message="完成向导后，候选课表会显示在这里。" />}</section>
   </div>;
 }
 

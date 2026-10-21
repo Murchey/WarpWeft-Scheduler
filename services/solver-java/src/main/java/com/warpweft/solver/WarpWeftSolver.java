@@ -528,6 +528,25 @@ public final class WarpWeftSolver {
                     }
                 }
             }
+            if ("DOUBLE_PERIOD".equals(rule.kind())) {
+                Map<String, TreeSet<Integer>> periods = new HashMap<>();
+                for (Entry entry : state.entries) {
+                    Slot slot = state.slots.get(entry.slotId());
+                    if (slot == null || !rule.applies(entry.teacherId(), entry.subjectId(), slot.day(), slot.period())) continue;
+                    periods.computeIfAbsent(entry.classId() + "|" + slot.day() + "|" + entry.subjectId(), key -> new TreeSet<>()).add(slot.period());
+                }
+                int desired = Math.max(2, rule.number("periods", 2));
+                for (TreeSet<Integer> set : periods.values()) {
+                    int adjacent = 0;
+                    Integer previous = null;
+                    for (Integer period : set) {
+                        if (previous != null && period == previous + 1) adjacent++;
+                        previous = period;
+                    }
+                    int expectedPairs = Math.max(1, set.size() / desired);
+                    if (adjacent < expectedPairs) penalty += (expectedPairs - adjacent) * 4;
+                }
+            }
             if ("TEACHER_FREE_HALF_DAY".equals(rule.kind())) {
                 Map<String, TreeSet<Integer>> periods = new HashMap<>();
                 Set<String> teachers = new HashSet<>();

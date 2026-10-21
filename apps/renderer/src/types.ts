@@ -82,43 +82,9 @@ export interface SolverOutput {
 }
 
 
-export type RuleImportance = 'must' | 'prefer' | 'avoid';
+import type { RuleInstance } from '../../../packages/constraints/src';
+export type { RuleImportance, RuleKind, RuleScope, RuleTime, RuleInstance } from '../../../packages/constraints/src';
 
-export type RuleKind =
-  | 'TEACHER_MAX_DAILY'
-  | 'TEACHER_MAX_CONSECUTIVE'
-  | 'TEACHER_FREE_HALF_DAY'
-  | 'SUBJECT_MAX_PER_DAY'
-  | 'SUBJECT_TIME_PREFERENCE'
-  | 'SUBJECT_AVOID_FIRST_LAST'
-  | 'SUBJECT_SPREAD'
-  | 'DOUBLE_PERIOD';
-
-export type RuleScope =
-  | { type: 'all' }
-  | { type: 'grade'; grade: string }
-  | { type: 'class'; classId: string }
-  | { type: 'teacher'; teacherId: string }
-  | { type: 'subject'; subjectId: string }
-  | { type: 'room'; roomId: string };
-
-export type RuleTime =
-  | { type: 'all' }
-  | { type: 'weekday'; days: number[] }
-  | { type: 'periodRange'; days?: number[]; from: number; to: number };
-
-export interface RuleInstance {
-  id: string;
-  kind: RuleKind;
-  scope: RuleScope;
-  time: RuleTime;
-  importance: RuleImportance;
-  params: Record<string, string | number>;
-  enabled: boolean;
-  note?: string;
-  createdAt: string;
-  source: 'preset' | 'manual' | 'import' | 'migration';
-}
 export interface SolverInput {
   protocolVersion: string;
   dataSnapshotVersion: string;

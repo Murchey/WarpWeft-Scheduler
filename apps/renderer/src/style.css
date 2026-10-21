@@ -700,3 +700,31 @@ html[data-theme='dark'] .rule-warnings{background:#2a2114;color:#fbbf24}
 .missing-reason-title span{font-size:10px;color:var(--danger);white-space:nowrap}
 .missing-reason ul{margin:2px 0 0 16px;padding:0;display:grid;gap:2px;font-size:10px;line-height:1.5;color:var(--muted)}
 .missing-reason p{margin:0;font-size:10px;line-height:1.5;color:var(--muted)}
+
+.rules-nl{padding:14px 16px}
+.rules-nl-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.rules-nl-head h3{margin:4px 0 0;font-size:17px}
+.rules-nl-row{display:flex;gap:8px;margin-top:11px}
+.rules-nl-row input{flex:1;min-width:0;height:38px;border:1px solid var(--rule);border-radius:7px;background:var(--panel);color:var(--ink);padding:0 10px;font:12px var(--font-text)}
+.rules-nl-row input:focus{outline:2px solid var(--signal);outline-offset:1px;border-color:var(--ink)}
+.rules-nl-row .action-button{flex:0 0 auto;height:38px}
+.rules-nl p{margin-top:8px}
+.rules-nl-error{margin:8px 0 0;padding:7px 9px;border-left:3px solid var(--danger);background:#fff1f1;color:#9b1c1c;font-size:10px;line-height:1.5}
+html[data-theme='dark'] .rules-nl-error{background:#2a1616;color:#ff9b9b}
+@media(max-width:680px){.rules-nl-row{flex-direction:column}.rules-nl-row .action-button{width:100%}}
+
+.rule-conflicts{padding:14px 16px;border-left:4px solid var(--danger)}
+.rule-conflicts-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.rule-conflicts-head h3{margin:4px 0 0;font-size:17px}
+.rule-conflict{padding:8px 10px;margin-top:8px;border:1px solid var(--rule);background:var(--paper)}
+.rule-conflict b{display:block;font-size:11px}
+.rule-conflict p{margin:3px 0 0;font-size:10px;line-height:1.5;color:var(--muted)}
+
+.repair-controls{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:12px;padding:10px 11px;border:1px solid var(--rule);background:var(--panel)}
+.repair-controls > div:first-child{display:flex;flex-direction:column;gap:2px;min-width:0}
+.repair-controls b{font-size:12px}
+.repair-controls small{font-size:10px;color:var(--muted)}
+.repair-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.repair-actions select{height:32px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--ink);padding:0 8px;font:11px var(--font-text)}
+.repair-actions .ghost-button{height:32px;padding:0 9px;font-size:10px}
+@media(max-width:760px){.repair-controls{align-items:flex-start;flex-direction:column}.repair-actions{width:100%}.repair-actions select{flex:1}}
