@@ -60,3 +60,24 @@ test('subject time preference produces a rule penalty', () => {
   assert.equal(output.status, 'COMPLETED');
   assert.ok(Number(output.scoreBreakdown.rules || 0) > 0);
 });
+
+test('free half-day rule produces a penalty when target is impossible', () => {
+  const input = demoInput();
+  const teacher = input.teachers[0];
+  input.rules = [{
+    id: 'rule-half-day',
+    kind: 'TEACHER_FREE_HALF_DAY',
+    scope: { type: 'teacher', teacherId: teacher.id },
+    time: { type: 'all' },
+    importance: 'prefer',
+    params: { minFreeHalfDays: 10 },
+    enabled: true,
+    createdAt: new Date().toISOString(),
+    source: 'manual',
+  }];
+  const result = solve(input);
+  assert.equal(result.status, 0, result.stderr || 'Java solver process failed');
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, 'COMPLETED');
+  assert.ok(Number(output.scoreBreakdown.rules || 0) > 0);
+});

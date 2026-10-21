@@ -11,6 +11,7 @@ import type {
   ClassRoom,
   CoursePlan,
   Room,
+  RuleInstance,
   ScheduleEntry,
   SchoolData,
   SolverInput,
@@ -120,6 +121,7 @@ function toSolverInput(
     timeSlots: data.timeSlots,
     classes: data.classes.map((item) => ({ id: item.id, name: item.name, size: item.size })),
     teachers: data.teachers,
+    subjects: data.subjects,
     rooms: data.rooms,
     coursePlans: data.coursePlans,
     unavailableSlots: data.unavailableSlots ?? [],
@@ -650,6 +652,21 @@ function App() {
     }
   };
 
+  const simulateRule = async (rule: RuleInstance) => {
+    if (!data) return null;
+    const temp = { ...data, rules: (data.rules ?? []).map((item) => item.id === rule.id ? { ...item, enabled: false } : item) };
+    const locked = data.candidate?.entries.filter((entry) => entry.locked) ?? [];
+    try {
+      const output = await solveSchedule(toSolverInput(temp, 30, locked));
+      const total = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
+      const before = data.candidate?.entries.length ?? 0;
+      return { entries: output.entries.length, total, before, feasible: output.hasFeasibleSolution, elapsedMs: output.elapsedMs };
+    } catch (cause) {
+      setError('模拟失败：' + messageOf(cause));
+      return null;
+    }
+  };
+
   const swapEntry = (entryId: string, targetSlotId: string) => {
     if (!result || !data || view !== 'class') return;
     const moving = result.entries.find((entry) => entry.id === entryId);
@@ -906,6 +923,7 @@ function App() {
             setError={setError}
             setNotice={setNotice}
             onGoRun={() => setTab('排课任务')}
+            onSimulate={simulateRule}
           />
         ) : null}
         {tab === '排课任务' ? (
@@ -1855,6 +1873,7 @@ function PreparePage({
   setError,
   setNotice,
   onGoRun,
+  onSimulate,
 }: {
   data: SchoolData;
   commit: Commit;
@@ -1864,6 +1883,7 @@ function PreparePage({
   setError: (value: string) => void;
   setNotice: (value: string) => void;
   onGoRun: () => void;
+  onSimulate: (rule: RuleInstance) => Promise<{ entries: number; total: number; before: number; feasible: boolean; elapsedMs: number } | null>;
 }) {
   const [importOpen, setImportOpen] = useState(false);
   const unavailableCount = data.teachers.filter((teacher) => (data.unavailableSlots ?? []).some((item) => item.teacherId === teacher.id)).length;
@@ -1928,7 +1948,7 @@ function PreparePage({
         ) : section === 'availability' ? (
           <AvailabilityEditor data={data} commit={commit} />
         ) : section === 'rules' ? (
-          <RulesPage data={data} commit={commit} setError={setError} />
+          <RulesPage data={data} commit={commit} setError={setError} onSimulate={onSimulate} />
         ) : isResource ? (
           <ResourcesPage data={data} commit={commit} setError={setError} setNotice={setNotice} kind={section as (typeof resourceKinds)[number]} />
         ) : null}

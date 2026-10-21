@@ -125,6 +125,7 @@ export interface SolverInput {
   timeSlots: TimeSlot[];
   classes: { id: string; name: string; size: number }[];
   teachers: Teacher[];
+  subjects: Subject[];
   rooms: Room[];
   coursePlans: CoursePlan[];
   unavailableSlots: { teacherId: string; slotId: string }[];

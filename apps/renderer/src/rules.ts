@@ -81,8 +81,7 @@ export const RULE_DEFINITIONS: RuleDefinition[] = [
     importanceOptions: ['prefer'],
     defaultImportance: 'prefer',
     paramFields: [{ key: 'minFreeHalfDays', label: '每周至少', type: 'number', min: 1, max: 10 }],
-    available: false,
-    supportNote: '当前版本先记录规则，半天无课优化在下一阶段接入。',
+    available: true,
   },
   {
     kind: 'SUBJECT_MAX_PER_DAY',
@@ -276,6 +275,12 @@ export function ruleWarnings(rule: RuleInstance, data: SchoolData, allRules: Rul
   if (rule.kind === 'TEACHER_MAX_CONSECUTIVE') {
     const max = Number(rule.params.maxConsecutive ?? 0);
     if (!Number.isFinite(max) || max < 1) warnings.push('连续上限至少为 1。');
+  }
+  if (rule.kind === 'TEACHER_FREE_HALF_DAY') {
+    const min = Number(rule.params.minFreeHalfDays ?? 0);
+    const halfDays = new Set(data.timeSlots.map((slot) => slot.day)).size * 2 || 10;
+    if (!Number.isFinite(min) || min < 1) warnings.push('半天无课目标至少为 1。');
+    if (min > halfDays) warnings.push('目标超过可用半天数（约 ' + halfDays + ' 个）。');
   }
   if (rule.importance === 'must' && definition.available) {
     warnings.push('设为“必须”可能导致无解；建议先用“尽量”试排。');

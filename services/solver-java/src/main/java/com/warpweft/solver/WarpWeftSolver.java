@@ -87,7 +87,7 @@ public final class WarpWeftSolver {
                     if (!"must".equals(rule.importance()) || !rule.applies(plan.teacherId(), plan.subjectId(), slot.day(), slot.period())) continue;
                     if ("TEACHER_MAX_DAILY".equals(rule.kind()) && teacherDayLoad(plan.teacherId(), slot.day()) >= rule.number("maxPerDay", 1)) return false;
                     if ("SUBJECT_MAX_PER_DAY".equals(rule.kind()) && subjectDayCount(plan.classId(), slot.day(), plan.subjectId()) >= rule.number("maxPerDay", 1)) return false;
-                    if ("TEACHER_MAX_CONSECUTIVE".equals(rule.kind())) {
+            if ("TEACHER_MAX_CONSECUTIVE".equals(rule.kind())) {
                         TreeSet<Integer> periods = teacherPeriods(plan.teacherId(), slot.day());
                         periods.add(slot.period());
                         int run = 1;
@@ -526,6 +526,35 @@ public final class WarpWeftSolver {
                         String avoid = rule.params().path("avoid").asText();
                         if (("first".equals(avoid) && first) || ("last".equals(avoid) && last)) penalty += 3;
                     }
+                }
+            }
+            if ("TEACHER_FREE_HALF_DAY".equals(rule.kind())) {
+                Map<String, TreeSet<Integer>> periods = new HashMap<>();
+                Set<String> teachers = new HashSet<>();
+                Map<Integer, List<Slot>> slotsByDay = new HashMap<>();
+                for (Slot item : state.slots.values()) slotsByDay.computeIfAbsent(item.day(), key -> new ArrayList<>()).add(item);
+                for (Entry entry : state.entries) {
+                    Slot slot = state.slots.get(entry.slotId());
+                    if (slot == null || !rule.applies(entry.teacherId(), entry.subjectId(), slot.day(), slot.period())) continue;
+                    teachers.add(entry.teacherId());
+                    periods.computeIfAbsent(entry.teacherId() + "|" + slot.day(), key -> new TreeSet<>()).add(slot.period());
+                }
+                int minFree = rule.number("minFreeHalfDays", 1);
+                for (String teacherId : teachers) {
+                    int free = 0;
+                    for (Map.Entry<Integer, List<Slot>> dayEntry : slotsByDay.entrySet()) {
+                        int day = dayEntry.getKey();
+                        int mid = (minDay.getOrDefault(day, 1) + maxDay.getOrDefault(day, 1)) / 2;
+                        TreeSet<Integer> set = periods.getOrDefault(teacherId + "|" + day, new TreeSet<>());
+                        boolean morningTaken = false;
+                        boolean afternoonTaken = false;
+                        for (Integer period : set) {
+                            if (period <= mid) morningTaken = true; else afternoonTaken = true;
+                        }
+                        if (!morningTaken) free++;
+                        if (!afternoonTaken) free++;
+                    }
+                    if (free < minFree) penalty += (minFree - free) * 4;
                 }
             }
             if ("TEACHER_MAX_CONSECUTIVE".equals(rule.kind())) {

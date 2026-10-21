@@ -13,7 +13,7 @@ export interface ClassRoom { id: string; name: string; capacity: number; type: s
 export interface CoursePlan { id: string; classId: string; subjectId: string; teacherId: string; weeklyPeriods: number; roomType?: string; fixedSlotId?: string; consecutive?: number; locked?: boolean; }
 export interface SolverInput {
   protocolVersion: string; dataSnapshotVersion: string; timeSlots: TimeSlot[]; classes: {id:string; name:string; size:number}[];
-  teachers: {id:string; name:string}[]; rooms: ClassRoom[]; coursePlans: CoursePlan[];
+  teachers: {id:string; name:string}[]; subjects: {id:string; name:string}[]; rooms: ClassRoom[]; coursePlans: CoursePlan[];
   unavailableSlots: {teacherId:string; slotId:string}[]; lockedEntries: ScheduleEntry[];
   hardConstraints: string[]; rules?: RuleInput[]; softConstraints: {kind:SoftRuleKind; weight:number}[]; timeLimitSeconds:number; randomSeed:number;
 }

@@ -17,19 +17,24 @@ function RulesPage({
   data,
   commit,
   setError,
+  onSimulate,
 }: {
   data: SchoolData;
   commit: (next: SchoolData, options?: { invalidate?: boolean; immediate?: boolean }) => void;
   setError: (value: string) => void;
+  onSimulate: (rule: RuleInstance) => Promise<{ entries: number; total: number; before: number; feasible: boolean; elapsedMs: number } | null>;
 }) {
   const rules = data.rules ?? [];
   const [filter, setFilter] = useState<'all' | 'teacher' | 'subject' | 'structure'>('all');
   const [draft, setDraft] = useState<RuleInstance | null>(null);
+  const [simulating, setSimulating] = useState('');
+  const [simulations, setSimulations] = useState<Record<string, string>>({});
   const saveRules = (next: RuleInstance[]) => {
     commit({ ...data, rules: next }, { invalidate: true });
   };
   const visible = rules.filter((rule) => filter === 'all' || definitionOf(rule.kind).category === filter);
   const enabled = rules.filter((rule) => rule.enabled).length;
+  const warned = rules.filter((rule) => rule.enabled && ruleWarnings(rule, data, rules).some((warning) => !warning.startsWith('设为“必须”'))).length;
   const openNew = (kind: RuleKind) => {
     if (!data.teachers.length && definitionOf(kind).scopeType === 'teacher') {
       setError('请先在排课准备中添加教师');
@@ -51,6 +56,17 @@ function RulesPage({
     }
     setDraft(null);
   };
+  const simulate = async (rule: RuleInstance) => {
+    setSimulating(rule.id);
+    const result = await onSimulate(rule);
+    setSimulating('');
+    if (!result) return;
+    const delta = result.before > 0 ? result.entries - result.before : 0;
+    const text = result.feasible
+      ? '放宽后可排 ' + result.entries + '/' + result.total + ' 课时' + (delta > 0 ? '，预计多排 ' + delta + ' 课时' : '')
+      : '放宽后仍缺 ' + Math.max(0, result.total - result.entries) + ' 课时，可继续检查其他规则';
+    setSimulations((current) => ({ ...current, [rule.id]: text + '（' + result.elapsedMs + ' ms）' }));
+  };
   const removeRule = (rule: RuleInstance) => {
     if (!window.confirm('删除这条规则？已生成的候选课表会失效。')) return;
     saveRules(rules.filter((item) => item.id !== rule.id));
@@ -71,6 +87,7 @@ function RulesPage({
           <div className="rules-head-meta">
             <span><b>{enabled}</b> 条启用</span>
             <span><b>{rules.length}</b> 条自定义</span>
+            <span className={warned > 0 ? 'rules-warn-count' : ''}><b>{warned}</b> 条提醒</span>
             <span><b>{SYSTEM_RULES.length}</b> 条系统保证</span>
           </div>
         </div>
@@ -130,8 +147,10 @@ function RulesPage({
                     {warnings.map((warning) => <p key={warning}>{warning}</p>)}
                   </div>
                 ) : null}
+                {simulations[rule.id] ? <p className="rule-simulation">{simulations[rule.id]}</p> : null}
                 <div className="rule-card-actions">
                   <button type="button" className="mini-button" onClick={() => setDraft({ ...rule })}>编辑</button>
+                  {rule.enabled && definition.available ? <button type="button" className="ghost-button rule-toggle" onClick={() => void simulate(rule)} disabled={simulating === rule.id}>{simulating === rule.id ? '模拟中…' : '模拟放宽'}</button> : null}
                   <button type="button" className="ghost-button rule-toggle" onClick={() => toggleRule(rule)}>{rule.enabled ? '停用' : '启用'}</button>
                   <button type="button" className="danger-link" onClick={() => removeRule(rule)}>删除</button>
                 </div>
