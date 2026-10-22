@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HeroUIProvider, Button, Card, CardBody, Chip, Progress, Select, SelectItem, Tabs, Tab } from '@heroui/react';
 import { validateInput } from '../../../packages/validation/src';
@@ -17,6 +17,7 @@ import type { TimetableExportSettings } from './timetableExport';
 import { checkMove, checkSwap } from './dnd';
 import { semesterWeeks, weekOfDate } from '../../../packages/semester/src';
 import { adjustedWeekEntries, semesterPatterns } from './semesterTimetable';
+import { assignMissingTeachers } from './teacherAssignment';
 import { messageOf, todayLocal, uid } from './utils';
 import { activeRules, describeRule, matchedPlans, unscheduledHints } from './rules';
 import { RUN_MODE_OPTIONS } from './runConfig';
@@ -117,20 +118,24 @@ function toSolverInput(
   timeLimit: number,
   locked: ScheduleEntry[],
 ): SolverInput {
-  const planById = new Map(data.coursePlans.map((plan) => [plan.id, plan]));
+  const resolvedPlans = assignMissingTeachers(data).plans;
+  const planById = new Map(resolvedPlans.map((plan) => [plan.id, plan]));
   const lockedEntries = locked.map((entry) => {
     const plan = planById.get(entry.coursePlanId);
     return plan && !plan.teacherId?.trim() ? { ...entry, teacherId: solverTeacherId(plan) } : entry;
   });
+  const syntheticTeachers = resolvedPlans
+    .filter((plan) => !plan.teacherId?.trim())
+    .map((plan) => ({ id: solverTeacherId(plan), name: '未指定教师' }));
   return {
     protocolVersion: '1.0',
     dataSnapshotVersion: 'local-' + Date.now(),
     timeSlots: data.timeSlots,
     classes: data.classes.map((item) => ({ id: item.id, name: item.name, size: item.size })),
-    teachers: data.teachers,
+    teachers: [...data.teachers, ...syntheticTeachers],
     subjects: data.subjects,
     rooms: data.rooms,
-    coursePlans: data.coursePlans.map((plan) => ({ ...plan, teacherId: solverTeacherId(plan) })),
+    coursePlans: resolvedPlans.map((plan) => ({ ...plan, teacherId: solverTeacherId(plan) })),
     unavailableSlots: data.unavailableSlots ?? [],
     lockedEntries,
     electiveGroups: data.electiveGroups ?? [],
@@ -2669,6 +2674,7 @@ function TimetablePage({
 }
 
 createRoot(document.getElementById('root')!).render(<HeroUIProvider><App /></HeroUIProvider>);
+
 
 
 

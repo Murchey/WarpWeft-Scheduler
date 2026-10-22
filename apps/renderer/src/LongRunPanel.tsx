@@ -1,6 +1,7 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   cancelLongJob,
+  deleteLongJob,
   fetchLongJob,
   fetchLongJobByUuid,
   fetchLongJobs,
@@ -12,7 +13,7 @@ import {
 import type { LongJob, LongJobDetail } from './api';
 import type { SolverInput } from './types';
 import { SectionHeading } from './components';
-import { latestTaskForEndpoint, newTaskUuid, rememberTask, snapshotIdOf } from './taskIndex';
+import { forgetTask, latestTaskForEndpoint, newTaskUuid, rememberTask, snapshotIdOf } from './taskIndex';
 
 const STATUS_LABELS: Record<string, string> = {
   queued: '排队中',
@@ -226,8 +227,27 @@ export function LongRunPanel({
       }
     });
 
+  const removeCompleted = (target: LongJob) =>
+    withBusy('delete', async () => {
+      if (target.status !== 'completed') {
+        onError('只有已完成任务可以删除');
+        return;
+      }
+      if (!window.confirm('删除已完成任务 ' + target.id + '？任务文件和检查点会被删除，此操作不可撤销。')) return;
+      try {
+        await deleteLongJob(target.id);
+        if (target.taskUuid) forgetTask(window.localStorage, target.taskUuid);
+        if (job?.id === target.id) setJob(null);
+        await refreshList();
+        onNotice('已删除长时任务 ' + target.id);
+      } catch (cause) {
+        onError('删除失败：' + (cause instanceof Error ? cause.message : String(cause)));
+      }
+    });
+
   const activeStatus = job?.status ?? '';
   const isRunning = activeStatus === 'running';
+  const completedJobs = jobs.filter((item) => item.status === 'completed');
 
   const applyBest = () => {
     if (!job) return;
@@ -339,13 +359,35 @@ export function LongRunPanel({
                 {busy === 'cancel' ? '取消中…' : '取消任务'}
               </button>
             ) : null}
+            {job.status === 'completed' ? (
+              <button className="ghost-button long-delete" onClick={() => void removeCompleted(job)} disabled={Boolean(busy)}>
+                {busy === 'delete' ? '删除中…' : '删除任务'}
+              </button>
+            ) : null}
           </div>
         </div>
       ) : (
         <p className="panel-note">还没有长时任务。长时任务适合 120+ 班级或资源很紧、需要跑很久的数据。</p>
       )}
+      {completedJobs.filter((item) => item.id !== job?.id).length > 0 ? (
+        <div className="long-completed-list">
+          <h4>已完成任务</h4>
+          {completedJobs.filter((item) => item.id !== job?.id).map((item) => (
+            <div className="long-completed-row" key={item.id}>
+              <div>
+                <b>{item.id}</b>
+                <small>{new Date(item.createdAt).toLocaleString('zh-CN')} · {item.placed}/{item.total} 课时</small>
+              </div>
+              <button type="button" className="ghost-button" onClick={() => void removeCompleted(item)} disabled={Boolean(busy)}>
+                {busy === 'delete' ? '删除中…' : '删除'}
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
+
 
 

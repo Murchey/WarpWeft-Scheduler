@@ -1105,6 +1105,22 @@ function startApi({
     return job;
   }
 
+
+  function deleteLongJob(id) {
+    const job = longJobs.get(id);
+    if (!job) throw requestError('长时任务不存在', 404, 'LONG_JOB_NOT_FOUND');
+    if (job.status !== 'completed') throw requestError('只有已完成任务可以删除', 409, 'LONG_JOB_NOT_COMPLETED');
+    longJobs.delete(id);
+    if (job.taskUuid) longJobsByUuid.delete(job.taskUuid);
+    try {
+      fs.rmSync(longJobFile(id), { force: true });
+      fs.rmSync(job.bestFile || path.join(longJobsDir, id + '.best.json'), { force: true });
+    } catch {
+      // ignore cleanup failures; the job is already removed from the index
+    }
+    log('info', '长时任务已删除', id);
+    return job;
+  }
   function cancelLongJob(id) {
     const job = longJobs.get(id);
     if (!job) throw requestError('长时任务不存在', 404, 'LONG_JOB_NOT_FOUND');
@@ -1407,6 +1423,14 @@ function startApi({
         if (!job) return fail(res, 404, '长时任务不存在', 'LONG_JOB_NOT_FOUND');
         return send(res, 200, longJobDetail(job));
       }
+      if (req.method === 'DELETE' && longJobRoute) {
+        try {
+          const job = deleteLongJob(decodeURIComponent(longJobRoute[1]));
+          return send(res, 200, { deleted: true, id: job.id });
+        } catch (error) {
+          return fail(res, error.statusCode || 500, error.message, error.code || 'LONG_JOB_DELETE_FAILED');
+        }
+      }
       const longJobAction = url.pathname.match(/^\/api\/solve\/jobs\/([^/]+)\/(pause|resume|cancel)$/);
       if (req.method === 'POST' && longJobAction) {
         const id = decodeURIComponent(longJobAction[1]);
@@ -1481,6 +1505,7 @@ function startApi({
 }
 
 module.exports = { startApi, validateData };
+
 
 
 

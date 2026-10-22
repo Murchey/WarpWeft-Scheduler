@@ -449,3 +449,7 @@ export async function resumeLongJob(id: string): Promise<{ job: LongJob }> {
 export async function cancelLongJob(id: string): Promise<{ job: LongJob }> {
   return sendJson<{ job: LongJob }>('/api/solve/jobs/' + encodeURIComponent(id) + '/cancel', 'POST');
 }
+
+export async function deleteLongJob(id: string): Promise<{ deleted: boolean; id: string }> {
+  return sendJson<{ deleted: boolean; id: string }>('/api/solve/jobs/' + encodeURIComponent(id), 'DELETE');
+}

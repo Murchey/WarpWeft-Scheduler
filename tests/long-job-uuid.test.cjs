@@ -153,3 +153,35 @@ test('task UUIDs survive a server restart and are not exposed to other clients',
     await second.close();
   }
 });
+
+test('a completed long job can be deleted, and its files disappear', async () => {
+  const dataDir = tempDir();
+  const ctx = await start(dataDir);
+  try {
+    const created = await post(ctx, payload({ taskUuid: 'task-del-444', snapshotId: 'snap-del', fakeTotal: 2, fakeStepMs: 20 }));
+    assert.equal(created.status, 202);
+    const id = created.body.job.id;
+
+    let detail = null;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const response = await fetch(ctx.base + '/api/solve/jobs/' + encodeURIComponent(id), { headers });
+      detail = await response.json();
+      if (detail.status === 'completed') break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal(detail.status, 'completed');
+
+    const deleted = await fetch(ctx.base + '/api/solve/jobs/' + encodeURIComponent(id), {
+      method: 'DELETE',
+      headers,
+    });
+    assert.equal(deleted.status, 200);
+    assert.equal((await deleted.json()).deleted, true);
+
+    const after = await fetch(ctx.base + '/api/solve/jobs/' + encodeURIComponent(id), { headers });
+    assert.equal(after.status, 404);
+    assert.equal(fs.existsSync(path.join(dataDir, 'solve-jobs', id + '.json')), false);
+  } finally {
+    await ctx.close();
+  }
+});

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import type { Commit, RuleInstance, SchoolData } from './types';
 import { AvailabilityEditor } from './AvailabilityEditor';
 import { PlansPage } from './PlansPage';
@@ -6,6 +6,8 @@ import { ElectivePage } from './ElectivePage';
 import { ResourcesPage } from './ResourcesPage';
 import { RulesPage } from './RulesPage';
 import { SemesterPage } from './SemesterPage';
+import { buildImportTemplate } from '../../../packages/import-export/src';
+import { download, exportMessage } from './download';
 
 export type PrepareSection = 'import' | 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots' | 'semester' | 'plans' | 'electives' | 'availability' | 'rules';
 
@@ -31,6 +33,7 @@ function PreparePage({
   onSimulate: (rule: RuleInstance) => Promise<{ entries: number; total: number; before: number; feasible: boolean; elapsedMs: number } | null>;
 }) {
   const [importOpen, setImportOpen] = useState(false);
+  const [templateBusy, setTemplateBusy] = useState(false);
   const unavailableCount = data.teachers.filter((teacher) => (data.unavailableSlots ?? []).some((item) => item.teacherId === teacher.id)).length;
   const items: { id: PrepareSection; label: string; english: string; count: string }[] = [
     { id: 'import', label: '数据导入', english: 'IMPORT', count: 'Excel' },
@@ -51,6 +54,27 @@ function PreparePage({
     url.searchParams.set('tab', '排课准备');
     url.searchParams.set('section', next);
     window.history.replaceState(null, '', url);
+  };
+  const exportTemplate = async () => {
+    if (templateBusy) return;
+    setTemplateBusy(true);
+    setError('');
+    try {
+      const bytes = buildImportTemplate({ ...data, schoolName: data.school.name });
+      const result = await download(
+        bytes,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'warpweft-data-' + new Date().toISOString().slice(0, 10) + '.xlsx',
+      );
+      const message = exportMessage(result, '数据模板');
+      if (!message) return;
+      if (message.tone === 'error') setError(message.text);
+      else setNotice(message.text);
+    } catch (cause) {
+      setError('导出数据模板失败：' + (cause instanceof Error ? cause.message : String(cause)));
+    } finally {
+      setTemplateBusy(false);
+    }
   };
   const resourceKinds = ['import', 'classes', 'teachers', 'subjects', 'rooms', 'timeSlots'] as const;
   const isResource = resourceKinds.includes(section as (typeof resourceKinds)[number]);
@@ -88,7 +112,12 @@ function PreparePage({
             <h2>排课准备</h2>
             <p>导入、基础资料、教学计划、教师时间和规则都在同一个工作区；左侧切换不会丢失数据。</p>
           </div>
-          <button type="button" className="action-button" onClick={() => setImportOpen(true)}>导入 Excel <span>↗</span></button>
+          <div className="prepare-head-actions">
+            <button type="button" className="ghost-button" onClick={() => void exportTemplate()} disabled={templateBusy}>
+              {templateBusy ? '正在导出模板…' : '导出当前数据模板'}
+            </button>
+            <button type="button" className="action-button" onClick={() => setImportOpen(true)}>导入 Excel <span>↗</span></button>
+          </div>
         </div>
         {section === 'semester' ? (
           <SemesterPage data={data} commit={commit} />
@@ -121,5 +150,7 @@ function PreparePage({
 }
 
 export { PreparePage };
+
+
 
 

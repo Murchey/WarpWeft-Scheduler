@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+﻿import * as XLSX from 'xlsx';
 
 export interface ImportRow { sheet: string; row: number; values: Record<string, unknown>; }
 export interface ImportIssue { sheet: string; row: number; field?: string; message: string; }
@@ -246,38 +246,159 @@ const INSTRUCTIONS: (string | number)[][] = [
   ['空行', '—', '—', '完全空白的行会被忽略。', ''],
 ];
 
-export function buildImportTemplate(): ArrayBuffer {
+export interface TemplateSource {
+  schoolName?: string;
+  semester?: { startDate: string; endDate: string } | null;
+  classes?: { id: string; name: string; grade?: string; size?: number }[];
+  teachers?: { id: string; name: string; grade?: string; subject?: string; subject2?: string }[];
+  subjects?: { id: string; name: string }[];
+  rooms?: { id: string; name: string; type?: string; capacity?: number }[];
+  timeSlots?: { id: string; day: number; period: number; start?: string; duration?: number; label?: string }[];
+  coursePlans?: {
+    classId: string;
+    subjectId: string;
+    teacherId?: string;
+    weeklyPeriods: number;
+    weeks?: 'all' | 'odd' | 'even';
+    kind?: 'morning' | 'regular' | 'evening' | 'makeup';
+    roomType?: string;
+    fixedSlotId?: string;
+  }[];
+}
+
+const DAY_NAMES = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+const WEEK_LABELS: Record<string, string> = { all: '每周', odd: '单周', even: '双周' };
+const KIND_LABELS: Record<string, string> = { regular: '常规', morning: '早读', evening: '晚自习', makeup: '补课' };
+
+function weekdayText(days: number[]): string {
+  const unique = Array.from(new Set(days)).filter((day) => day >= 1 && day <= 7).sort((a, b) => a - b);
+  if (unique.length === 0) return '周一至周五';
+  const consecutive = unique.every((day, index) => index === 0 || day === unique[index - 1] + 1);
+  if (consecutive && unique.length > 1) return DAY_NAMES[unique[0]] + '至' + DAY_NAMES[unique[unique.length - 1]];
+  return unique.map((day) => DAY_NAMES[day]).join('、');
+}
+
+function templateTimeSlotRows(source?: TemplateSource): { rows: (string | number)[][]; widths: number[] } {
+  const slots = source?.timeSlots ?? [];
+  const actualMax = Math.max(0, ...slots.map((slot) => slot.period));
+  const maxPeriod = actualMax || 8;
+  const periodCount = Math.max(8, actualMax);
+  const days = Array.from(new Set(slots.map((slot) => slot.day))).sort((a, b) => a - b);
+  const periods = Array.from({ length: periodCount }, (_, index) => index + 1);
+  const requiredPeriods = Array.from({ length: maxPeriod }, (_, index) => index + 1);
+  const firstSlot = (period: number) => slots.find((slot) => slot.period === period);
+  const dayPeriods = new Map<number, number[]>();
+  for (const day of days) {
+    dayPeriods.set(day, slots.filter((slot) => slot.day === day).map((slot) => slot.period).sort((a, b) => a - b));
+  }
+  const rows: (string | number)[][] = [
+    ['每天最多节数', maxPeriod, '', ''],
+    ['上课星期', weekdayText(days), '', ''],
+    ['', '', '', ''],
+    ['节次', '开始时间（选填）', '时长（分钟，选填）'],
+    ...periods.map((period) => {
+      const slot = firstSlot(period);
+      return [period, slot?.start ?? '', slot?.duration ?? ''];
+    }),
+    ['', '', '', ''],
+    ['单日节次设置（不写等于满节次）', '', '', ''],
+    ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
+    [1, 2, 3, 4, 5, 6, 7].map((day) => {
+      const list = dayPeriods.get(day);
+      if (!list?.length) return '';
+      const full = requiredPeriods.every((period) => list.includes(period));
+      return full ? '' : list.join(';');
+    }),
+  ];
+  return { rows, widths: [14, 18, 18, 18, 18, 18, 18] };
+}
+
+export function buildImportTemplate(source?: TemplateSource): ArrayBuffer {
   const workbook = XLSX.utils.book_new();
+  const classById = new Map((source?.classes ?? []).map((item) => [item.id, item]));
+  const subjectById = new Map((source?.subjects ?? []).map((item) => [item.id, item]));
+  const teacherById = new Map((source?.teachers ?? []).map((item) => [item.id, item]));
+  const slotById = new Map((source?.timeSlots ?? []).map((item) => [item.id, item]));
+  const timeSlots = templateTimeSlotRows(source);
   const sheets: AoaSheet[] = [
     {
       name: '说明',
       rows: INSTRUCTIONS,
       widths: [12, 14, 20, 55, 30],
     },
-    { name: '学校', rows: [['名称（选填）']], widths: [30] },
-    { name: '学期', rows: [['开始日期（选填）', '结束日期（选填）']], widths: [20, 20] },
-    { name: '班级', rows: [['名称', '年级（选填）', '人数（选填）']], widths: [24, 18, 18] },
-    { name: '教师', rows: [['姓名', '负责年级（选填）', '主要学科（选填）', '其他学科（选填）']], widths: [16, 20, 20, 24] },
-    { name: '学科', rows: [['学科']], widths: [24] },
-    { name: '教室', rows: [['教室名称（选填）', '类型（选填）', '容量（选填）']], widths: [26, 20, 16] },
+    {
+      name: '学校',
+      rows: [['名称（选填）'], ...(source?.schoolName ? [[source.schoolName]] : [])],
+      widths: [30],
+    },
+    {
+      name: '学期',
+      rows: [
+        ['开始日期（选填）', '结束日期（选填）'],
+        ...(source?.semester ? [[source.semester.startDate, source.semester.endDate]] : []),
+      ],
+      widths: [20, 20],
+    },
+    {
+      name: '班级',
+      rows: [
+        ['名称', '年级（选填）', '人数（选填）'],
+        ...(source?.classes ?? []).map((klass) => [klass.name, klass.grade ?? '', klass.size ?? '']),
+      ],
+      widths: [24, 18, 18],
+    },
+    {
+      name: '教师',
+      rows: [
+        ['姓名', '负责年级（选填）', '主要学科（选填）', '其他学科（选填）'],
+        ...(source?.teachers ?? []).map((teacher) => [
+          teacher.name,
+          teacher.grade ?? '',
+          teacher.subject ?? '',
+          teacher.subject2 ?? '',
+        ]),
+      ],
+      widths: [16, 20, 20, 24],
+    },
+    {
+      name: '学科',
+      rows: [['学科'], ...(source?.subjects ?? []).map((subject) => [subject.name])],
+      widths: [24],
+    },
+    {
+      name: '教室',
+      rows: [
+        ['教室名称（选填）', '类型（选填）', '容量（选填）'],
+        ...(source?.rooms ?? []).map((room) => [room.name, room.type ?? '', room.capacity ?? '']),
+      ],
+      widths: [26, 20, 16],
+    },
     {
       name: '时间段',
-      rows: [
-        ['每天最多节数', 8, '', ''],
-        ['上课星期', '周一至周五', '', ''],
-        ['', '', '', ''],
-        ['节次', '开始时间（选填）', '时长（分钟，选填）'],
-        ...Array.from({ length: 8 }, (_, index) => [index + 1, '', '']),
-        ['', '', '', ''],
-        ['单日节次设置（不写等于满节次）', '', '', ''],
-        ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
-        ['', '', '', '', '', '', ''],
-      ],
-      widths: [14, 18, 18, 18, 18, 18, 18],
+      rows: timeSlots.rows,
+      widths: timeSlots.widths,
     },
     {
       name: '教学计划',
-      rows: [['班级', '学科', '教师（选填）', '每周课时', '周次（选填）', '课程类型（选填）', '教室类型（选填）', '固定时间（选填）']],
+      rows: [
+        ['班级', '学科', '教师（选填）', '每周课时', '周次（选填）', '课程类型（选填）', '教室类型（选填）', '固定时间（选填）'],
+        ...(source?.coursePlans ?? []).map((plan) => {
+          const klass = classById.get(plan.classId);
+          const subject = subjectById.get(plan.subjectId);
+          const teacher = plan.teacherId ? teacherById.get(plan.teacherId) : undefined;
+          const fixed = plan.fixedSlotId ? slotById.get(plan.fixedSlotId) : undefined;
+          return [
+            klass?.name ?? '',
+            subject?.name ?? '',
+            teacher?.name ?? '',
+            plan.weeklyPeriods,
+            WEEK_LABELS[plan.weeks ?? 'all'] ?? '每周',
+            KIND_LABELS[plan.kind ?? 'regular'] ?? '常规',
+            plan.roomType ?? '',
+            fixed?.label ?? '',
+          ];
+        }),
+      ],
       widths: [22, 16, 16, 12, 14, 16, 18, 20],
     },
   ];
@@ -288,6 +409,7 @@ export function buildImportTemplate(): ArrayBuffer {
   }
   return XLSX.write(workbook, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
 }
+
 
 
 
