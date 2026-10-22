@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   cancelLongJob,
   deleteLongJob,
@@ -56,17 +56,27 @@ export function LongRunPanel({
   onNotice,
   onError,
   disabled,
+  seconds,
+  onSecondsChange,
+  showStartControls = true,
+  onRegisterStart,
+  onActiveChange,
 }: {
   inputFactory: (seconds: number) => SolverInput;
   onApplyResult: (job: LongJobDetail) => void;
   onNotice: (message: string) => void;
   onError: (message: string) => void;
   disabled: boolean;
+  seconds: number;
+  onSecondsChange: (value: number) => void;
+  showStartControls?: boolean;
+  onRegisterStart?: (start: () => Promise<void>) => void;
+  onActiveChange?: (active: boolean) => void;
 }) {
-  const [seconds, setSeconds] = useState(3600);
   const [job, setJob] = useState<LongJobDetail | null>(null);
   const [jobs, setJobs] = useState<LongJob[]>([]);
   const [busy, setBusy] = useState('');
+  const startRef = useRef<() => Promise<void>>(async () => {});
   const [panelError, setPanelError] = useState('');
 
   const refreshList = useCallback(async (): Promise<LongJob[]> => {
@@ -190,6 +200,14 @@ export function LongRunPanel({
       }
     });
 
+  startRef.current = start;
+  useEffect(() => {
+    onRegisterStart?.(() => startRef.current());
+  }, [onRegisterStart]);
+  useEffect(() => {
+    onActiveChange?.(Boolean(job && (job.status === 'queued' || job.status === 'running')));
+  }, [job?.status, onActiveChange]);
+
   const restartWithCurrentData = () =>
     withBusy('restart', async () => {
       if (!window.confirm('将按当前工作区数据重新开始长时排课。当前任务（如果还在运行）会被取消，旧检查点不会作为新任务的输入。继续吗？')) return;
@@ -307,10 +325,11 @@ export function LongRunPanel({
         <span className={'status-tag ' + (isRunning ? '' : 'muted')}>{job ? statusLabel(job.status) : '未启动'}</span>
       </div>
 
+      {showStartControls ? (
       <div className="long-start">
         <label className="long-duration">
           <span>时限</span>
-          <select value={seconds} onChange={(event) => setSeconds(Number(event.target.value))} disabled={isRunning || Boolean(busy)}>
+          <select value={seconds} onChange={(event) => onSecondsChange(Number(event.target.value))} disabled={isRunning || Boolean(busy)}>
             {DURATIONS.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
@@ -329,6 +348,7 @@ export function LongRunPanel({
         </button>
         {jobs.length > 0 ? <span className="long-count">服务端已保存 {jobs.length} 个长时任务</span> : null}
       </div>
+      ) : null}
 
       {panelError ? <div className="inline-warning">{panelError}</div> : null}
 
@@ -384,6 +404,9 @@ export function LongRunPanel({
             <button className="action-button" onClick={applyBest} disabled={job.bestEntries.length === 0}>
               载入最佳课表 <span>→</span>
             </button>
+            <button className="ghost-button" onClick={() => void restartWithCurrentData()} disabled={Boolean(busy)} title="用当前工作区数据重新开始长时任务，不沿用旧检查点">
+              {busy === 'restart' ? '正在按新数据启动…' : '加载新数据重排'}
+            </button>
             {isRunning || job.status === 'paused' ? (
               <button className="ghost-button long-cancel" onClick={() => void cancel(job.id)} disabled={Boolean(busy)}>
                 {busy === 'cancel' ? '取消中…' : '取消任务'}
@@ -418,6 +441,8 @@ export function LongRunPanel({
     </section>
   );
 }
+
+
 
 
 

@@ -1,4 +1,4 @@
-import type { RunMode } from './types';
+﻿import type { RunMode } from './types';
 
 export type RunPhase =
   | 'idle'
@@ -59,3 +59,12 @@ export const RUN_MODE_OPTIONS: {
     endpoint: 'https://',
   },
 ];
+
+export interface ShortRunRecord {
+  id: string;
+  createdAt: string;
+  status: string;
+  entries: number;
+  elapsedMs: number;
+  feasible: boolean;
+}

@@ -21,7 +21,7 @@ import { assignMissingTeachers } from './teacherAssignment';
 import { messageOf, todayLocal, uid } from './utils';
 import { activeRules, describeRule, matchedPlans, unscheduledHints } from './rules';
 import { RUN_MODE_OPTIONS } from './runConfig';
-import type { RunProgress } from './runConfig';
+import type { RunProgress, ShortRunRecord } from './runConfig';
 import { EmptyState, RunProgressView } from './runViews';
 import { findClass, findRoom, findSubject, findTeacher, missingPlans, planOf, planSubjectName } from './selectors';
 import { RunsPage } from './RunsPage';
@@ -361,6 +361,7 @@ function App() {
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<RunProgress>({ phase: 'idle', message: '等待开始排课' });
+  const [shortRuns, setShortRuns] = useState<ShortRunRecord[]>([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [selectedClassId, setSelectedClassId] = useState('');
@@ -761,6 +762,14 @@ function App() {
       const output = restoreUnassignedTeachers(await solveSchedule(toSolverInput(data, timeLimit, locked)));
       setProgress({ phase: 'finalizing', message: '正在保存候选课表并整理结果', startedAt: Date.now() });
       setResult(output);
+      setShortRuns((current) => [{
+        id: 'short-' + Date.now(),
+        createdAt: new Date().toISOString(),
+        status: output.status,
+        entries: output.entries.length,
+        elapsedMs: output.elapsedMs,
+        feasible: output.hasFeasibleSolution,
+      }, ...current].slice(0, 12));
       const updated = { ...data, candidate: output };
       setData(updated);
       pending.current = updated;
@@ -827,6 +836,14 @@ function App() {
         })),
       };
       setResult(repaired);
+      setShortRuns((current) => [{
+        id: 'short-' + Date.now(),
+        createdAt: new Date().toISOString(),
+        status: repaired.status,
+        entries: repaired.entries.length,
+        elapsedMs: repaired.elapsedMs,
+        feasible: repaired.hasFeasibleSolution,
+      }, ...current].slice(0, 12));
       const updated = { ...data, candidate: repaired };
       setData(updated);
       pending.current = updated;
@@ -1232,6 +1249,7 @@ function App() {
             running={running}
             progress={progress}
             runMode={runMode}
+            shortRuns={shortRuns}
             timeLimit={timeLimit}
             setTimeLimit={setTimeLimit}
             onRun={run}
@@ -2758,6 +2776,8 @@ function TimetablePage({
 }
 
 createRoot(document.getElementById('root')!).render(<HeroUIProvider><App /></HeroUIProvider>);
+
+
 
 
 

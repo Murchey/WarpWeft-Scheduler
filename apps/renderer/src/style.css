@@ -1216,3 +1216,17 @@ html[data-theme='dark'] .stats-ratio.is-warn{color:#fbbf24}
 .grade-matrix-table th,.grade-matrix-table td{text-align:center;white-space:nowrap}
 .grade-matrix-table th:first-child,.grade-matrix-table td:first-child{text-align:left}
 .grade-matrix-input{width:64px!important;min-width:0!important;text-align:center}
+
+/* Unified task history panel: short-run history + long-run jobs */
+.task-history-panel{margin-top:16px}
+.task-history-summary{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin:8px 0}
+.task-history-summary b{color:var(--ink)}
+.task-history-body{margin-top:12px}
+.short-history{margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--rule)}
+.short-history h4{margin:0 0 8px;font:11px var(--font-ui);letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+.short-history-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--rule)}
+.short-history-row:last-child{border-bottom:0}
+.short-history-row div{display:flex;flex-direction:column;gap:3px}
+.short-history-row small{font-size:11px;color:var(--muted)}
+.task-history-panel .long-run{border:0;background:transparent;padding:0;margin:0}
+.task-history-panel .long-run .panel-head{padding:0}

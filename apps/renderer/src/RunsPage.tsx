@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import type { RunMode, SchoolData, SolverInput, SolverOutput } from './types';
 import type { RunProgress } from './runConfig';
 import { RUN_MODE_OPTIONS } from './runConfig';
@@ -9,9 +9,10 @@ import { activeRules, describeRule } from './rules';
 import { LongRunPanel } from './LongRunPanel';
 import type { LongJobDetail } from './api';
 
-export function RunsPage({ data, result, issues, running, progress, timeLimit, setTimeLimit, onRun, onRepair, onTimetable, onClear, runMode, inputFactory, onApplyLongResult, onNotice, onError }: {
+export function RunsPage({ data, result, issues, running, progress, timeLimit, setTimeLimit, onRun, onRepair, onTimetable, onClear, runMode, shortRuns, inputFactory, onApplyLongResult, onNotice, onError }: {
   data: SchoolData; result: SolverOutput | null; issues: string[]; running: boolean; progress: RunProgress;
   timeLimit: number; setTimeLimit: (value: number) => void; onRun: () => void; onRepair: (scope: 'class' | 'teacher' | 'rule', id: string) => Promise<void>; onTimetable: () => void; onClear: () => void; runMode?: RunMode | null;
+  shortRuns: { id: string; createdAt: string; status: string; entries: number; elapsedMs: number; feasible: boolean }[];
   inputFactory: (seconds: number) => SolverInput;
   onApplyLongResult: (job: LongJobDetail) => void;
   onNotice: (message: string) => void;
@@ -22,6 +23,20 @@ export function RunsPage({ data, result, issues, running, progress, timeLimit, s
   const [repairScope, setRepairScope] = useState<'class' | 'teacher' | 'rule'>('class');
   const [repairId, setRepairId] = useState(data.classes[0]?.id ?? '');
   const [computeMode, setComputeMode] = useState<'short' | 'long'>('short');
+  const [longSeconds, setLongSeconds] = useState(3600);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [longActive, setLongActive] = useState(false);
+  const longStartRef = useRef<() => Promise<void>>(async () => {});
+  const registerLongStart = useCallback((start: () => Promise<void>) => {
+    longStartRef.current = start;
+  }, []);
+  const startSelected = () => {
+    if (computeMode === 'long') {
+      void longStartRef.current();
+      return;
+    }
+    onRun();
+  };
   const repairEntities = repairScope === 'class' ? data.classes : repairScope === 'teacher' ? data.teachers : (data.rules ?? []).map((rule) => ({ id: rule.id, name: describeRule(rule, data) }));
   const currentRepairId = repairEntities.some((item) => item.id === repairId) ? repairId : (repairEntities[0]?.id ?? '');
   const checked = issues.length === 0;
@@ -70,14 +85,9 @@ export function RunsPage({ data, result, issues, running, progress, timeLimit, s
               </>
             ) : (
               <>
-                <p className="panel-note">长时任务在后台持续优化，可暂停/继续；检查点会写入服务端，关闭页面或刷新后仍可接续。适合 120+ 班级或资源紧张、短时算不完的数据。同一时间只允许一个长时任务。</p>
-                <LongRunPanel
-                  inputFactory={inputFactory}
-                  onApplyResult={onApplyLongResult}
-                  onNotice={onNotice}
-                  onError={onError}
-                  disabled={!checked || running}
-                />
+                <div className="run-controls"><label>任务时限<select value={longSeconds} disabled={!canConfigure} onChange={(event) => setLongSeconds(Number(event.target.value))}><option value={1800}>30 分钟</option><option value={3600}>1 小时</option><option value={7200}>2 小时</option><option value={21600}>6 小时（上限）</option></select></label></div>
+                <p className="panel-note">长时任务在后台持续优化，可暂停/继续；检查点会写入服务端。启动入口统一在第 04 步，任务状态和历史在下方“任务与历史”面板展开查看。</p>
+                <div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div>
               </>
             )}
           </>
@@ -86,17 +96,60 @@ export function RunsPage({ data, result, issues, running, progress, timeLimit, s
       <section className={'section-panel wizard-card wizard-final ' + (!checked ? 'wizard-locked' : '')}>
         <div className="wizard-card-head"><span className="wizard-number">04</span><div><span className="kicker">RUN SCHEDULE</span><h2>开始排课</h2></div><span className={computeMode === 'long' ? 'status-tag' : result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{computeMode === 'long' ? '长时任务' : result ? result.status : '尚未运行'}</span></div>
         {computeMode === 'long' ? (
-          <p className="panel-note">当前为长时任务模式：请在「计算设置」中启动、暂停或继续；完成后用「载入最佳课表」写入候选。短时按钮已停用，避免重复计算。</p>
+          <p className="panel-note">点击下方按钮会按当前工作区数据启动一个新的长时任务；暂停、继续、载入最佳课表和历史任务都在下方“任务与历史”面板中。</p>
         ) : result && lockedCount > 0 ? (
           <p className="panel-note">本次重新排课将保留 {lockedCount} 条锁定课程的位置。</p>
         ) : (
           <p className="panel-note">确认前面三步后，开始生成候选课表。</p>
         )}
-        <button className="action-button wizard-run-button" onClick={onRun} disabled={!checked || running || computeMode === 'long'}>
-          {computeMode === 'long' ? '长时任务请在计算设置中启动' : running ? '正在计算…' : result ? '确认配置并重新排课' : '确认配置并开始排课'} <span>↗</span>
+        <button className="action-button wizard-run-button" onClick={startSelected} disabled={!checked || running || (computeMode === 'long' && longActive)}>
+          {computeMode === 'long'
+            ? longActive ? '长时任务进行中…' : '确认配置并启动长时任务'
+            : running ? '正在计算…' : result ? '确认配置并重新排课' : '确认配置并开始排课'} <span>↗</span>
         </button>
       </section>
     </div>
+    <section className="section-panel task-history-panel">
+      <div className="panel-head">
+        <div>
+          <SectionHeading english="TASK HISTORY" title="任务与历史" />
+          <p className="panel-note">短时计算保留本次会话记录；长时任务保留服务端检查点，可暂停、继续或载入最佳课表。</p>
+        </div>
+        <button type="button" className="ghost-button" onClick={() => setHistoryOpen((open) => !open)}>
+          {historyOpen ? '收起历史' : '展开查看历史'}
+        </button>
+      </div>
+      <div className="task-history-summary">
+        <span>本次短时计算 <b>{shortRuns.length}</b> 条</span>
+        <span>长时任务历史见下方面板</span>
+      </div>
+      <div className="task-history-body" style={{ display: historyOpen ? 'block' : 'none' }}>
+        <div className="short-history">
+          <h4>短时计算记录</h4>
+          {shortRuns.length === 0 ? <p className="panel-note">本次会话还没有短时计算记录。</p> : shortRuns.map((run) => (
+            <div className="short-history-row" key={run.id}>
+              <div>
+                <b>{run.status}</b>
+                <small>{new Date(run.createdAt).toLocaleString('zh-CN')} · {run.entries} 条 · {run.elapsedMs} ms</small>
+              </div>
+              <span className={run.feasible ? 'status-tag' : 'status-tag danger'}>{run.feasible ? '可行' : '未排满'}</span>
+            </div>
+          ))}
+        </div>
+        <LongRunPanel
+          inputFactory={inputFactory}
+          onApplyResult={onApplyLongResult}
+          onNotice={onNotice}
+          onError={onError}
+          disabled={!checked || running}
+          seconds={longSeconds}
+          onSecondsChange={setLongSeconds}
+          showStartControls={false}
+          onRegisterStart={registerLongStart}
+          onActiveChange={setLongActive}
+        />
+      </div>
+    </section>
     <section className="section-panel candidate-panel"><div className="panel-head"><SectionHeading english="CURRENT CANDIDATE" title="当前候选" /><span className={result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{result?.status ?? '尚未生成'}</span></div>{result ? <div className="result-summary"><div className="summary-grid"><div><span>已排课时</span><b>{result.entries.length}</b></div><div><span>计划课时</span><b>{expected}</b></div><div><span>未排课时</span><b>{Math.max(0, expected - result.entries.length)}</b></div><div><span>耗时</span><b>{result.elapsedMs} ms</b></div></div><p className="panel-note">{result.explanation || '求解器没有返回说明。'}</p>{result.hardConstraintViolations.length ? <ul className="issue-list">{result.hardConstraintViolations.map((item) => <li key={item}>{item}</li>)}</ul> : null}{missing.length ? <MissingReasons data={data} missing={missing} /> : null}{result && result.entries.length > 0 ? (
                 <div className="repair-controls">
                   <div><span className="kicker">// LOCAL REPAIR</span><b>局部重排</b><small>只重排所选范围，其他课程保持当前位置。</small></div>
@@ -116,4 +169,5 @@ export function RunsPage({ data, result, issues, running, progress, timeLimit, s
               <div className="hero-actions"><button className="action-button" onClick={onTimetable}>查看并调整课表 <span>→</span></button><button className="ghost-button" onClick={onClear}>清空候选</button></div></div> : <EmptyState title="尚未生成候选课表" message="完成向导后，候选课表会显示在这里。" />}</section>
   </div>;
 }
+
 
