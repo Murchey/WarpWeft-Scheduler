@@ -91,6 +91,7 @@ export function InspectionPage({
   onTimetable,
   onRun,
   onPublish,
+  onClear,
   onExportTimetable,
   adjustmentDays,
   onViewAdjustment,
@@ -109,6 +110,7 @@ export function InspectionPage({
   onTimetable: () => void;
   onRun: () => void;
   onPublish: () => void;
+  onClear: () => void;
   onExportTimetable: () => void;
   adjustmentDays: { date: string; label: string; count: number; summary: string }[];
   onViewAdjustment: (date: string) => void;
@@ -179,7 +181,7 @@ export function InspectionPage({
       ) : null}
       <section className={'section-panel inspect-hero ' + (report.ok ? 'is-ok' : 'is-fail')}>
         <div className="panel-head">
-          <SectionHeading english="FINAL TIMETABLE & RELEASE" title="最终课表" />
+          <SectionHeading english="FINAL TIMETABLE" title="最终课表" />
           <span className={'status-tag ' + (report.ok ? '' : 'danger')}>{report.ok ? '检测通过' : '检测未通过'}</span>
         </div>
         <p className="panel-note">
@@ -207,6 +209,9 @@ export function InspectionPage({
             </button>
             <button className="ghost-button" onClick={onPrint}>
               打印
+            </button>
+            <button className="ghost-button" onClick={onClear}>
+              清空候选
             </button>
             <button className="action-button" onClick={report.ok ? onPublish : onTimetable}>
               {report.ok ? (published ? '重新导出并发布' : '导出并保存为正式版') : '去调整课表'} <span>↗</span>
@@ -344,6 +349,7 @@ export function InspectionPage({
     </div>
   );
 }
+
 
 
 

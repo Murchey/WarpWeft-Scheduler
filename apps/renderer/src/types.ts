@@ -13,6 +13,10 @@ export interface ClassRoom {
 export interface Teacher {
   id: string;
   name: string;
+  /** Optional metadata imported from the teacher sheet. */
+  grade?: string;
+  subject?: string;
+  subject2?: string;
 }
 
 export interface Subject {
@@ -181,6 +185,7 @@ export interface SchoolData {
 export type RunMode = 'single' | 'lan-server' | 'lan-client' | 'cloud';
 
 export type Commit = (next: SchoolData, options?: { invalidate?: boolean; immediate?: boolean }) => void;
+
 
 
 

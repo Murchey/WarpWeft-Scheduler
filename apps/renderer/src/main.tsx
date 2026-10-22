@@ -53,7 +53,7 @@ import type {
 } from './types';
 import './style.css';
 
-const TABS = ['工作台', '排课准备', '排课任务', '课表预览', '调代课', '最终课表', '统计报表', '报表发布', '服务端', '设置'] as const;
+const TABS = ['工作台', '排课准备', '排课任务', '课表预览', '调代课', '最终课表', '统计报表', '服务端', '设置'] as const;
 type Tab = (typeof TABS)[number];
 const EN: Record<Tab, string> = {
   工作台: 'OVERVIEW',
@@ -63,7 +63,7 @@ const EN: Record<Tab, string> = {
   调代课: 'ADJUSTMENTS',
   最终课表: 'FINAL TIMETABLE',
   统计报表: 'WORKLOAD',
-  报表发布: 'RELEASE',
+
   服务端: 'SERVER',
   设置: 'SETTINGS',
 };
@@ -1240,6 +1240,7 @@ function App() {
             onTimetable={() => setTab('课表预览')}
             onRun={() => setTab('排课任务')}
             onPublish={publish}
+            onClear={clearCandidate}
             onExportTimetable={openTimetableExport}
             adjustmentDays={adjustmentDays}
             onViewAdjustment={viewAdjustedDate}
@@ -1258,23 +1259,6 @@ function App() {
             onExportCsv={exportStatsCsv}
             onRun={() => setTab('排课任务')}
             onTimetable={() => setTab('课表预览')}
-          />
-        ) : null}
-        {tab === '报表发布' ? (
-          <ReleasePage
-            data={data}
-            result={result}
-            report={report}
-            onInspect={() => setTab('最终课表')}
-            onPublish={publish}
-            onClear={clearCandidate}
-            onExportCsv={exportCsvFile}
-            onExportExcel={openTimetableExport}
-            onPrint={() => {
-              if (!result) return;
-              setTab('课表预览');
-              window.setTimeout(() => window.print(), 350);
-            }}
           />
         ) : null}
         {tab === '服务端' && runMode === 'lan-server' ? <ServerPage apiOnline={apiOnline} /> : null}
@@ -2663,110 +2647,10 @@ function TimetablePage({
   );
 }
 
-function ReleasePage({
-  data,
-  result,
-  report,
-  onInspect,
-  onPublish,
-  onClear,
-  onExportCsv,
-  onExportExcel,
-  onPrint,
-}: {
-  data: SchoolData;
-  result: SolverOutput | null;
-  report: InspectionReport | null;
-  onInspect: () => void;
-  onPublish: () => void;
-  onClear: () => void;
-  onExportCsv: () => void;
-  onExportExcel: () => void;
-  onPrint: () => void;
-}) {
-  const exportable = result ?? data.published ?? null;
-  const blocked = Boolean(result) && Boolean(report) && !report!.ok;
-  return (
-    <div className="release-layout">
-      <section className="section-panel">
-        <SectionHeading english="RELEASE" title="发布与导出" />
-        <p className="panel-note">候选课表通过检测后，可保存为正式版并导出 Excel、CSV 或打印。</p>
-        <div className="summary-grid">
-          <div>
-            <span>候选状态</span>
-            <b>{result?.status ?? '无'}</b>
-          </div>
-          <div>
-            <span>候选课时</span>
-            <b>{result?.entries.length ?? 0}</b>
-          </div>
-          <div>
-            <span>检测结论</span>
-            <b className={blocked ? 'is-danger' : ''}>
-              {!result ? '—' : !report ? '未检测' : report.ok ? '通过' : '未通过'}
-            </b>
-          </div>
-          <div>
-            <span>正式版</span>
-            <b>{data.published ? '已保存' : '未发布'}</b>
-          </div>
-        </div>
-        <div className={'release-gate ' + (blocked ? 'is-blocked' : result && report?.ok ? 'is-ready' : '')}>
-          <div>
-            <b>{blocked ? '发布被检测结果阻断' : result && report?.ok ? '检测通过，可以发布' : '尚未生成可发布的候选课表'}</b>
-            <small>
-              {report
-                ? report.summary.hard +
-                  ' 项硬冲突 · ' +
-                  report.summary.must +
-                  ' 条必须规则 · ' +
-                  report.summary.prefer +
-                  ' 条尽量规则 · 未排 ' +
-                  report.summary.unplaced +
-                  ' 课时'
-                : '运行排课后会自动生成检测报告。'}
-            </small>
-          </div>
-          <button className="ghost-button" onClick={onInspect} disabled={!result}>
-            查看检测报告
-          </button>
-        </div>
-        <div className="export-row">
-          <button onClick={onExportCsv} disabled={!exportable}>
-            导出 CSV
-          </button>
-          <button onClick={onExportExcel} disabled={!exportable}>
-            导出 Excel
-          </button>
-          <button onClick={onPrint} disabled={!result}>
-            打印课表
-          </button>
-        </div>
-        <div className="hero-actions">
-          <button
-            className="action-button"
-            onClick={onPublish}
-            disabled={!result || blocked}
-            title={blocked ? '存在硬冲突或必须规则违反，先处理检测报告中的问题' : undefined}
-          >
-            保存为正式版 <span>↗</span>
-          </button>
-          <button className="ghost-button" onClick={onClear} disabled={!result}>
-            清空候选
-          </button>
-        </div>
-        {blocked ? (
-          <p className="panel-note">
-            门禁规则：存在硬冲突或「必须」规则违反时不能发布；「尽量」规则只提示，不阻断。
-          </p>
-        ) : null}
-        <div className="version-history"><h3>正式版版本与审计</h3>{(data.publishedVersions ?? []).length === 0 ? <p className="panel-note">尚无正式版发布记录。</p> : <ol>{(data.publishedVersions ?? []).slice().reverse().map((version) => <li key={version.id}><strong>{version.id}</strong><span>{fmtTime(version.createdAt)} · {version.result.entries.length} 课时</span></li>)}</ol>}</div>
-      </section>
-    </div>
-  );
-}
-
 createRoot(document.getElementById('root')!).render(<HeroUIProvider><App /></HeroUIProvider>);
+
+
+
 
 
 

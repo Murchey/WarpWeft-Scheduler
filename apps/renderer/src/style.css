@@ -1155,3 +1155,7 @@ html[data-theme='dark'] .stats-ratio.is-warn{color:#fbbf24}
 .adjust-highlight-row > div:first-child{display:flex;flex-direction:column;gap:3px}
 .adjust-highlight-row small{color:var(--muted);font-size:11px}
 .adjust-highlight-actions{display:flex;gap:8px;flex-wrap:wrap}
+
+.template-progress{margin:8px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
+
+.file-button:disabled{opacity:.6;cursor:wait}

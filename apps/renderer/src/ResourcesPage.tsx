@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { buildImportTemplate, readWorkbook } from '../../../packages/import-export/src';
+﻿import React, { useState } from 'react';
+import { buildImportTemplate, readWorkbookWithMeta } from '../../../packages/import-export/src';
 import type { ClassRoom, Commit, CoursePlan, Room, SchoolData, SlotKind, Subject, Teacher, TimeSlot } from './types';
 import { DAYS, EditableTable, SectionHeading } from './components';
 import type { Column } from './components';
@@ -41,6 +41,7 @@ function ResourcesPage({
   const [batchFrom, setBatchFrom] = useState(1);
   const [batchTo, setBatchTo] = useState(2);
   const [workspace, setWorkspace] = useState<null | 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots'>(null);
+  const [templateStage, setTemplateStage] = useState<'idle' | 'generating' | 'saving'>('idle');
   const update = (
     collection: 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots',
     id: string,
@@ -165,7 +166,9 @@ function ResourcesPage({
     setImportFeedback(null);
     try {
       if (replaceOnImport && !window.confirm('导入前将清空当前工作区的基础资料、时间段和教学计划，确定继续？')) return;
-      const rows = readWorkbook(await file.arrayBuffer());
+      const parsed = readWorkbookWithMeta(await file.arrayBuffer());
+      const rows = parsed.rows;
+      const meta = parsed.meta;
       if (rows.length === 0) {
         setImportFeedback({ tone: 'error', text: 'Excel 文件为空，请先下载模板并按表头填写。' });
         setError('Excel 文件为空，请先下载模板并按表头填写。');
@@ -274,7 +277,7 @@ function ResourcesPage({
           continue;
         }
         classNames.add(key);
-        const size = numeric(v['人数'] ?? v['size'], 40);
+        const size = numeric(v['人数'] ?? v['人数（可选）'] ?? v['size'], 40);
         if (!Number.isInteger(size) || size <= 0) {
           issues.push('班级 第' + row.row + '行人数必须为正整数');
           continue;
@@ -291,25 +294,33 @@ function ResourcesPage({
       const teacherNames = new Set<string>();
       for (const row of teacherRows) {
         const v = row.values;
-        const name = text(v['名称'] ?? v['教师名称'] ?? v['name']);
+        const name = text(v['姓名'] ?? v['名称'] ?? v['教师名称'] ?? v['name']);
         if (!name) {
-          issues.push('教师 第' + row.row + '行缺少名称');
+          issues.push('教师 第' + row.row + '行缺少姓名');
           continue;
         }
         const key = name.toLowerCase();
         if (teacherNames.has(key)) {
-          issues.push('教师 第' + row.row + '行名称重复：' + name);
+          issues.push('教师 第' + row.row + '行姓名重复：' + name);
           continue;
         }
         teacherNames.add(key);
-        if (!next.teachers.some((item) => item.name.trim().toLowerCase() === key)) {
-          next.teachers.push({ id: uid('teacher'), name });
+        const grade = text(v['负责年级'] ?? v['年级'] ?? v['grade']);
+        const subject = text(v['主要学科'] ?? v['学科'] ?? v['subject']);
+        const subject2 = text(v['其他学科（可选）'] ?? v['其他学科'] ?? v['兼任学科'] ?? v['subject2']);
+        const existing = next.teachers.find((item) => item.name.trim().toLowerCase() === key);
+        if (existing) {
+          existing.grade = grade || existing.grade;
+          existing.subject = subject || existing.subject;
+          existing.subject2 = subject2 || existing.subject2;
+        } else {
+          next.teachers.push({ id: uid('teacher'), name, grade: grade || undefined, subject: subject || undefined, subject2: subject2 || undefined });
         }
       }
       const subjectNames = new Set<string>();
       for (const row of subjectRows) {
         const v = row.values;
-        const name = text(v['名称'] ?? v['学科名称'] ?? v['name']);
+        const name = text(v['学科'] ?? v['名称'] ?? v['学科名称'] ?? v['name']);
         if (!name) {
           issues.push('学科 第' + row.row + '行缺少名称');
           continue;
@@ -338,7 +349,7 @@ function ResourcesPage({
           continue;
         }
         roomNames.add(key);
-        const capacity = numeric(v['容量'] ?? v['capacity'], 40);
+        const capacity = numeric(v['容量'] ?? v['capacity'], Math.max(40, ...next.classes.map((klass) => klass.size)));
         if (!Number.isInteger(capacity) || capacity <= 0) {
           issues.push('教室 第' + row.row + '行容量必须为正整数');
           continue;
@@ -352,34 +363,24 @@ function ResourcesPage({
           next.rooms.push({ id: uid('room'), name, capacity, type });
         }
       }
-      const slotKeys = new Set<string>();
-      for (const row of slotRows) {
-        const v = row.values;
-        const day = dayMap[text(v['星期'] ?? v['day'])];
-        const period = numeric(v['节次'] ?? v['period']);
-        if (!day || !Number.isInteger(period) || period <= 0) {
-          issues.push('时间段 第' + row.row + '行缺少有效星期或节次');
-          continue;
+      if (next.rooms.length === 0) {
+        for (const klass of next.classes) {
+          next.rooms.push({
+            id: uid('room'),
+            name: klass.name + '教室',
+            capacity: Math.max(1, klass.size),
+            type: '普通教室',
+          });
         }
+      }
+      const slotKeys = new Set<string>();
+      const addSlot = (day: number, period: number, row: number, start: string, duration: number, label: string, kind: (typeof SLOT_KIND_MAP)[string]) => {
         const key = day + '-' + period;
         if (slotKeys.has(key)) {
-          issues.push('时间段 第' + row.row + '行重复：' + day + '-' + period);
-          continue;
+          issues.push('时间段 第' + row + '行重复：' + DAYS[day] + ' 第' + period + '节');
+          return;
         }
         slotKeys.add(key);
-        const label = text(v['名称'] ?? v['label']) || DAYS[day] + ' 第' + period + '节';
-        const kindText = text(v['类型'] ?? v['时段类型'] ?? v['kind']);
-        const kind = kindText ? SLOT_KIND_MAP[kindText] : 'regular';
-        if (kindText && !kind) {
-          issues.push('时间段 第' + row.row + '行时段类型无法识别：' + kindText + '（可填 早读/常规/晚自习/补课）');
-          continue;
-        }
-        const start = text(v['开始时间'] ?? v['开始'] ?? v['start']);
-        if (start && !/^\d{1,2}:\d{2}$/.test(start)) {
-          issues.push('时间段 第' + row.row + '行开始时间格式应为 HH:MM');
-          continue;
-        }
-        const duration = numeric(v['时长'] ?? v['duration'], 0);
         const existing = next.timeSlots.find((item) => item.day === day && item.period === period);
         if (existing) {
           existing.label = label;
@@ -396,6 +397,77 @@ function ResourcesPage({
             start: start || undefined,
             duration: duration > 0 ? duration : undefined,
           });
+        }
+      };
+      const hasWeekdayColumn = slotRows.some((row) => text(row.values['星期'] ?? row.values['day']) !== '');
+      if (hasWeekdayColumn) {
+        for (const row of slotRows) {
+          const v = row.values;
+          const day = dayMap[text(v['星期'] ?? v['day'])];
+          const period = numeric(v['节次'] ?? v['period']);
+          if (!day || !Number.isInteger(period) || period <= 0) {
+            issues.push('时间段 第' + row.row + '行缺少有效星期或节次');
+            continue;
+          }
+          const start = text(v['开始时间'] ?? v['开始'] ?? v['start']);
+          if (start && !/^\d{1,2}:\d{2}$/.test(start)) {
+            issues.push('时间段 第' + row.row + '行开始时间格式应为 HH:MM');
+            continue;
+          }
+          const kindText = text(v['类型'] ?? v['时段类型'] ?? v['kind']);
+          const kind = kindText ? SLOT_KIND_MAP[kindText] : 'regular';
+          if (kindText && !kind) {
+            issues.push('时间段 第' + row.row + '行时段类型无法识别：' + kindText + '（可填 早读/常规/晚自习/补课）');
+            continue;
+          }
+          const label = text(v['名称'] ?? v['label']) || DAYS[day] + ' 第' + period + '节';
+          addSlot(day, period, row.row, start, numeric(v['时长'] ?? v['duration'], 0), label, kind);
+        }
+      } else {
+        const periodRows = new Map<number, { start: string; duration: number; label: string; kind: (typeof SLOT_KIND_MAP)[string]; row: number }>();
+        for (const row of slotRows) {
+          const v = row.values;
+          const period = numeric(v['节次'] ?? v['period']);
+          if (!Number.isInteger(period) || period <= 0) {
+            issues.push('时间段 第' + row.row + '行缺少有效节次');
+            continue;
+          }
+          const start = text(v['开始时间'] ?? v['开始'] ?? v['start']);
+          if (start && !/^\d{1,2}:\d{2}$/.test(start)) {
+            issues.push('时间段 第' + row.row + '行开始时间格式应为 HH:MM');
+            continue;
+          }
+          const kindText = text(v['类型'] ?? v['时段类型'] ?? v['kind']);
+          const kind = kindText ? SLOT_KIND_MAP[kindText] : 'regular';
+          if (kindText && !kind) {
+            issues.push('时间段 第' + row.row + '行时段类型无法识别：' + kindText + '（可填 早读/常规/晚自习/补课）');
+            continue;
+          }
+          periodRows.set(period, {
+            start,
+            duration: numeric(v['时长'] ?? v['duration'], 0),
+            label: text(v['名称'] ?? v['label']) || '第' + period + '节',
+            kind,
+            row: row.row,
+          });
+        }
+        const maxPeriods = meta.maxPeriods ?? (periodRows.size ? Math.max(...periodRows.keys()) : 8);
+        if (!meta.maxPeriods) issues.push('时间段 工作表 B1 必须填写“每天最多节数”。');
+        const periods = Array.from({ length: maxPeriods }, (_, index) => index + 1);
+        const weekdays = meta.weekdays?.length ? meta.weekdays : [1, 2, 3, 4, 5];
+        for (const day of weekdays) {
+          for (const period of periods) {
+            const info = periodRows.get(period);
+            addSlot(
+              day,
+              period,
+              info?.row ?? 0,
+              info?.start ?? '',
+              info?.duration ?? 0,
+              info?.label && info.label !== '第' + period + '节' ? info.label : DAYS[day] + ' 第' + period + '节',
+              info?.kind ?? 'regular',
+            );
+          }
         }
       }
       const classByName = new Map(next.classes.map((item) => [item.name.trim().toLowerCase(), item]));
@@ -419,7 +491,7 @@ function ResourcesPage({
             issues.push('教学计划 第' + row.row + '行引用了不存在的班级、学科或教师');
             continue;
           }
-          const weeklyPeriods = numeric(v['周课时'] ?? v['课时'] ?? v['weeklyPeriods']);
+          const weeklyPeriods = numeric(v['每周课时'] ?? v['周课时'] ?? v['课时'] ?? v['weeklyPeriods']);
           if (!Number.isInteger(weeklyPeriods) || weeklyPeriods <= 0) {
             issues.push('教学计划 第' + row.row + '行周课时必须为正整数');
             continue;
@@ -450,7 +522,7 @@ function ResourcesPage({
               continue;
             }
           }
-          const kindText = text(v['时段类型'] ?? v['类型'] ?? v['kind']).trim();
+          const kindText = text(v['课程类型'] ?? v['时段类型'] ?? v['类型'] ?? v['kind']).trim();
           const planKind: SlotKind = kindText ? SLOT_KIND_MAP[kindText] : 'regular';
           if (kindText && !SLOT_KIND_MAP[kindText]) {
             issues.push('教学计划 第' + row.row + '行时段类型无法识别：' + kindText + '（可填 早读/常规/晚自习/补课）');
@@ -500,19 +572,31 @@ function ResourcesPage({
   };
 
   const downloadTemplate = async () => {
+    if (templateStage !== 'idle') return;
+    setTemplateStage('generating');
+    setError('');
     try {
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
       const bytes = buildImportTemplate();
+      setTemplateStage('saving');
       const result = await download(
         bytes,
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'warpweft-import-template.xlsx',
       );
+      if (result.status === 'downloaded') {
+        setNotice('模板已开始下载，请等待浏览器下载完成后再打开。');
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        return;
+      }
       const message = exportMessage(result, '模板');
       if (!message) return;
       if (message.tone === 'error') setError(message.text);
       else setNotice(message.text);
     } catch (cause) {
       setError('下载模板失败：' + messageOf(cause));
+    } finally {
+      setTemplateStage('idle');
     }
   };
 
@@ -532,7 +616,7 @@ function ResourcesPage({
               </button>
             </div>
           ) : null}
-          <p className="panel-note">支持学校、班级、教师、学科、教室、时间段和教学计划。建议先下载模板；基础资料按名称复用，教学计划会整体替换，导入后自动清空候选课表。</p>
+          <p className="panel-note">支持学校、班级、教师、学科、教室、时间段和教学计划。建议先下载模板；模板内“说明”工作表逐项标出填写位置、必填项和示例。教室可整表留空，时间段只需先填每天最多节数。</p>
           <div className="import-actions">
             <label className="file-button file-button-primary">
               <span>选择 Excel 文件</span>
@@ -546,15 +630,20 @@ function ResourcesPage({
                 }}
               />
             </label>
-            <button type="button" className="file-button" onClick={() => void downloadTemplate()}>
-              下载模板
+            <button type="button" className="file-button" onClick={() => void downloadTemplate()} disabled={templateStage !== 'idle'}>
+              {templateStage === 'generating' ? '正在生成模板…' : templateStage === 'saving' ? '正在写入模板…' : '下载模板'}
             </button>
           </div>
+          {templateStage !== 'idle' ? (
+            <p className="template-progress" role="status">
+              正在{templateStage === 'generating' ? '生成' : '写入'}文件，请等待保存完成后再打开；浏览器下载请等下载完成。
+            </p>
+          ) : null}
           <label className="import-replace">
             <input type="checkbox" checked={replaceOnImport} onChange={(event) => setReplaceOnImport(event.target.checked)} />
             <span>导入前清空当前工作区</span>
           </label>
-          <p className="panel-note">仅支持 Excel（.xlsx/.xls）；模板包含“说明、学校、班级、教师、学科、教室、时间段、教学计划”工作表。测试完整数据集时建议勾选上方清空选项。</p>
+          <p className="panel-note">仅支持 Excel（.xlsx/.xls）；模板包含“说明、学校、学期、班级、教师、学科、教室、时间段、教学计划”工作表；教师表的年级/学科为选填元数据，教室表可整表留空。测试完整数据集时建议勾选上方清空选项。</p>
         </section>
       </div>
     );
@@ -604,7 +693,12 @@ function ResourcesPage({
   }
 
   if (kind === 'teachers') {
-    const columns: Column<Teacher>[] = [{ key: 'name', label: '教师姓名', width: '78%' }];
+    const columns: Column<Teacher>[] = [
+        { key: 'name', label: '教师姓名', width: '34%' },
+        { key: 'grade', label: '负责年级', width: '20%' },
+        { key: 'subject', label: '主要学科', width: '22%' },
+        { key: 'subject2', label: '其他学科', width: '24%' },
+      ];
     return (
       <div className="resource-single">
         <EditableTable<Teacher>
@@ -627,7 +721,7 @@ function ResourcesPage({
             rows={data.teachers}
             columns={columns}
             batchFields={[]}
-            searchText={(row) => row.name}
+            searchText={(row) => [row.name, row.grade, row.subject, row.subject2].filter(Boolean).join(' ')}
             onChange={(id, key, value) => update('teachers', id, key, value)}
             onBatchEdit={(ids, key, value) => batchEdit('teachers', ids, key, value)}
             onRemoveMany={(ids) => removeMany('teachers', ids)}
@@ -793,6 +887,16 @@ function ResourcesPage({
 }
 
 export { ResourcesPage };
+
+
+
+
+
+
+
+
+
+
 
 
 

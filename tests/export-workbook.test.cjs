@@ -45,7 +45,7 @@ test('the import template is a valid workbook too', async () => {
   const rows = readWorkbook(bytes);
   // 教学计划仅表头、没有数据行；说明表有内容，可证明工作簿结构完整。
   assert.ok(rows.some((row) => row.sheet === '说明'));
-  assert.ok(rows.some((row) => row.values['项目'] === '周次'));
+  assert.ok(rows.some((row) => row.sheet === '说明' && row.values['工作表'] === '教学计划'));
 });
 
 test('blobPartOf keeps the exact window of a typed-array view', async () => {
@@ -73,4 +73,5 @@ test('exportMessage stays silent on cancel and reports failures', async () => {
   assert.equal(failed.tone, 'error');
   assert.match(failed.text, /磁盘已满/);
 });
+
 
