@@ -1,12 +1,15 @@
-﻿import type { SchoolData, SolverOutput } from './types';
+import type { ScheduleEntry, SchoolData, SolverOutput } from './types';
 import { findClass, findRoom, findSubject, findTeacher, planOf } from './selectors.ts';
 
 export type TemplateLayout = 'vertical' | 'horizontal';
+export type ExportView = 'class' | 'teacher' | 'room';
 
 export interface TimetableExportSettings {
   /** Which approved workbook template to fill. */
   layout: TemplateLayout;
-  classId: string;
+  /** Class / teacher / room timetable. */
+  view: ExportView;
+  entityId: string;
   schoolName: string;
   title: string;
   weeks: 'all' | 'odd' | 'even';
@@ -15,6 +18,8 @@ export interface TimetableExportSettings {
   showWeeks: boolean;
   /** Concrete school week; when set it overrides the odd/even filter. */
   weekNo?: number | null;
+  /** one week, or all distinct weeks of the semester. */
+  scope?: 'single' | 'semester';
 }
 
 export interface TimetableGrid {
@@ -25,11 +30,17 @@ export interface TimetableGrid {
   periods: number[];
 }
 
+export const VIEW_LABELS: Record<ExportView, string> = {
+  class: '班级课表',
+  teacher: '教师课表',
+  room: '教室课表',
+};
+
 const DAYS = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 const WEEK_LABEL: Record<string, string> = { all: '每周', odd: '单周', even: '双周' };
 
-function entryWeeks(entry: SolverOutput['entries'][number], data: SchoolData): 'all' | 'odd' | 'even' {
+function entryWeeks(entry: ScheduleEntry, data: SchoolData): 'all' | 'odd' | 'even' {
   return (entry.weeks ?? planOf(data, entry)?.weeks ?? 'all') as 'all' | 'odd' | 'even';
 }
 
@@ -37,14 +48,62 @@ function weekMatches(value: 'all' | 'odd' | 'even', filter: 'all' | 'odd' | 'eve
   return filter === 'all' || value === 'all' || value === filter;
 }
 
+export function exportEntityName(data: SchoolData, settings: Pick<TimetableExportSettings, 'view' | 'entityId'>): string {
+  if (settings.view === 'teacher') return findTeacher(data, settings.entityId)?.name ?? settings.entityId;
+  if (settings.view === 'room') return findRoom(data, settings.entityId)?.name ?? settings.entityId;
+  return findClass(data, settings.entityId)?.name ?? settings.entityId;
+}
+
+export function entryMatchesView(
+  data: SchoolData,
+  entry: ScheduleEntry,
+  settings: Pick<TimetableExportSettings, 'view' | 'entityId'>,
+): boolean {
+  if (settings.view === 'teacher') return entry.teacherId === settings.entityId;
+  if (settings.view === 'room') return entry.roomId === settings.entityId;
+  if (entry.classId === settings.entityId) return true;
+  if (!entry.groupId) return false;
+  return Boolean(
+    (data.electiveGroups ?? []).some(
+      (group) => group.id === entry.groupId && group.classIds.includes(settings.entityId),
+    ),
+  );
+}
+
+/** One lesson as displayed in the chosen view (no week suffix). */
+export function entryCellText(
+  data: SchoolData,
+  entry: ScheduleEntry,
+  settings: Pick<TimetableExportSettings, 'view' | 'showTeacher' | 'showRoom' | 'showWeeks'>,
+): string {
+  const plan = planOf(data, entry);
+  const group = entry.groupId ? (data.electiveGroups ?? []).find((item) => item.id === entry.groupId) : undefined;
+  const subject = findSubject(data, group?.subjectId ?? plan?.subjectId ?? '')?.name ?? '课程';
+  if (group) return subject + '·走班';
+  const klass = findClass(data, entry.classId)?.name ?? entry.classId;
+  const teacher = findTeacher(data, entry.teacherId)?.name ?? entry.teacherId;
+  const room = findRoom(data, entry.roomId)?.name ?? entry.roomId;
+  const parts: string[] = [];
+  if (settings.view === 'teacher') {
+    parts.push(klass, subject);
+    if (settings.showRoom) parts.push(room);
+  } else if (settings.view === 'room') {
+    parts.push(klass, subject);
+    if (settings.showTeacher) parts.push(teacher);
+  } else {
+    parts.push(subject);
+    if (settings.showTeacher) parts.push(teacher);
+    if (settings.showRoom) parts.push(room);
+  }
+  if (settings.showWeeks && entryWeeks(entry, data) !== 'all') parts.push(WEEK_LABEL[entryWeeks(entry, data)]);
+  return parts.filter(Boolean).join(' / ');
+}
+
 export function buildTimetableGrid(data: SchoolData, result: SolverOutput, settings: TimetableExportSettings): TimetableGrid {
-  const klass = findClass(data, settings.classId);
-  const groupClassIds = new Set((data.electiveGroups ?? []).filter((group) => group.classIds.includes(settings.classId)).map((group) => group.id));
+  const entityName = exportEntityName(data, settings);
   const effectiveWeeks = settings.weekNo ? (settings.weekNo % 2 === 1 ? 'odd' : 'even') : settings.weeks;
   const entries = result.entries.filter(
-    (entry) =>
-      (entry.classId === settings.classId || (entry.groupId !== undefined && groupClassIds.has(entry.groupId))) &&
-      weekMatches(entryWeeks(entry, data), effectiveWeeks),
+    (entry) => entryMatchesView(data, entry, settings) && weekMatches(entryWeeks(entry, data), effectiveWeeks),
   );
   const days = Array.from(new Set(data.timeSlots.map((slot) => slot.day))).sort((a, b) => a - b);
   const periods = Array.from(new Set(data.timeSlots.map((slot) => slot.period))).sort((a, b) => a - b);
@@ -55,7 +114,7 @@ export function buildTimetableGrid(data: SchoolData, result: SolverOutput, setti
     [settings.schoolName],
     [settings.title],
     [
-      (klass?.name ?? settings.classId) +
+      entityName +
         ' · ' +
         (settings.weekNo ? '第' + settings.weekNo + '周' : settings.weeks === 'all' ? '全周' : WEEK_LABEL[settings.weeks]) +
         ' · 导出 ' +
@@ -81,20 +140,11 @@ export function buildTimetableGrid(data: SchoolData, result: SolverOutput, setti
       const lines: string[] = [];
       const seenGroups = new Set<string>();
       for (const entry of cell) {
-        const plan = planOf(data, entry);
-        const group = entry.groupId ? (data.electiveGroups ?? []).find((item) => item.id === entry.groupId) : undefined;
-        const subject = findSubject(data, group?.subjectId ?? plan?.subjectId ?? '')?.name ?? '课程';
-        if (group) {
-          if (seenGroups.has(group.id)) continue;
-          seenGroups.add(group.id);
-          lines.push(subject + '·走班');
-          continue;
+        if (entry.groupId) {
+          if (seenGroups.has(entry.groupId)) continue;
+          seenGroups.add(entry.groupId);
         }
-        const parts = [subject];
-        if (settings.showTeacher) parts.push(findTeacher(data, entry.teacherId)?.name ?? '');
-        if (settings.showRoom) parts.push(findRoom(data, entry.roomId)?.name ?? '');
-        if (settings.showWeeks && entryWeeks(entry, data) !== 'all') parts.push(WEEK_LABEL[entryWeeks(entry, data)]);
-        lines.push(parts.filter(Boolean).join(' / '));
+        lines.push(entryCellText(data, entry, settings));
       }
       row.push(lines.join('\n'));
     }
@@ -107,20 +157,10 @@ export function buildTimetableGrid(data: SchoolData, result: SolverOutput, setti
 }
 
 export function timetableFileName(data: SchoolData, settings: TimetableExportSettings): string {
-  const klass = findClass(data, settings.classId)?.name ?? settings.classId;
+  const entityName = exportEntityName(data, settings);
   const stamp = new Date().toISOString().slice(0, 10);
-  return [settings.schoolName || data.school.name, klass, settings.title || '课表', settings.weekNo ? '第' + settings.weekNo + '周' : '', stamp]
+  return [settings.schoolName || data.school.name, entityName, settings.title || '课表', settings.scope === 'semester' ? '整学期' : '', settings.weekNo ? '第' + settings.weekNo + '周' : '', stamp]
     .join('-')
     .replace(/[\\/:*?"<>|]/g, '_')
     .slice(0, 120) + '.xlsx';
 }
-
-
-
-
-
-
-
-
-
-

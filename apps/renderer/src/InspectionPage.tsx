@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+﻿import { useMemo, useState } from 'react';
 import { CATEGORY_LABELS } from '../../../packages/inspection/src';
 import type { InspectionIssue, InspectionRefs, InspectionReport, UtilizationRow } from '../../../packages/inspection/src';
 import { EmptyState } from './runViews';
@@ -92,6 +92,9 @@ export function InspectionPage({
   onRun,
   onPublish,
   onExportTimetable,
+  adjustmentDays,
+  onViewAdjustment,
+  onExportAdjustment,
   versions,
   onRenameVersion,
   onRevealVersion,
@@ -107,6 +110,9 @@ export function InspectionPage({
   onRun: () => void;
   onPublish: () => void;
   onExportTimetable: () => void;
+  adjustmentDays: { date: string; label: string; count: number; summary: string }[];
+  onViewAdjustment: (date: string) => void;
+  onExportAdjustment: (date: string) => void;
   versions: NonNullable<SchoolData['publishedVersions']>;
   onRenameVersion: (id: string) => void;
   onRevealVersion: (path?: string | null) => void;
@@ -148,9 +154,32 @@ export function InspectionPage({
 
   return (
     <div className="inspect-layout">
+      {adjustmentDays.length > 0 ? (
+        <section className="section-panel adjust-highlight">
+          <div className="panel-head">
+            <SectionHeading english="ADJUSTED TIMETABLE" title="调代课更新后的课表" />
+            <span className="status-tag">{adjustmentDays.length} 天有调整</span>
+          </div>
+          <p className="panel-note">这些日期已叠加调课、代课或停课；可查看当天，或导出该周（含调整）的课表。</p>
+          <div className="adjust-highlight-list">
+            {adjustmentDays.map((day) => (
+              <div className="adjust-highlight-row" key={day.date}>
+                <div>
+                  <b>{day.label}</b>
+                  <small>{day.summary}</small>
+                </div>
+                <div className="adjust-highlight-actions">
+                  <button type="button" className="ghost-button" onClick={() => onViewAdjustment(day.date)}>查看当天</button>
+                  <button type="button" className="ghost-button" onClick={() => onExportAdjustment(day.date)}>导出该周（含调整）</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
       <section className={'section-panel inspect-hero ' + (report.ok ? 'is-ok' : 'is-fail')}>
         <div className="panel-head">
-          <SectionHeading english="INSPECTION & RELEASE GATE" title="课表检测" />
+          <SectionHeading english="FINAL TIMETABLE & RELEASE" title="最终课表" />
           <span className={'status-tag ' + (report.ok ? '' : 'danger')}>{report.ok ? '检测通过' : '检测未通过'}</span>
         </div>
         <p className="panel-note">
@@ -315,4 +344,6 @@ export function InspectionPage({
     </div>
   );
 }
+
+
 

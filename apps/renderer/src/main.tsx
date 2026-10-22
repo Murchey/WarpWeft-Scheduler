@@ -12,10 +12,11 @@ import type { ExportResult } from './download';
 import { TimetableExportDialog } from './TimetableExportDialog';
 import { timetableFileName } from './timetableExport';
 import { loadTimetableTemplate } from './timetableTemplateLoader';
-import { fillTimetableTemplate } from './timetableTemplate';
+import { fillSemesterTemplate, fillTimetableTemplate } from './timetableTemplate';
 import type { TimetableExportSettings } from './timetableExport';
 import { checkMove, checkSwap } from './dnd';
-import { semesterWeeks } from '../../../packages/semester/src';
+import { semesterWeeks, weekOfDate } from '../../../packages/semester/src';
+import { adjustedWeekEntries, semesterPatterns } from './semesterTimetable';
 import { messageOf, todayLocal, uid } from './utils';
 import { activeRules, describeRule, matchedPlans, unscheduledHints } from './rules';
 import { RUN_MODE_OPTIONS } from './runConfig';
@@ -31,7 +32,7 @@ import { AdjustmentsPage } from './AdjustmentsPage';
 import { TodayPanel } from './TodayPanel';
 import { buildStats, classRowsForExport, subjectRowsForExport, teacherRowsForExport } from '../../../packages/statistics/src';
 import type { StatsReport } from '../../../packages/statistics/src';
-import { LESSON_STATUS_LABELS, activeAdjustments, buildActualStats, effectiveEntries, weekdayOf } from '../../../packages/adjustments/src';
+import { ADJUSTMENT_LABELS, LESSON_STATUS_LABELS, activeAdjustments, buildActualStats, effectiveEntries, weekdayOf } from '../../../packages/adjustments/src';
 import type { ActualStats } from '../../../packages/adjustments/src';
 import type { ServerClient, ServerConfig, ServerConfigResult, ServerEffective, ServerJob, ServerLog, ServerStats } from './api';
 import type { LongJobDetail } from './api';
@@ -52,7 +53,7 @@ import type {
 } from './types';
 import './style.css';
 
-const TABS = ['工作台', '排课准备', '排课任务', '课表预览', '调代课', '课表检测', '统计报表', '报表发布', '服务端', '设置'] as const;
+const TABS = ['工作台', '排课准备', '排课任务', '课表预览', '调代课', '最终课表', '统计报表', '报表发布', '服务端', '设置'] as const;
 type Tab = (typeof TABS)[number];
 const EN: Record<Tab, string> = {
   工作台: 'OVERVIEW',
@@ -60,7 +61,7 @@ const EN: Record<Tab, string> = {
   排课任务: 'SCHEDULE RUNS',
   课表预览: 'TIMETABLE PREVIEW',
   调代课: 'ADJUSTMENTS',
-  课表检测: 'INSPECTION',
+  最终课表: 'FINAL TIMETABLE',
   统计报表: 'WORKLOAD',
   报表发布: 'RELEASE',
   服务端: 'SERVER',
@@ -327,6 +328,7 @@ function App() {
   const [entityId, setEntityId] = useState('');
   const [selectedEntryId, setSelectedEntryId] = useState('');
   const [exportOpen, setExportOpen] = useState<null | 'export' | 'publish'>(null);
+  const [exportWeek, setExportWeek] = useState<number | null>(null);
   const [history, setHistory] = useState<SolverOutput[]>([]);
   const [timeLimit, setTimeLimit] = useState(30);
   const saveTimer = useRef<number | null>(null);
@@ -447,6 +449,25 @@ function App() {
       void flush(updated);
     }
   };
+
+  const adjustmentDays = useMemo(() => {
+    if (!data) return [];
+    const map = new Map<string, Record<string, number>>();
+    for (const item of data.adjustments ?? []) {
+      if (item.status !== 'active') continue;
+      const counts = map.get(item.date) ?? {};
+      counts[item.type] = (counts[item.type] ?? 0) + 1;
+      map.set(item.date, counts);
+    }
+    return Array.from(map.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, counts]) => ({
+        date,
+        label: date + ' ' + (DAYS[weekdayOf(date)] ?? ''),
+        count: Object.values(counts).reduce((sum, value) => sum + value, 0),
+        summary: Object.entries(counts).map(([type, value]) => (ADJUSTMENT_LABELS as Record<string, string>)[type] + ' ' + value).join(' · '),
+      }));
+  }, [data]);
 
   const report = useMemo<InspectionReport | null>(() => {
     if (!data || !result) return null;
@@ -897,9 +918,9 @@ function App() {
           report.summary.hard +
           ' 项硬冲突、' +
           report.summary.must +
-          ' 条「必须」规则违反。请先在「课表检测」处理阻断项，再保存为正式版。',
+          ' 条「必须」规则违反。请先在「最终课表」处理阻断项，再保存为正式版。',
       );
-      setTab('课表检测');
+      setTab('最终课表');
       return;
     }
     setExportOpen('publish');
@@ -965,7 +986,29 @@ function App() {
   const openTimetableExport = () => {
     if (!data) return;
     if (!(result ?? data.published)) return;
+    setExportWeek(null);
     setExportOpen('export');
+  };
+
+  const openAdjustedExport = (date: string) => {
+    if (!data) return;
+    if (!(result ?? data.published)) return;
+    const week = weekOfDate(data.semester, date);
+    if (!week) {
+      setError('无法定位该日期属于第几周，请先在「排课准备 → 学期周次」设置学期起止日期。');
+      return;
+    }
+    setExportWeek(week);
+    setExportOpen('export');
+  };
+
+  const viewAdjustedDate = (date: string) => {
+    try {
+      window.localStorage.setItem('warpweft-adjust-date', date);
+    } catch {
+      // ignore
+    }
+    setTab('课表预览');
   };
 
   const exportTimetable = async (settings: TimetableExportSettings, onStage: (stage: 'generating' | 'writing') => void): Promise<boolean> => {
@@ -974,10 +1017,20 @@ function App() {
     if (!target) return false;
     try {
       const template = await loadTimetableTemplate(settings.layout);
-      const filled = await fillTimetableTemplate(template, data, target, settings);
+      let buffer: Uint8Array;
+      if (settings.scope === 'semester' && data.semester) {
+        const patterns = semesterPatterns(data, target, data.adjustments ?? [], settings);
+        const filled = await fillSemesterTemplate(template, data, target, settings, patterns);
+        buffer = filled.buffer;
+      } else {
+        const weekStart = settings.weekNo ? semesterWeeks(data.semester).find((week) => week.index === settings.weekNo)?.startDate : null;
+        const entries = weekStart ? adjustedWeekEntries(data, target, data.adjustments ?? [], weekStart) : target.entries;
+        const filled = await fillTimetableTemplate(template, data, { ...target, entries }, settings);
+        buffer = filled.buffer;
+      }
       onStage('writing');
       const outcome = await download(
-        filled.buffer,
+        buffer,
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         timetableFileName(data, settings),
       );
@@ -1166,7 +1219,7 @@ function App() {
             canUndo={history.length > 0}
             onRun={run}
             running={running}
-            onInspect={() => setTab('课表检测')}
+            onInspect={() => setTab('最终课表')}
             onExportCsv={exportCsvFile}
             onExportExcel={openTimetableExport}
             onPrint={() => window.print()}
@@ -1175,7 +1228,7 @@ function App() {
         {tab === '调代课' ? (
           <AdjustmentsPage data={data} commit={commit} setError={setError} setNotice={setNotice} />
         ) : null}
-        {tab === '课表检测' ? (
+        {tab === '最终课表' ? (
           <InspectionPage
             report={report}
             hasCandidate={Boolean(result)}
@@ -1188,6 +1241,9 @@ function App() {
             onRun={() => setTab('排课任务')}
             onPublish={publish}
             onExportTimetable={openTimetableExport}
+            adjustmentDays={adjustmentDays}
+            onViewAdjustment={viewAdjustedDate}
+            onExportAdjustment={(date) => openAdjustedExport(date)}
             versions={data.publishedVersions ?? []}
             onRenameVersion={renameVersion}
             onRevealVersion={(path) => void revealVersion(path)}
@@ -1209,7 +1265,7 @@ function App() {
             data={data}
             result={result}
             report={report}
-            onInspect={() => setTab('课表检测')}
+            onInspect={() => setTab('最终课表')}
             onPublish={publish}
             onClear={clearCandidate}
             onExportCsv={exportCsvFile}
@@ -1228,7 +1284,9 @@ function App() {
         <TimetableExportDialog
           data={data}
           result={result ?? data.published!}
-          initialClassId={selectedClassId || data.classes[0]?.id || ''}
+          initialView={view}
+          initialEntityId={entityId || selectedClassId || data.classes[0]?.id || ''}
+          initialWeekNo={exportWeek}
           mode={exportOpen}
           onClose={() => setExportOpen(null)}
           onConfirm={exportTimetable}
@@ -2128,7 +2186,7 @@ function TimetablePage({
           <button
             className={'tt-btn ' + (report && !report.ok ? 'tt-btn-primary' : 'tt-btn-quiet')}
             onClick={onInspect}
-            title="打开课表检测报告（发布门禁）"
+            title="打开最终课表报告（发布门禁）"
           >
             检测{report ? (report.ok ? '通过' : ' · ' + report.summary.hard + ' 项') : '报告'}
           </button>
@@ -2709,6 +2767,15 @@ function ReleasePage({
 }
 
 createRoot(document.getElementById('root')!).render(<HeroUIProvider><App /></HeroUIProvider>);
+
+
+
+
+
+
+
+
+
 
 
 

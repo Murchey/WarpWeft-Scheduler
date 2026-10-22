@@ -1,32 +1,40 @@
 import React, { useMemo, useState } from 'react';
 import type { SchoolData, SolverOutput } from './types';
 import { SectionHeading } from './components';
-import { buildTimetableGrid } from './timetableExport';
-import type { TimetableExportSettings } from './timetableExport';
+import { buildTimetableGrid, exportEntityName, VIEW_LABELS } from './timetableExport';
+import type { ExportView, TimetableExportSettings } from './timetableExport';
 import { semesterWeeks } from '../../../packages/semester/src';
 
 export function TimetableExportDialog({
   data,
   result,
-  initialClassId,
+  initialView,
+  initialEntityId,
+  initialWeekNo,
   mode,
   onClose,
   onConfirm,
 }: {
   data: SchoolData;
   result: SolverOutput;
-  initialClassId: string;
+  initialView: ExportView;
+  initialEntityId: string;
+  initialWeekNo?: number | null;
   mode: 'export' | 'publish';
   onClose: () => void;
   onConfirm: (settings: TimetableExportSettings, onStage: (stage: 'generating' | 'writing') => void) => Promise<boolean>;
 }) {
+  const entities = initialView === 'teacher' ? data.teachers : initialView === 'room' ? data.rooms : data.classes;
+  const initialEntity = entities.some((item) => item.id === initialEntityId) ? initialEntityId : entities[0]?.id || '';
   const [settings, setSettings] = useState<TimetableExportSettings>({
-    classId: initialClassId || data.classes[0]?.id || '',
+    view: initialView,
+    entityId: initialEntity,
     layout: 'vertical',
     schoolName: data.school.name,
-    title: '班级课表',
+    title: VIEW_LABELS[initialView],
     weeks: 'all',
-    weekNo: null,
+    weekNo: initialWeekNo ?? null,
+    scope: 'single',
     showTeacher: true,
     showRoom: true,
     showWeeks: true,
@@ -35,6 +43,8 @@ export function TimetableExportDialog({
   const [stage, setStage] = useState<'idle' | 'generating' | 'writing'>('idle');
   const [error, setError] = useState('');
   const weeks = semesterWeeks(data.semester);
+  const entityOptions = settings.view === 'teacher' ? data.teachers : settings.view === 'room' ? data.rooms : data.classes;
+  const entityLabel = settings.view === 'teacher' ? '教师' : settings.view === 'room' ? '教室' : '班级';
   const grid = useMemo(() => {
     try {
       return buildTimetableGrid(data, result, settings);
@@ -77,34 +87,72 @@ export function TimetableExportDialog({
               <option value="horizontal">横向（A4 横向）</option>
             </select>
           </label>
-          <label>班级
-            <select value={settings.classId} onChange={(event) => setSettings({ ...settings, classId: event.target.value })}>
-              {data.classes.map((klass) => <option key={klass.id} value={klass.id}>{klass.name}</option>)}
-            </select>
-          </label>
-          <label>周次
-            <select value={settings.weeks} onChange={(event) => setSettings({ ...settings, weeks: event.target.value as TimetableExportSettings['weeks'] })}>
-              <option value="all">全周</option>
-              <option value="odd">单周</option>
-              <option value="even">双周</option>
-            </select>
-          </label>
-          <label>具体周次
+          <label>范围
             <select
-              value={settings.weekNo ?? ''}
-              onChange={(event) => setSettings({ ...settings, weekNo: event.target.value ? Number(event.target.value) : null })}
-              title={weeks.length ? '可按学期周次导出某一周' : '先在“排课准备 → 学期周次”设置学期'}
+              value={settings.scope}
+              onChange={(event) => setSettings({ ...settings, scope: event.target.value as 'single' | 'semester' })}
             >
-              <option value="">不指定</option>
-              {weeks.map((week) => (
-                <option key={week.index} value={week.index}>{week.label}</option>
-              ))}
+              <option value="single">单周/当前课表</option>
+              <option value="semester" disabled={weeks.length === 0}>整学期（相同周次合并）</option>
             </select>
           </label>
+          <label>视图
+            <select
+              value={settings.view}
+              onChange={(event) => {
+                const nextView = event.target.value as ExportView;
+                const nextOptions = nextView === 'teacher' ? data.teachers : nextView === 'room' ? data.rooms : data.classes;
+                setSettings({
+                  ...settings,
+                  view: nextView,
+                  entityId: nextOptions[0]?.id ?? '',
+                  title: VIEW_LABELS[nextView],
+                });
+              }}
+            >
+              <option value="class">班级课表</option>
+              <option value="teacher">教师课表</option>
+              <option value="room">教室课表</option>
+            </select>
+          </label>
+          <label>{entityLabel}
+            <select value={settings.entityId} onChange={(event) => setSettings({ ...settings, entityId: event.target.value })}>
+              {entityOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </label>
+          {settings.scope === 'single' ? (
+            <>
+              <label>周次
+                <select value={settings.weeks} onChange={(event) => setSettings({ ...settings, weeks: event.target.value as TimetableExportSettings['weeks'] })}>
+                  <option value="all">全周</option>
+                  <option value="odd">单周</option>
+                  <option value="even">双周</option>
+                </select>
+              </label>
+              <label>具体周次
+                <select
+                  value={settings.weekNo ?? ''}
+                  onChange={(event) => setSettings({ ...settings, weekNo: event.target.value ? Number(event.target.value) : null })}
+                  title={weeks.length ? '可按学期周次导出某一周' : '先在“排课准备 → 学期周次”设置学期'}
+                >
+                  <option value="">不指定</option>
+                  {weeks.map((week) => (
+                    <option key={week.index} value={week.index}>{week.label}</option>
+                  ))}
+                </select>
+              </label>
+            </>
+          ) : null}
         </div>
 
+        {settings.scope === 'semester' ? (
+          <p className="panel-note">整学期导出会按实际课表去重：完全相同的周只生成一张工作表，有差异的周按周次标注。</p>
+        ) : null}
+
         <div className="export-toggles">
-          <label><input type="checkbox" checked={settings.showTeacher} onChange={(event) => setSettings({ ...settings, showTeacher: event.target.checked })} /> 显示教师</label>
+          {settings.view !== 'teacher' ? (
+            <label><input type="checkbox" checked={settings.showTeacher} onChange={(event) => setSettings({ ...settings, showTeacher: event.target.checked })} /> 显示教师</label>
+          ) : null}
           <label><input type="checkbox" checked={settings.showRoom} onChange={(event) => setSettings({ ...settings, showRoom: event.target.checked })} /> 显示教室</label>
           <label><input type="checkbox" checked={settings.showWeeks} onChange={(event) => setSettings({ ...settings, showWeeks: event.target.checked })} /> 单双周标记</label>
         </div>
@@ -142,7 +190,7 @@ export function TimetableExportDialog({
         <footer className="export-actions">
           <span>
             文件名：{settings.schoolName || data.school.name}-
-            {data.classes.find((klass) => klass.id === settings.classId)?.name ?? ''}-{settings.title || '课表'}
+            {exportEntityName(data, settings)}-{settings.title || '课表'}
             {settings.weekNo ? '-第' + settings.weekNo + '周' : ''}-日期.xlsx
           </span>
           <button type="button" className="ghost-button" onClick={onClose} disabled={busy}>取消</button>
@@ -154,3 +202,6 @@ export function TimetableExportDialog({
     </div>
   );
 }
+
+
+

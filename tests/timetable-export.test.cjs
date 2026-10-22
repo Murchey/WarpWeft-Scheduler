@@ -36,7 +36,8 @@ function fixture() {
 }
 
 const settings = {
-  classId: 'c1',
+  view: 'class',
+  entityId: 'c1',
   schoolName: '测试学校',
   title: '七年级1班 课表',
   weeks: 'all',
@@ -70,6 +71,15 @@ test('week filter excludes lessons of the other parity', async () => {
   assert.match(String(odd.rows[6][2]), /单周/);
 });
 
+test('teacher view exports the same grid with classes in each cell', async () => {
+  const { buildTimetableGrid } = await loadExport();
+  const { data, result } = fixture();
+  const grid = buildTimetableGrid(data, result, { ...settings, view: 'teacher', entityId: 't1', title: '教师课表' });
+  assert.match(String(grid.rows[2][0]), /王老师/);
+  assert.match(String(grid.rows[5][1]), /七年级1班/);
+  assert.match(String(grid.rows[5][1]), /数学/);
+});
+
 test('a concrete school week overrides the odd/even filter', async () => {
   const { buildTimetableGrid } = await loadExport();
   const { data, result } = fixture();
@@ -79,4 +89,6 @@ test('a concrete school week overrides the odd/even filter', async () => {
   const oddWeek = buildTimetableGrid(data, result, { ...settings, weekNo: 1 });
   assert.match(String(oddWeek.rows[6][2]), /单周/);
 });
+
+
 

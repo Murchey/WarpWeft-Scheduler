@@ -1,4 +1,4 @@
-const test = require('node:test');
+﻿const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -41,7 +41,8 @@ function fixture() {
     elapsedMs: 1,
   };
   const settings = {
-    classId: 'c1',
+    view: 'class',
+    entityId: 'c1',
     layout: 'vertical',
     schoolName: '模板测试中学',
     title: '七年级1班 课表',
@@ -106,10 +107,44 @@ test('horizontal template keeps its own landscape page setup', async () => {
   assert.equal(filled.pageSetup.fitToHeight, 0);
 });
 
+test('teacher view fills the teacher name and class rows into the same template', async () => {
+  const { workbook } = await fill('vertical', { view: 'teacher', entityId: 't1', title: '教师课表' });
+  const sheet = workbook.getWorksheet('班级课表');
+  assert.equal(sheet.getCell('A2').value, '教师课表');
+  assert.equal(sheet.getCell('A3').value, '王老师');
+  assert.match(String(sheet.getCell('B5').value), /七年级1班/);
+  assert.match(String(sheet.getCell('B5').value), /数学/);
+});
+
 test('a concrete week is written into the title without app metadata', async () => {
   const { workbook } = await fill('vertical', { weekNo: 2 });
   const sheet = workbook.getWorksheet('班级课表');
   assert.match(String(sheet.getCell('A2').value), /第2周/);
   assert.match(String(sheet.getCell('A3').value), /第2周/);
   assert.equal(workbook.worksheets.length, 1);
+});
+
+
+
+test('semester export creates one sheet per distinct week pattern', async () => {
+  const { fillSemesterTemplate } = await import('../apps/renderer/src/timetableTemplate.ts');
+  const { data, result, settings } = fixture();
+  const template = fs.readFileSync(templates.vertical);
+  const filled = await fillSemesterTemplate(
+    template,
+    data,
+    result,
+    { ...settings, scope: 'semester', title: '班级课表' },
+    [
+      { label: '第1-2周', weeks: [1, 2], entries: result.entries },
+      { label: '第3周', weeks: [3], entries: [result.entries[0]] },
+    ],
+  );
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(filled.buffer);
+  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ['第1-2周', '第3周']);
+  assert.match(String(workbook.getWorksheet('第1-2周').getCell('A2').value), /第1-2周/);
+  assert.equal(workbook.getWorksheet('第3周').getCell('A1').value, '模板测试中学');
+  assert.equal(filled.pageSetup.fitToWidth, 1);
+  assert.equal(workbook.getWorksheet('第1-2周').pageSetup.orientation, 'portrait');
 });

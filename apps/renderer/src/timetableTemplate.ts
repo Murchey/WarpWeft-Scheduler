@@ -1,6 +1,7 @@
 ﻿import type { ScheduleEntry, SchoolData, SolverOutput } from './types';
 import type { TimetableExportSettings } from './timetableExport';
-import { findClass, findRoom, findSubject, findTeacher, planOf } from './selectors.ts';
+import { entryCellText, entryMatchesView, exportEntityName } from './timetableExport.ts';
+import { planOf } from './selectors.ts';
 import { semesterWeeks } from '../../../packages/semester/src.ts';
 
 export type TemplateLayout = 'vertical' | 'horizontal';
@@ -26,16 +27,6 @@ const TEMPLATE_PERIOD_ROWS = 3;
 
 function entryWeeks(entry: ScheduleEntry, data: SchoolData): 'all' | 'odd' | 'even' {
   return (entry.weeks ?? planOf(data, entry)?.weeks ?? 'all') as 'all' | 'odd' | 'even';
-}
-
-function entryText(data: SchoolData, entry: ScheduleEntry, settings: TimetableExportSettings): string {
-  const plan = planOf(data, entry);
-  const group = entry.groupId ? (data.electiveGroups ?? []).find((item) => item.id === entry.groupId) : undefined;
-  const parts = [findSubject(data, group?.subjectId ?? plan?.subjectId ?? '')?.name ?? '课程'];
-  if (settings.showTeacher) parts.push(findTeacher(data, entry.teacherId)?.name ?? '');
-  if (settings.showRoom) parts.push(findRoom(data, entry.roomId)?.name ?? '');
-  if (settings.showWeeks && entryWeeks(entry, data) !== 'all') parts.push(WEEK_LABEL[entryWeeks(entry, data)]);
-  return parts.filter(Boolean).join(' / ');
 }
 
 /**
@@ -92,7 +83,7 @@ export async function fillTimetableTemplate(
 
   const semester = data.semester;
   const week = settings.weekNo ? semesterWeeks(semester).find((item) => item.index === settings.weekNo) : null;
-  const klass = findClass(data, settings.classId);
+  const entityName = exportEntityName(data, settings);
   const weekText = week
     ? ' · 第' + week.index + '周（' + week.startDate.slice(5) + '~' + week.endDate.slice(5) + '，' + (week.parity === 'odd' ? '单周' : '双周') + '）'
     : settings.weeks !== 'all'
@@ -100,7 +91,7 @@ export async function fillTimetableTemplate(
       : '';
   sheet.getCell('A1').value = settings.schoolName || data.school.name;
   sheet.getCell('A2').value = (settings.title || '班级课表') + weekText;
-  sheet.getCell('A3').value = (klass?.name ?? settings.classId) + weekText;
+  sheet.getCell('A3').value = entityName + weekText;
   for (const id of ['A1', 'A2', 'A3']) {
     sheet.getCell(id).alignment = { ...sheet.getCell(id).alignment, shrinkToFit: true };
   }
@@ -110,14 +101,8 @@ export async function fillTimetableTemplate(
   }
 
   const effectiveWeeks = settings.weekNo ? (settings.weekNo % 2 === 1 ? 'odd' : 'even') : settings.weeks;
-  const groupClassIds = new Set(
-    (data.electiveGroups ?? [])
-      .filter((group) => group.classIds.includes(settings.classId))
-      .map((group) => group.id),
-  );
   const entries = result.entries.filter((entry) => {
-    const belongs = entry.classId === settings.classId || (entry.groupId !== undefined && groupClassIds.has(entry.groupId));
-    if (!belongs) return false;
+    if (!entryMatchesView(data, entry, settings)) return false;
     const weeks = entryWeeks(entry, data);
     return effectiveWeeks === 'all' || weeks === 'all' || weeks === effectiveWeeks;
   });
@@ -140,12 +125,8 @@ export async function fillTimetableTemplate(
         if (entry.groupId) {
           if (seenGroups.has(entry.groupId)) continue;
           seenGroups.add(entry.groupId);
-          const group = (data.electiveGroups ?? []).find((item) => item.id === entry.groupId);
-          const subject = findSubject(data, group?.subjectId ?? '')?.name ?? '课程';
-          lines.push(subject + '·走班');
-          continue;
         }
-        lines.push(entryText(data, entry, settings));
+        lines.push(entryCellText(data, entry, settings));
       }
       cell.value = lines.join('\n');
       cell.alignment = { ...cell.alignment, wrapText: true, vertical: 'middle' };
@@ -156,6 +137,86 @@ export async function fillTimetableTemplate(
   const buffer = output instanceof Uint8Array ? output : new Uint8Array(output as ArrayBuffer);
   return { buffer, pageSetup };
 }
+
+export interface WeekPatternInput {
+  label: string;
+  weeks: number[];
+  entries: ScheduleEntry[];
+}
+
+export interface FilledSemester {
+  buffer: Uint8Array;
+  pageSetup: PageSetupSummary;
+  sheets: { name: string; weeks: number[] }[];
+}
+
+function copySheet(source: import('exceljs').Worksheet, target: import('exceljs').Worksheet): void {
+  const pageSetup = source.pageSetup;
+  target.pageSetup = { ...pageSetup };
+  for (let column = 1; column <= 8; column += 1) {
+    const width = source.getColumn(column).width;
+    if (width) target.getColumn(column).width = width;
+  }
+  source.eachRow({ includeEmpty: true }, (row, rowNumber) => {
+    const dest = target.getRow(rowNumber);
+    dest.height = row.height;
+    row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
+      const copy = target.getCell(rowNumber, columnNumber);
+      copy.value = cell.value;
+      copy.style = cell.style;
+    });
+  });
+  for (const range of source.model.merges ?? []) target.mergeCells(range);
+}
+
+/**
+ * Export several distinct week patterns into one workbook. Weeks with identical
+ * effective timetables share a sheet; the sheet name is the week label.
+ */
+export async function fillSemesterTemplate(
+  templateBuffer: ArrayBuffer | Uint8Array,
+  data: SchoolData,
+  result: SolverOutput,
+  settings: TimetableExportSettings,
+  patterns: WeekPatternInput[],
+): Promise<FilledSemester> {
+  const ExcelJS = (await import('exceljs')).default;
+  const output = new ExcelJS.Workbook();
+  let pageSetup: PageSetupSummary | null = null;
+  const sheets: { name: string; weeks: number[] }[] = [];
+  for (const pattern of patterns) {
+    const filled = await fillTimetableTemplate(
+      templateBuffer,
+      data,
+      { ...result, entries: pattern.entries },
+      { ...settings, weekNo: null, title: settings.title + ' · ' + pattern.label },
+    );
+    const temporary = new ExcelJS.Workbook();
+    await temporary.xlsx.load(filled.buffer as never);
+    const source = temporary.getWorksheet('班级课表') ?? temporary.worksheets[0];
+    if (!source) continue;
+    let name = pattern.label.slice(0, 28);
+    let suffix = 2;
+    while (output.getWorksheet(name)) {
+      name = (pattern.label.slice(0, 26) + '·' + suffix).slice(0, 31);
+      suffix += 1;
+    }
+    const target = output.addWorksheet(name);
+    copySheet(source, target);
+    pageSetup = pageSetup ?? filled.pageSetup;
+    sheets.push({ name, weeks: pattern.weeks });
+  }
+  if (!pageSetup) throw new Error('没有可导出的周课表');
+  const written = await output.xlsx.writeBuffer();
+  const buffer = written instanceof Uint8Array ? written : new Uint8Array(written as ArrayBuffer);
+  return { buffer, pageSetup, sheets };
+}
+
+
+
+
+
+
 
 
 

@@ -1144,3 +1144,14 @@ html[data-theme='dark'] .stats-ratio.is-warn{color:#fbbf24}
 .export-progress-track{height:6px;border-radius:999px;background:var(--chip);overflow:hidden}
 .export-progress-track span{display:block;height:100%;background:var(--signal);transition:width .2s ease}
 @media(max-width:900px){.semester-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.semester-form{grid-template-columns:1fr}}
+
+/* Center action-button labels (arrow no longer pushes text off-center). */
+.action-button,.ink-button{display:inline-flex;align-items:center;justify-content:center;gap:12px}
+.action-button span,.ink-button span{margin-left:0}
+
+/* Adjusted timetable list on the final page. */
+.adjust-highlight-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.adjust-highlight-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--rule);border-radius:8px;background:var(--panel);flex-wrap:wrap}
+.adjust-highlight-row > div:first-child{display:flex;flex-direction:column;gap:3px}
+.adjust-highlight-row small{color:var(--muted);font-size:11px}
+.adjust-highlight-actions{display:flex;gap:8px;flex-wrap:wrap}
