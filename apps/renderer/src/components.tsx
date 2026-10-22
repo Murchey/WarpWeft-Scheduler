@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 
 export const DAYS = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
@@ -17,6 +17,7 @@ type Column<T> = {
   type?: 'text' | 'number' | 'select';
   options?: { value: string; label: string }[];
   width?: string;
+  defaultValue?: string | number;
 };
 
 function EditableTable<T extends { id: string }>({
@@ -74,7 +75,7 @@ function EditableTable<T extends { id: string }>({
                     <td key={column.key}>
                       {column.type === 'select' ? (
                         <select
-                          value={String(row[column.key] ?? '')}
+                          value={String(row[column.key] ?? column.defaultValue ?? '')}
                           onChange={(event) => onChange(row.id, column.key, event.target.value)}
                         >
                           {column.options?.map((option) => (
@@ -87,7 +88,7 @@ function EditableTable<T extends { id: string }>({
                         <input
                           type={column.type === 'number' ? 'number' : 'text'}
                           min={column.type === 'number' ? 0 : undefined}
-                          value={String(row[column.key] ?? '')}
+                          value={String(row[column.key] ?? column.defaultValue ?? '')}
                           onChange={(event) =>
                             onChange(
                               row.id,
@@ -117,3 +118,4 @@ function EditableTable<T extends { id: string }>({
 
 export { SectionHeading, EditableTable };
 export type { Column };
+

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HeroUIProvider, Button, Card, CardBody, Chip, Progress, Select, SelectItem, Tabs, Tab } from '@heroui/react';
 import { validateInput } from '../../../packages/validation/src';
@@ -8,14 +8,25 @@ import { DAYS, SectionHeading } from './components';
 import { PreparePage } from './PreparePage';
 import type { PrepareSection } from './PreparePage';
 import { download } from './download';
-import { messageOf, uid } from './utils';
+import { messageOf, todayLocal, uid } from './utils';
 import { activeRules, describeRule, matchedPlans, unscheduledHints } from './rules';
 import { RUN_MODE_OPTIONS } from './runConfig';
 import type { RunProgress } from './runConfig';
 import { EmptyState, RunProgressView } from './runViews';
 import { findClass, findRoom, findSubject, findTeacher, missingPlans, planOf, planSubjectName } from './selectors';
 import { RunsPage } from './RunsPage';
+import { InspectionPage } from './InspectionPage';
+import { KIND_LABELS, inspectTimetable, reportRows, weekMask, weeksOverlap } from '../../../packages/inspection/src';
+import type { InspectionRefs, InspectionReport } from '../../../packages/inspection/src';
+import { StatsPage } from './StatsPage';
+import { AdjustmentsPage } from './AdjustmentsPage';
+import { TodayPanel } from './TodayPanel';
+import { buildStats, classRowsForExport, subjectRowsForExport, teacherRowsForExport } from '../../../packages/statistics/src';
+import type { StatsReport } from '../../../packages/statistics/src';
+import { LESSON_STATUS_LABELS, activeAdjustments, buildActualStats, effectiveEntries, weekdayOf } from '../../../packages/adjustments/src';
+import type { ActualStats } from '../../../packages/adjustments/src';
 import type { ServerClient, ServerConfig, ServerConfigResult, ServerEffective, ServerJob, ServerLog, ServerStats } from './api';
+import type { LongJobDetail } from './api';
 import type {
   ClassRoom,
   CoursePlan,
@@ -33,13 +44,16 @@ import type {
 } from './types';
 import './style.css';
 
-const TABS = ['工作台', '排课准备', '排课任务', '课表预览', '报表发布', '服务端', '设置'] as const;
+const TABS = ['工作台', '排课准备', '排课任务', '课表预览', '调代课', '课表检测', '统计报表', '报表发布', '服务端', '设置'] as const;
 type Tab = (typeof TABS)[number];
 const EN: Record<Tab, string> = {
   工作台: 'OVERVIEW',
   排课准备: 'PREPARE',
   排课任务: 'SCHEDULE RUNS',
   课表预览: 'TIMETABLE PREVIEW',
+  调代课: 'ADJUSTMENTS',
+  课表检测: 'INSPECTION',
+  统计报表: 'WORKLOAD',
   报表发布: 'RELEASE',
   服务端: 'SERVER',
   设置: 'SETTINGS',
@@ -90,6 +104,7 @@ function toSolverInput(
     coursePlans: data.coursePlans,
     unavailableSlots: data.unavailableSlots ?? [],
     lockedEntries: locked,
+    electiveGroups: data.electiveGroups ?? [],
     hardConstraints: ['NO_CLASS_CONFLICT', 'NO_TEACHER_CONFLICT', 'ROOM_CAPACITY'],
     rules: data.rules ?? [],
     softConstraints: data.softConstraints ?? [
@@ -113,18 +128,23 @@ function preflight(data: SchoolData): string[] {
   if (data.subjects.length === 0) issues.push('至少需要一个学科');
 
   const slotCount = data.timeSlots.length;
+  // A plan that runs every week occupies both parities; odd/even plans only one.
+  const loadInWeek = (plans: CoursePlan[], parity: 'odd' | 'even') =>
+    plans.reduce((sum, plan) => {
+      const weeks = plan.weeks ?? 'all';
+      if (weeks !== 'all' && weeks !== parity) return sum;
+      return sum + Number(plan.weeklyPeriods || 0);
+    }, 0);
   for (const item of data.classes) {
-    const load = data.coursePlans
-      .filter((plan) => plan.classId === item.id)
-      .reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
+    const plans = data.coursePlans.filter((plan) => plan.classId === item.id);
+    const load = Math.max(loadInWeek(plans, 'odd'), loadInWeek(plans, 'even'));
     if (load > slotCount) {
       issues.push(item.name + ' 的周课时 ' + load + ' 超过可用时间格 ' + slotCount);
     }
   }
   for (const item of data.teachers) {
-    const load = data.coursePlans
-      .filter((plan) => plan.teacherId === item.id)
-      .reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
+    const plans = data.coursePlans.filter((plan) => plan.teacherId === item.id);
+    const load = Math.max(loadInWeek(plans, 'odd'), loadInWeek(plans, 'even'));
     if (load > slotCount) {
       issues.push(item.name + ' 的周课时 ' + load + ' 超过可用时间格 ' + slotCount);
     }
@@ -132,6 +152,12 @@ function preflight(data: SchoolData): string[] {
   for (const plan of data.coursePlans) {
     if (!findSubject(data, plan.subjectId)) {
       issues.push('教学计划 ' + plan.id + ' 引用了不存在的学科');
+    }
+    const planKind = plan.kind ?? 'regular';
+    if (!data.timeSlots.some((slot) => (slot.kind ?? 'regular') === planKind)) {
+      issues.push(
+        planSubjectName(data, plan) + ' 是「' + (KIND_LABELS[planKind] ?? planKind) + '」计划，但没有对应类型的时段',
+      );
     }
     const room = findClass(data, plan.classId);
     if (room && !data.rooms.some((item) => (!plan.roomType || item.type === plan.roomType) && item.capacity >= room.size)) {
@@ -143,20 +169,25 @@ function preflight(data: SchoolData): string[] {
   for (const item of data.unavailableSlots ?? []) {
     if (!teacherIds.has(item.teacherId) || !slotIds.has(item.slotId)) issues.push('教师不可用时间引用了不存在的教师或时间段');
   }
-  const fixed = new Map<string, string>();
+  const fixed = new Map<string, { id: string; weeks: string }[]>();
   for (const plan of data.coursePlans) {
     if (!plan.fixedSlotId) continue;
+    const weeks = plan.weeks ?? 'all';
     for (const key of ['c:' + plan.classId + ':' + plan.fixedSlotId, 't:' + plan.teacherId + ':' + plan.fixedSlotId]) {
-      const prior = fixed.get(key);
-      if (prior) issues.push('固定时间冲突：' + prior + ' 与 ' + plan.id);
-      else fixed.set(key, plan.id);
+      const prior = fixed.get(key) ?? [];
+      const clash = prior.find((item) => weeksOverlap(item.weeks, weeks));
+      if (clash) issues.push('固定时间冲突：' + clash.id + ' 与 ' + plan.id);
+      else prior.push({ id: plan.id, weeks });
+      fixed.set(key, prior);
     }
   }
   return Array.from(new Set(issues));
 }
 
-function conflictIds(entries: ScheduleEntry[]): Set<string> {
-  const groups = new Map<string, string[]>();
+function conflictIds(entries: ScheduleEntry[], plans: CoursePlan[] = []): Set<string> {
+  const weeksOfPlan = new Map(plans.map((plan) => [plan.id, plan.weeks ?? 'all']));
+  const weeksOf = (entry: ScheduleEntry) => entry.weeks ?? weeksOfPlan.get(entry.coursePlanId) ?? 'all';
+  const groups = new Map<string, ScheduleEntry[]>();
   for (const entry of entries) {
     for (const key of [
       'class:' + entry.classId + ':' + entry.slotId,
@@ -164,13 +195,22 @@ function conflictIds(entries: ScheduleEntry[]): Set<string> {
       'room:' + entry.roomId + ':' + entry.slotId,
     ]) {
       const list = groups.get(key) ?? [];
-      list.push(entry.id);
+      list.push(entry);
       groups.set(key, list);
     }
   }
   const ids = new Set<string>();
   for (const list of groups.values()) {
-    if (list.length > 1) list.forEach((id) => ids.add(id));
+    if (list.length < 2) continue;
+    // Odd and even lessons may share a slot; only overlapping weeks clash.
+    for (let i = 0; i < list.length; i += 1) {
+      for (let j = i + 1; j < list.length; j += 1) {
+        if (weeksOverlap(weeksOf(list[i]), weeksOf(list[j]))) {
+          ids.add(list[i].id);
+          ids.add(list[j].id);
+        }
+      }
+    }
   }
   return ids;
 }
@@ -180,6 +220,7 @@ function exportRows(data: SchoolData, result: SolverOutput): Record<string, stri
   return result.entries.map((entry) => {
     const plan = planOf(data, entry);
     const slot = data.timeSlots.find((item) => item.id === entry.slotId);
+    const weeks = entry.weeks ?? plan?.weeks ?? 'all';
     return {
       班级: findClass(data, entry.classId)?.name ?? entry.classId,
       星期: DAYS[slot?.day ?? 0] ?? '',
@@ -187,6 +228,7 @@ function exportRows(data: SchoolData, result: SolverOutput): Record<string, stri
       课程: planSubjectName(data, plan),
       教师: findTeacher(data, entry.teacherId)?.name ?? entry.teacherId,
       教室: findRoom(data, entry.roomId)?.name ?? entry.roomId,
+      周次: weeks === 'odd' ? '单周' : weeks === 'even' ? '双周' : '每周',
       来源: entry.source === 'MANUAL' ? '手工' : '自动',
       锁定: entry.locked ? '是' : '否',
     };
@@ -233,7 +275,7 @@ function App() {
   const [tab, setTab] = useState<Tab>(
     normalizedTab && (TABS as readonly string[]).includes(normalizedTab) ? (normalizedTab as Tab) : '工作台',
   );
-  const validSections: PrepareSection[] = ['import', 'classes', 'teachers', 'subjects', 'rooms', 'timeSlots', 'plans', 'availability', 'rules'];
+  const validSections: PrepareSection[] = ['import', 'classes', 'teachers', 'subjects', 'rooms', 'timeSlots', 'plans', 'electives', 'availability', 'rules'];
   const requestedSection = params.get('section') as PrepareSection | null;
   const [prepareSection, setPrepareSection] = useState<PrepareSection>(
     requestedSection && validSections.includes(requestedSection)
@@ -249,6 +291,16 @@ function App() {
     return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   });
   const [runMode, setRunMode] = useState<RunMode | null>(() => {
+    // Deep links can pin the runtime mode/endpoint, e.g. a LAN server handing
+    // out `?mode=single&endpoint=http://192.168.1.20:4317` to its clients.
+    const forcedMode = params.get('mode');
+    const forcedEndpoint = params.get('endpoint');
+    const modes: RunMode[] = ['single', 'lan-server', 'lan-client', 'cloud'];
+    if (forcedMode && modes.includes(forcedMode as RunMode)) {
+      window.localStorage.setItem('warpweft-runtime-mode', forcedMode);
+      if (forcedEndpoint) window.localStorage.setItem('warpweft-runtime-endpoint', forcedEndpoint.replace(/\/+$/, ''));
+      return forcedMode as RunMode;
+    }
     const saved = window.localStorage.getItem('warpweft-runtime-mode');
     return saved === 'single' || saved === 'lan-server' || saved === 'lan-client' || saved === 'cloud' ? saved : null;
   });
@@ -387,6 +439,226 @@ function App() {
     }
   };
 
+  const report = useMemo<InspectionReport | null>(() => {
+    if (!data || !result) return null;
+    try {
+      return inspectTimetable({ ...data, entries: result.entries });
+    } catch {
+      return null;
+    }
+  }, [data, result]);
+
+  const locateInspection = (refs: InspectionRefs) => {
+    const teacherId = refs.teacherIds?.[0];
+    const roomId = refs.roomIds?.[0];
+    const classId = refs.classIds?.[0];
+    if (teacherId) {
+      setView('teacher');
+      setEntityId(teacherId);
+    } else if (roomId) {
+      setView('room');
+      setEntityId(roomId);
+    } else if (classId) {
+      setView('class');
+      setEntityId(classId);
+    }
+    setSelectedEntryId(refs.entryIds?.[0] ?? '');
+    setTab('课表预览');
+  };
+
+  const exportInspectionExcel = async () => {
+    if (!data || !report) return;
+    try {
+      const ratio = (value: number) => Math.round(value * 1000) / 10 + '%';
+      const bytes = exportWorkbook({
+        汇总: [
+          { 项目: '学校', 值: data.school.name },
+          { 项目: '生成时间', 值: new Date(report.generatedAt).toLocaleString('zh-CN') },
+          { 项目: '结论', 值: report.ok ? '可以发布' : '不可发布' },
+          { 项目: '已排课时', 值: report.summary.placed },
+          { 项目: '未排课时', 值: report.summary.unplaced },
+          { 项目: '硬冲突', 值: report.summary.hard },
+          { 项目: '必须规则违反', 值: report.summary.must },
+          { 项目: '尽量规则违反', 值: report.summary.prefer },
+        ],
+        问题清单: reportRows(report),
+        教室利用率: report.utilization.rooms.map((row) => ({
+          教室类型: row.name,
+          已用: row.used,
+          可用: row.capacity,
+          占用率: ratio(row.ratio),
+        })),
+        教师周课时: report.utilization.teachers.map((row) => ({
+          教师: row.name,
+          已排课时: row.used,
+          可用时段: row.capacity,
+          占用率: ratio(row.ratio),
+        })),
+        班级课时: report.utilization.classes.map((row) => ({
+          班级: row.name,
+          已排课时: row.used,
+          可用时段: row.capacity,
+          占用率: ratio(row.ratio),
+        })),
+      });
+      const savedPath = await download(
+        new Blob([bytes.buffer as ArrayBuffer], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }),
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'warpweft-inspection.xlsx',
+      );
+      setNotice(savedPath ? '检测报告已导出到 ' + savedPath : '检测报告已开始下载，请查看系统下载目录');
+    } catch (cause) {
+      setError('导出检测报告失败：' + messageOf(cause));
+    }
+  };
+
+  const exportInspectionCsv = async () => {
+    if (!report) return;
+    try {
+      const csv = exportCsv(reportRows(report));
+      const savedPath = await download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), 'text/csv', 'warpweft-inspection.csv');
+      setNotice(savedPath ? '检测 CSV 已导出到 ' + savedPath : '检测 CSV 已开始下载，请查看系统下载目录');
+    } catch (cause) {
+      setError('导出检测 CSV 失败：' + messageOf(cause));
+    }
+  };
+
+  const actualStats = useMemo<ActualStats | null>(() => {
+    if (!data) return null;
+    try {
+      return buildActualStats(data.lessonLogs ?? [], data.teachers);
+    } catch {
+      return null;
+    }
+  }, [data]);
+
+  const stats = useMemo<StatsReport | null>(() => {
+    if (!data) return null;
+    try {
+      return buildStats({ ...data, entries: result?.entries ?? data.published?.entries ?? [] });
+    } catch {
+      return null;
+    }
+  }, [data, result]);
+
+  const exportStatsExcel = async () => {
+    if (!data || !stats) return;
+    try {
+      const bytes = exportWorkbook({
+        汇总: [
+          { 项目: '学校', 值: data.school.name },
+          { 项目: '生成时间', 值: new Date(stats.generatedAt).toLocaleString('zh-CN') },
+          { 项目: '口径', 值: '计划 = 教学计划周课时；已排 = 当前候选课表条目' },
+          { 项目: '计划周课时', 值: stats.summary.planned },
+          { 项目: '折算平均周课时', 值: stats.summary.averagePlanned },
+          { 项目: '已排课时', 值: stats.summary.placed },
+          { 项目: '未排课时', 值: stats.summary.missing },
+          { 项目: '班级', 值: stats.summary.classes },
+          { 项目: '教师', 值: stats.summary.teachers },
+          { 项目: '学科', 值: stats.summary.subjects },
+          { 项目: '时间格', 值: stats.summary.slots },
+        ],
+        教师周课时: teacherRowsForExport(stats),
+        学科周课时: subjectRowsForExport(stats),
+        班级周课时: classRowsForExport(stats),
+        每天分布: stats.days.map((row) => ({
+          星期: '周' + row.day,
+          班级时间格: row.capacity,
+          已排课时: row.placed,
+          占用率: Math.round(row.ratio * 1000) / 10 + '%',
+        })),
+        时段类型: stats.byKind.map((row) => ({
+          时段类型: row.label,
+          计划课时: row.planned,
+          已排课时: row.placed,
+          未排课时: Math.max(0, row.planned - row.placed),
+        })),
+        实际上课: (data.lessonLogs ?? []).map((log) => ({
+          日期: log.date,
+          时间: data.timeSlots.find((slot) => slot.id === log.slotId)?.label ?? log.slotId,
+          班级: data.classes.find((klass) => klass.id === log.classId)?.name ?? log.classId,
+          学科: findSubject(data, log.subjectId)?.name ?? log.subjectId,
+          实际教师: findTeacher(data, log.teacherId)?.name ?? log.teacherId,
+          原任课教师: findTeacher(data, log.originalTeacherId)?.name ?? log.originalTeacherId,
+          状态: LESSON_STATUS_LABELS[log.status],
+          确认: log.confirmed ? '是' : '否',
+          备注: log.note ?? '',
+        })),
+      });
+      const savedPath = await download(
+        new Blob([bytes.buffer as ArrayBuffer], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }),
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'warpweft-workload.xlsx',
+      );
+      setNotice(savedPath ? '统计报表已导出到 ' + savedPath : '统计报表已开始下载，请查看系统下载目录');
+    } catch (cause) {
+      setError('导出统计报表失败：' + messageOf(cause));
+    }
+  };
+
+  const exportStatsCsv = async () => {
+    if (!stats) return;
+    try {
+      const csv = exportCsv(teacherRowsForExport(stats));
+      const savedPath = await download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), 'text/csv', 'warpweft-teacher-workload.csv');
+      setNotice(savedPath ? '教师周课时表已导出到 ' + savedPath : '教师周课时表已开始下载，请查看系统下载目录');
+    } catch (cause) {
+      setError('导出教师周课时表失败：' + messageOf(cause));
+    }
+  };
+
+  const applyLongResult = (job: LongJobDetail) => {
+    if (!data) return;
+    // The workspace can change while a long job runs; never persist entries that
+    // point at deleted classes, rooms or slots.
+    const classIds = new Set(data.classes.map((item) => item.id));
+    const teacherIds = new Set(data.teachers.map((item) => item.id));
+    const roomIds = new Set(data.rooms.map((item) => item.id));
+    const slotIds = new Set(data.timeSlots.map((item) => item.id));
+    const planIds = new Set(data.coursePlans.map((item) => item.id));
+    const entries = job.bestEntries.filter(
+      (entry) =>
+        planIds.has(entry.coursePlanId) &&
+        classIds.has(entry.classId) &&
+        teacherIds.has(entry.teacherId) &&
+        roomIds.has(entry.roomId) &&
+        slotIds.has(entry.slotId),
+    );
+    const dropped = job.bestEntries.length - entries.length;
+    if (entries.length === 0) {
+      setError('长时任务的最佳解与当前工作区数据不匹配（可能数据在任务期间被修改），无法载入');
+      return;
+    }
+    const output: SolverOutput = {
+      protocolVersion: '1.0',
+      status: job.unplaced === 0 && dropped === 0 ? 'COMPLETED' : 'FEASIBLE',
+      entries,
+      hardConstraintViolations: [],
+      softScore: job.score ?? 0,
+      scoreBreakdown: {},
+      unsatisfiedRules: [],
+      explanation:
+        '长时任务最佳解：' +
+        entries.length +
+        '/' +
+        job.total +
+        ' 课时' +
+        (job.unplaced > 0 || dropped > 0 ? '（未排满，可继续计算）' : ''),
+      elapsedMs: job.elapsedMs,
+      hasFeasibleSolution: job.unplaced === 0 && dropped === 0,
+    };
+    applyResult(output);
+    setSelectedEntryId('');
+    setHistory([]);
+    setNotice(
+      '已载入长时任务最佳课表：' + entries.length + ' 条' + (dropped > 0 ? '，已忽略 ' + dropped + ' 条失效条目' : ''),
+    );
+  };
+
   const run = async () => {
     if (!data || running) return;
     setProgress({ phase: 'checking', message: '正在检查排课配置', startedAt: Date.now() });
@@ -520,9 +792,11 @@ function App() {
         return;
       }
     }
-    const blocking = result.entries.find((entry) => entry.id !== moving.id && entry.id !== target?.id && entry.slotId === targetSlotId && (
-      entry.teacherId === moving.teacherId || entry.roomId === moving.roomId
-    ));
+    const weeksOfEntry = (entry: ScheduleEntry) => entry.weeks ?? planOf(data, entry)?.weeks ?? 'all';
+    const movingWeeks = weeksOfEntry(moving);
+    const blocking = result.entries.find((entry) => entry.id !== moving.id && entry.id !== target?.id && entry.slotId === targetSlotId
+      && weeksOverlap(weeksOfEntry(entry), movingWeeks)
+      && (entry.teacherId === moving.teacherId || entry.roomId === moving.roomId));
     if (blocking) {
       setError('目标时间已有同一教师或教室的课程，不能移动到这里');
       return;
@@ -541,7 +815,7 @@ function App() {
       source.slotId = targetSlotId;
     }
     source.source = 'MANUAL';
-    const conflicts = conflictIds(entries);
+    const conflicts = conflictIds(entries, data.coursePlans);
     if (conflicts.has(source.id) || (target && conflicts.has(target.id))) {
       setError('调整后会产生教师、教室或班级冲突，请选择其他时间');
       return;
@@ -568,6 +842,17 @@ function App() {
 
   const publish = () => {
     if (!data || !result) return;
+    if (report && !report.ok) {
+      setError(
+        '检测未通过：' +
+          report.summary.hard +
+          ' 项硬冲突、' +
+          report.summary.must +
+          ' 条「必须」规则违反。请先在「课表检测」处理阻断项，再保存为正式版。',
+      );
+      setTab('课表检测');
+      return;
+    }
     const version = { id: uid('version'), createdAt: new Date().toISOString(), result, note: '手动发布' };
     const audit = { id: uid('audit'), at: version.createdAt, action: 'PUBLISH', detail: `发布课表 ${version.id}` };
     commit({ ...data, published: result, publishedVersions: [...(data.publishedVersions ?? []), version], auditLog: [...(data.auditLog ?? []), audit] }, { immediate: true });
@@ -740,6 +1025,7 @@ function App() {
             onPrepare={() => { setPrepareSection('plans'); setTab('排课准备'); }}
             onRun={() => setTab('排课任务')}
             onTimetable={() => setTab('课表预览')}
+            onAdjust={() => setTab('调代课')}
           />
         ) : null}
         {tab === '排课准备' ? (
@@ -769,12 +1055,17 @@ function App() {
             onRepair={repairSchedule}
             onTimetable={() => setTab('课表预览')}
             onClear={clearCandidate}
+            inputFactory={(seconds) => toSolverInput(data, seconds, data.candidate?.entries.filter((entry) => entry.locked) ?? [])}
+            onApplyLongResult={applyLongResult}
+            onNotice={setNotice}
+            onError={setError}
           />
         ) : null}
         {tab === '课表预览' ? (
           <TimetablePage
             data={data}
             result={result}
+            report={report}
             view={view}
             setView={setView}
             entityId={entityId}
@@ -787,15 +1078,46 @@ function App() {
             canUndo={history.length > 0}
             onRun={run}
             running={running}
+            onInspect={() => setTab('课表检测')}
             onExportCsv={exportCsvFile}
             onExportExcel={exportExcelFile}
             onPrint={() => window.print()}
+          />
+        ) : null}
+        {tab === '调代课' ? (
+          <AdjustmentsPage data={data} commit={commit} setError={setError} setNotice={setNotice} />
+        ) : null}
+        {tab === '课表检测' ? (
+          <InspectionPage
+            report={report}
+            hasCandidate={Boolean(result)}
+            published={Boolean(data.published)}
+            onLocate={locateInspection}
+            onExportExcel={exportInspectionExcel}
+            onExportCsv={exportInspectionCsv}
+            onPrint={() => window.print()}
+            onTimetable={() => setTab('课表预览')}
+            onRun={() => setTab('排课任务')}
+            onPublish={publish}
+          />
+        ) : null}
+        {tab === '统计报表' ? (
+          <StatsPage
+            report={stats}
+            actual={actualStats}
+            hasCandidate={Boolean(result)}
+            onExportExcel={exportStatsExcel}
+            onExportCsv={exportStatsCsv}
+            onRun={() => setTab('排课任务')}
+            onTimetable={() => setTab('课表预览')}
           />
         ) : null}
         {tab === '报表发布' ? (
           <ReleasePage
             data={data}
             result={result}
+            report={report}
+            onInspect={() => setTab('课表检测')}
             onPublish={publish}
             onClear={clearCandidate}
             onExportCsv={exportCsvFile}
@@ -824,6 +1146,7 @@ function Dashboard({
   onRun,
   progress,
   onTimetable,
+  onAdjust,
 }: {
   data: SchoolData;
   result: SolverOutput | null;
@@ -833,6 +1156,7 @@ function Dashboard({
   onPrepare: () => void;
   onRun: () => void;
   onTimetable: () => void;
+  onAdjust: () => void;
 }) {
   const periods = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
   const stats = [
@@ -884,6 +1208,7 @@ function Dashboard({
           </div>
         ))}
       </section>
+      <TodayPanel data={data} now={new Date()} onAdjust={onAdjust} onTimetable={onTimetable} />
       <section className="dashboard-grid">
         <article className="section-panel progress-panel">
           <SectionHeading english="CURRENT STATE" title="当前进度" />
@@ -1473,6 +1798,7 @@ function SettingsPage({ runMode, theme, onThemeChange, onEditMode, apiOnline, da
 function TimetablePage({
   data,
   result,
+  report,
   view,
   setView,
   entityId,
@@ -1485,12 +1811,14 @@ function TimetablePage({
   canUndo,
   onRun,
   running,
+  onInspect,
   onExportCsv,
   onExportExcel,
   onPrint,
 }: {
   data: SchoolData;
   result: SolverOutput | null;
+  report: InspectionReport | null;
   view: View;
   setView: (value: View) => void;
   entityId: string;
@@ -1503,6 +1831,7 @@ function TimetablePage({
   canUndo: boolean;
   onRun: () => void;
   running: boolean;
+  onInspect: () => void;
   onExportCsv: () => void;
   onExportExcel: () => void;
   onPrint: () => void;
@@ -1512,6 +1841,10 @@ function TimetablePage({
   const [focus, setFocus] = useState(false);
   const [immersive, setImmersive] = useState(false);
   const [swapMode, setSwapMode] = useState(false);
+  const [weekFilter, setWeekFilter] = useState<'all' | 'odd' | 'even'>('all');
+  const [overlayDate, setOverlayDate] = useState(
+    () => new URLSearchParams(window.location.search).get('adjustDate') || window.localStorage.getItem('warpweft-adjust-date') || '',
+  );
   const overlay = focus || immersive;
 
   useEffect(() => {
@@ -1538,9 +1871,19 @@ function TimetablePage({
 
   const days = Array.from(new Set(data.timeSlots.map((slot) => slot.day))).sort((a, b) => a - b);
   const periods = Array.from(new Set(data.timeSlots.map((slot) => slot.period))).sort((a, b) => a - b);
+  const kindOfSlot = (slotId: string) => data.timeSlots.find((slot) => slot.id === slotId)?.kind ?? 'regular';
+  const kindOfPeriod = (period: number) => data.timeSlots.find((slot) => slot.period === period)?.kind ?? 'regular';
+  const hasCustomKinds = data.timeSlots.some((slot) => (slot.kind ?? 'regular') !== 'regular');
   const entities = view === 'class' ? data.classes : view === 'teacher' ? data.teachers : data.rooms;
-  const conflicts = result ? conflictIds(result.entries) : new Set<string>();
-  const selected = result?.entries.find((entry) => entry.id === selectedEntryId);
+  // Date overlay: show what actually happens on one date (base + adjustments).
+  const baseEntries: ScheduleEntry[] = result
+    ? overlayDate
+      ? (effectiveEntries({ ...data, entries: result.entries }, overlayDate, data.adjustments ?? []) as unknown as ScheduleEntry[])
+      : result.entries
+    : [];
+  const overlayCount = overlayDate ? (data.adjustments ?? []).filter((item) => item.status === 'active' && item.date === overlayDate).length : 0;
+  const conflicts = report && !overlayDate ? new Set(report.summary.conflictEntryIds) : conflictIds(baseEntries, data.coursePlans);
+  const selected = baseEntries.find((entry) => entry.id === selectedEntryId);
   const selectedPlan = selected ? planOf(data, selected) : undefined;
   const selectedSlot = selected ? data.timeSlots.find((slot) => slot.id === selected.slotId) : undefined;
   const selectedClass = selected ? findClass(data, selected.classId) : undefined;
@@ -1550,36 +1893,87 @@ function TimetablePage({
   const totalMissing = missing.reduce((sum, item) => sum + item.missing, 0);
   const viewLabel = view === 'class' ? '班级' : view === 'teacher' ? '教师' : '教室';
   const entityName = entities.find((item) => item.id === entityId)?.name ?? '';
+  // Week parity: "odd"/"even" views hide lessons that do not run that week.
+  const weeksOf = (entry: ScheduleEntry): string => entry.weeks ?? planOf(data, entry)?.weeks ?? 'all';
+  const inWeek = (entry: ScheduleEntry) => weekFilter === 'all' || weeksOverlap(weeksOf(entry), weekFilter);
+  const groupOfEntry = (entry: ScheduleEntry) =>
+    entry.groupId ? (data.electiveGroups ?? []).find((group) => group.id === entry.groupId) : undefined;
+  const blockOfEntry = (entry: ScheduleEntry) => groupOfEntry(entry)?.blocks.find((block) => block.id === entry.blockId);
+  const subjectIdOfEntry = (entry: ScheduleEntry) => groupOfEntry(entry)?.subjectId ?? planOf(data, entry)?.subjectId;
+  const subjectNameOfEntry = (entry: ScheduleEntry) => findSubject(data, subjectIdOfEntry(entry) ?? '')?.name ?? '未命名课程';
   const belongsHere = (entry: ScheduleEntry) => {
-    if (view === 'class') return entry.classId === entityId;
+    if (view === 'class') return entry.classId === entityId || Boolean(groupOfEntry(entry)?.classIds.includes(entityId));
     if (view === 'teacher') return entry.teacherId === entityId;
     return entry.roomId === entityId;
   };
-  const viewEntries = result ? result.entries.filter(belongsHere) : [];
-  const expectedForView =
+  const viewEntries = result ? baseEntries.filter(belongsHere).filter(inWeek) : [];
+  // A class sees one elective lesson even though it is stored as several blocks.
+  const electiveLessonKeys = new Set(
+    viewEntries.filter((entry) => entry.groupId).map((entry) => entry.groupId + '|' + entry.slotId),
+  );
+  const viewLessonCount =
     view === 'class'
-      ? data.coursePlans.filter((plan) => plan.classId === entityId).reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0)
-      : view === 'teacher'
-        ? data.coursePlans.filter((plan) => plan.teacherId === entityId).reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0)
-        : null;
-  const missingForView = expectedForView === null ? null : Math.max(0, expectedForView - viewEntries.length);
+      ? viewEntries.filter((entry) => !entry.groupId).length + electiveLessonKeys.size
+      : viewEntries.length;
+  const planInWeek = (plan: CoursePlan) => weekFilter === 'all' || weeksOverlap(plan.weeks ?? 'all', weekFilter);
+  const overlayWeekday = overlayDate ? weekdayOf(overlayDate) : 0;
+  const overlayBaseCount =
+    overlayDate && result
+      ? result.entries.filter(
+          (entry) =>
+            data.timeSlots.find((slot) => slot.id === entry.slotId)?.day === overlayWeekday && belongsHere(entry),
+        ).length
+      : null;
+  const overlayCancelled =
+    overlayDate && result
+      ? activeAdjustments(data.adjustments, overlayDate).filter((item) => {
+          if (item.type !== 'cancel') return false;
+          const base = result.entries.find((entry) => entry.id === item.originalEntryId);
+          return base ? belongsHere(base) : false;
+        }).length
+      : 0;
+  const electiveLoadForClass = (classId: string) =>
+    (data.electiveGroups ?? [])
+      .filter((group) => group.classIds.includes(classId))
+      .reduce((sum, group) => sum + Number(group.weeklyPeriods || 0), 0);
+  const electiveLoadForTeacher = (teacherId: string) =>
+    (data.electiveGroups ?? [])
+      .filter((group) => group.blocks.some((block) => block.teacherId === teacherId))
+      .reduce((sum, group) => sum + Number(group.weeklyPeriods || 0), 0);
+  const expectedForView =
+    overlayBaseCount !== null
+      ? overlayBaseCount
+      : view === 'class'
+        ? data.coursePlans.filter((plan) => plan.classId === entityId && planInWeek(plan)).reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0) + electiveLoadForClass(entityId)
+        : view === 'teacher'
+          ? data.coursePlans.filter((plan) => plan.teacherId === entityId && planInWeek(plan)).reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0) + electiveLoadForTeacher(entityId)
+          : null;
+  const missingForView =
+    expectedForView === null ? null : overlayDate
+      ? Math.max(0, expectedForView - viewLessonCount - overlayCancelled)
+      : Math.max(0, expectedForView - viewLessonCount);
   const viewConflictCount = viewEntries.filter((entry) => conflicts.has(entry.id)).length;
-  const viewFreeSlots = Math.max(0, data.timeSlots.length - viewEntries.length);
-  const canMove = Boolean(selected) && view === 'class' && !selected?.locked && !selectedPlan?.fixedSlotId;
+  const viewFreeSlots = Math.max(0, data.timeSlots.length - viewLessonCount);
+  const canMove = Boolean(selected) && view === 'class' && !selected?.locked && !selectedPlan?.fixedSlotId && !selected?.groupId && !overlayDate;
+  const selectedWeeks = selected ? weeksOf(selected) : 'all';
+  const selectedGroup = selected ? groupOfEntry(selected) : undefined;
+  const selectedBlock = selected ? blockOfEntry(selected) : undefined;
   const slotAt = (day: number, period: number) => data.timeSlots.find((slot) => slot.day === day && slot.period === period);
   const entriesAt = (slotId: string) => viewEntries.filter((entry) => entry.slotId === slotId);
   const canPlaceSelected = (slot: TimeSlot): boolean => {
     if (!selected || !result || !canMove) return false;
     if (selectedPlan?.fixedSlotId && selectedPlan.fixedSlotId !== slot.id) return false;
     if ((data.unavailableSlots ?? []).some((item) => item.teacherId === selected.teacherId && item.slotId === slot.id)) return false;
-    return !result.entries.some((entry) =>
+    return !baseEntries.some((entry) =>
       entry.id !== selected.id &&
       entry.slotId === slot.id &&
+      weeksOverlap(weeksOf(entry), selectedWeeks) &&
       (entry.teacherId === selected.teacherId || entry.roomId === selected.roomId)
     );
   };
   const moveTargets = canMove ? data.timeSlots.filter((slot) => slot.id !== selected?.slotId && canPlaceSelected(slot)) : [];
   const canSwapSelectedWith = (targetEntry: ScheduleEntry): boolean => {
+    if (overlayDate || selected?.groupId) return false;
     if (!selected || !result || view !== 'class' || targetEntry.id === selected.id) return false;
     if (selected.locked || targetEntry.locked) return false;
     if (targetEntry.classId !== selected.classId) return false;
@@ -1591,10 +1985,12 @@ function TimetablePage({
     if (unavailable.some((item) => item.teacherId === targetEntry.teacherId && item.slotId === selected.slotId)) return false;
     const blocksTarget = result.entries.some((entry) =>
       entry.id !== selected.id && entry.id !== targetEntry.id && entry.slotId === targetEntry.slotId &&
+      weeksOverlap(weeksOf(entry), selectedWeeks) &&
       (entry.teacherId === selected.teacherId || entry.roomId === selected.roomId)
     );
     const blocksSource = result.entries.some((entry) =>
       entry.id !== selected.id && entry.id !== targetEntry.id && entry.slotId === selected.slotId &&
+      weeksOverlap(weeksOf(entry), weeksOf(targetEntry)) &&
       (entry.teacherId === targetEntry.teacherId || entry.roomId === targetEntry.roomId)
     );
     return !blocksTarget && !blocksSource;
@@ -1646,6 +2042,13 @@ function TimetablePage({
           <button className="tt-btn tt-btn-quiet" onClick={() => setImmersive(true)} title="隐藏状态栏和工具栏，最大化课表区域">
             隐藏工具栏
           </button>
+          <button
+            className={'tt-btn ' + (report && !report.ok ? 'tt-btn-primary' : 'tt-btn-quiet')}
+            onClick={onInspect}
+            title="打开课表检测报告（发布门禁）"
+          >
+            检测{report ? (report.ok ? '通过' : ' · ' + report.summary.hard + ' 项') : '报告'}
+          </button>
           <button className="tt-btn tt-btn-primary" onClick={onRun} disabled={running}>
             {running ? '正在排课…' : '重新排课'}
           </button>
@@ -1667,6 +2070,59 @@ function TimetablePage({
             </button>
           ))}
         </div>
+        <div className="tt-view-tabs tt-week-tabs" role="tablist" aria-label="周次">
+          {([['all', '全部'], ['odd', '单周'], ['even', '双周']] as ['all' | 'odd' | 'even', string][]).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={weekFilter === value}
+              className={weekFilter === value ? 'active' : ''}
+              onClick={() => {
+                setWeekFilter(value);
+                setSelectedEntryId('');
+                setSwapMode(false);
+              }}
+              title={value === 'all' ? '显示每周都上的课和单双周课' : '只显示该周次会上的课'}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <label className="tt-week-overlay" title="把所选日期的调课/代课/停课叠加到课表上查看">
+          <input
+            type="checkbox"
+            checked={Boolean(overlayDate)}
+            onChange={(event) => {
+              const next = event.target.checked ? overlayDate || todayLocal() : '';
+              setOverlayDate(next);
+              try {
+                window.localStorage.setItem('warpweft-adjust-date', next);
+              } catch {
+                // ignore
+              }
+              setSelectedEntryId('');
+              setSwapMode(false);
+            }}
+          />
+          叠加日期调整
+        </label>
+        {overlayDate ? (
+          <input
+            className="tt-date"
+            type="date"
+            value={overlayDate}
+            onChange={(event) => {
+              setOverlayDate(event.target.value);
+              try {
+                window.localStorage.setItem('warpweft-adjust-date', event.target.value);
+              } catch {
+                // ignore
+              }
+              setSelectedEntryId('');
+            }}
+          />
+        ) : null}
         <label className="tt-entity">
           <span>{viewLabel}</span>
           <select value={entityId} onChange={(event) => setEntityId(event.target.value)}>
@@ -1679,10 +2135,10 @@ function TimetablePage({
         </label>
         <div className="tt-command-spacer" />
         <div className="tt-stats" aria-label="课表统计">
-          <span><b>{viewEntries.length}</b><em>已排</em></span>
+          <span><b>{viewLessonCount}</b><em>已排</em></span>
           <span><b>{expectedForView ?? '—'}</b><em>计划</em></span>
           <span><b className={missingForView ? 'is-warn' : ''}>{missingForView ?? '—'}</b><em>未排</em></span>
-          <span><b className={viewConflictCount ? 'is-danger' : ''}>{viewConflictCount}</b><em>冲突</em></span>
+          <span><b className={viewConflictCount ? 'is-danger' : ''}>{viewConflictCount}</b><em>硬冲突</em></span>
         </div>
         <div className="tt-command-actions">
           <button type="button" className="tt-btn tt-btn-quiet" onClick={onUndo} disabled={!canUndo}>
@@ -1705,10 +2161,26 @@ function TimetablePage({
           <>
             <div className="tt-selection-copy">
               <span className="tt-selection-kicker">SELECTED LESSON</span>
-              <strong>{planSubjectName(data, selectedPlan)}</strong>
+              <strong>
+                {selectedGroup
+                  ? findSubject(data, selectedGroup.subjectId)?.name ?? '走班'
+                  : planSubjectName(data, selectedPlan)}
+              </strong>
               <span>
-                {selectedClass?.name ?? ''} · {selectedTeacher?.name ?? ''} · {selectedRoom?.name ?? ''} ·{' '}
+                {selectedGroup
+                  ? selectedGroup.name +
+                    ' · ' +
+                    selectedGroup.classIds.map((classId) => findClass(data, classId)?.name ?? classId).join('、') +
+                    ' · ' +
+                    (selectedBlock?.name ?? '并行班')
+                  : (selectedClass?.name ?? '') +
+                    ' · ' +
+                    (selectedTeacher?.name ?? '') +
+                    ' · ' +
+                    (selectedRoom?.name ?? '')}
+                {' · '}
                 {selectedSlot?.label ?? '未知时间'}
+                {weeksOf(selected) === 'odd' ? ' · 单周' : weeksOf(selected) === 'even' ? ' · 双周' : ''}
               </span>
             </div>
             <div className="tt-selection-actions">
@@ -1717,8 +2189,9 @@ function TimetablePage({
               {!swapMode && canMove && moveTargets.length === 0 ? <span className="tt-move-hint is-muted" title="教师或教室在该时段已被占用；增加时间段或教师可释放空间">没有无冲突的移动目标</span> : null}
               {!swapMode && selected.locked ? <span className="tt-move-hint is-muted">已锁定，不可移动</span> : null}
               {!swapMode && selectedPlan?.fixedSlotId && !selected.locked ? <span className="tt-move-hint is-muted">固定时间，不可移动</span> : null}
-              {view === 'class' && !selected.locked && !selectedPlan?.fixedSlotId ? <button className={'tt-btn' + (swapMode ? ' tt-btn-primary' : '')} onClick={() => setSwapMode((value) => !value)}>{swapMode ? '退出交换' : '交换课程'}</button> : null}
-              <button className="tt-btn tt-btn-primary" onClick={() => onToggleLock(selected.id)}>
+              {!swapMode && selected.groupId ? <span className="tt-move-hint is-muted">走班课程由走班组统一安排，不能单独移动</span> : null}
+              {view === 'class' && !overlayDate && !selected.groupId && !selected.locked && !selectedPlan?.fixedSlotId ? <button className={'tt-btn' + (swapMode ? ' tt-btn-primary' : '')} onClick={() => setSwapMode((value) => !value)}>{swapMode ? '退出交换' : '交换课程'}</button> : null}
+              <button className="tt-btn tt-btn-primary" onClick={() => onToggleLock(selected.id)} disabled={Boolean(overlayDate) || Boolean(selected.groupId)} title={overlayDate ? '日期调整视图为只读' : selected.groupId ? '走班课程不能单独锁定' : undefined}>
                 {selected.locked ? '解锁课程' : '锁定课程'}
               </button>
               <button className="tt-btn tt-btn-quiet" onClick={onUndo} disabled={!canUndo}>
@@ -1749,6 +2222,18 @@ function TimetablePage({
         </div>
       ) : null}
 
+      {overlayDate ? (
+        <div className="tt-warning is-info">
+          <b>正在查看 {overlayDate}（{DAYS[weekdayOf(overlayDate)] ?? '未知'}）的课表</b>
+          <span>
+            已叠加 {overlayCount} 条调整；此视图只读，修改请到「调代课」页。
+            {data.coursePlans.some((plan) => (plan.weeks ?? 'all') !== 'all')
+              ? ' 未设置学期起始周，单双周课程会同时显示，请用周次筛选查看。'
+              : ''}
+          </span>
+        </div>
+      ) : null}
+
       <div className="tt-board">
         <div className="tt-board-scroll" style={{ ['--tt-rows' as string]: Math.max(periods.length, 1) } as React.CSSProperties}>
           <table className="tt-table">
@@ -1767,8 +2252,19 @@ function TimetablePage({
               </tr>
             </thead>
             <tbody>
-              {periods.map((period) => (
-                <tr key={period}>
+              {periods.map((period, periodIndex) => {
+                const periodKind = kindOfPeriod(period);
+                const previousKind = periodIndex > 0 ? kindOfPeriod(periods[periodIndex - 1]) : null;
+                return (
+                  <React.Fragment key={period}>
+                    {hasCustomKinds && periodKind !== previousKind ? (
+                      <tr className={'tt-kind-row is-' + periodKind}>
+                        <th colSpan={days.length + 1}>
+                          <span>{KIND_LABELS[periodKind] ?? periodKind}</span>
+                        </th>
+                      </tr>
+                    ) : null}
+                    <tr key={period} className={'tt-period-row is-' + periodKind}>
                   <th className="tt-period-cell">
                     <span>第{period}节</span>
                     <small>P{period}</small>
@@ -1810,12 +2306,15 @@ function TimetablePage({
                         }}
                       >
                         {cellEntries.length ? (
-                          cellEntries.map((entry) => {
+                          <>
+                          {(view === 'class' ? cellEntries.filter((entry) => !entry.groupId) : cellEntries).map((entry) => {
                             const plan = planOf(data, entry);
+                            const electiveGroup = groupOfEntry(entry);
+                            const electiveBlock = blockOfEntry(entry);
                             const isConflict = conflicts.has(entry.id);
                             const teacher = findTeacher(data, entry.teacherId)?.name ?? '';
                             const room = findRoom(data, entry.roomId)?.name ?? '';
-                            const className = findClass(data, entry.classId)?.name ?? '';
+                            const className = electiveGroup ? electiveGroup.name : findClass(data, entry.classId)?.name ?? '';
                             return (
                               <button
                                 key={entry.id}
@@ -1828,7 +2327,7 @@ function TimetablePage({
                                   (entry.id === selectedEntryId ? ' is-selected' : '') +
                                   (swapMode && swapTargetIds.has(entry.id) ? ' is-swap-target' : '')
                                 }
-                                draggable={view === 'class' && !entry.locked}
+                                draggable={view === 'class' && !entry.locked && !overlayDate && !entry.groupId}
                                 aria-pressed={entry.id === selectedEntryId}
                                 onClick={(event) => {
                                   event.stopPropagation();
@@ -1842,7 +2341,7 @@ function TimetablePage({
                                   setSelectedEntryId(entry.id);
                                 }}
                                 onDragStart={(event) => {
-                                  if (view !== 'class' || entry.locked) {
+                                  if (view !== 'class' || entry.locked || entry.groupId) {
                                     event.preventDefault();
                                     return;
                                   }
@@ -1852,15 +2351,18 @@ function TimetablePage({
                                 }}
                                 onDragEnd={() => setDragId('')}
                                 title={
-                                  entry.locked
-                                    ? '已锁定，重新排课时保留位置'
-                                    : view === 'class'
-                                      ? '拖动课程交换时间，或选中后点击空白格移动'
-                                      : planSubjectName(data, plan)
+                                  entry.groupId
+                                    ? '走班课程由走班组统一安排，不能单独拖动'
+                                    : entry.locked
+                                      ? '已锁定，重新排课时保留位置'
+                                      : view === 'class'
+                                        ? '拖动课程交换时间，或选中后点击空白格移动'
+                                        : subjectNameOfEntry(entry)
                                 }
                               >
                                 <span className="tt-card-top">
-                                  <span className="tt-card-subject">{planSubjectName(data, plan)}</span>
+                                  <span className="tt-card-subject">{subjectNameOfEntry(entry)}</span>
+                                  {entry.groupId ? <span className="tt-card-lock">走班</span> : null}
                                   {entry.locked ? <span className="tt-card-lock">锁定</span> : null}
                                 </span>
                                 <span className="tt-card-meta">
@@ -1870,15 +2372,59 @@ function TimetablePage({
                                       ? className + ' · ' + room
                                       : className + ' · ' + teacher}
                                 </span>
-                                {entry.source === 'MANUAL' || isConflict ? (
+                                {entry.source === 'MANUAL' || isConflict || weeksOf(entry) !== 'all' || entry.groupId ? (
                                   <span className="tt-card-badges">
+                                    {weeksOf(entry) === 'odd' ? <em>单周</em> : weeksOf(entry) === 'even' ? <em>双周</em> : null}
+                                    {entry.groupId ? <em>走班{electiveBlock ? '·' + electiveBlock.name : ''}</em> : null}
                                     {entry.source === 'MANUAL' ? <em>手工</em> : null}
-                                    {isConflict ? <em className="is-danger">冲突</em> : null}
+                                    {isConflict ? <em className="is-danger">硬冲突</em> : null}
                                   </span>
                                 ) : null}
                               </button>
                             );
-                          })
+                          })}
+                          {view === 'class'
+                            ? Array.from(
+                                new Map(
+                                  cellEntries
+                                    .filter((entry) => entry.groupId)
+                                    .map((entry) => [entry.groupId as string, cellEntries.filter((item) => item.groupId === entry.groupId)]),
+                                ),
+                              ).map(([groupId, list]) => {
+                                const group = (data.electiveGroups ?? []).find((item) => item.id === groupId);
+                                const first = list[0];
+                                const clash = list.some((entry) => conflicts.has(entry.id));
+                                return (
+                                  <button
+                                    key={'elective-' + groupId}
+                                    type="button"
+                                    className={
+                                      'tt-card is-elective' +
+                                      (clash ? ' is-conflict' : '') +
+                                      (first.id === selectedEntryId ? ' is-selected' : '')
+                                    }
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setSelectedEntryId(first.id);
+                                    }}
+                                    title="走班组统一安排：组内并行班同时上课，行政班在该时段让出"
+                                  >
+                                    <span className="tt-card-top">
+                                      <span className="tt-card-subject">{findSubject(data, group?.subjectId ?? '')?.name ?? '走班'}</span>
+                                      <span className="tt-card-lock">走班</span>
+                                    </span>
+                                    <span className="tt-card-meta">
+                                      {(group?.blocks.length ?? list.length)} 个并行班 · {list.map((entry) => findTeacher(data, entry.teacherId)?.name ?? '').join(' / ')}
+                                    </span>
+                                    <span className="tt-card-badges">
+                                      <em>走班</em>
+                                      {clash ? <em className="is-danger">硬冲突</em> : null}
+                                    </span>
+                                  </button>
+                                );
+                              })
+                            : null}
+                          </>
                         ) : (
                           <span className="tt-empty">
                             {moveHere ? (
@@ -1894,8 +2440,10 @@ function TimetablePage({
                       </td>
                     );
                   })}
-                </tr>
-              ))}
+                    </tr>
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1905,10 +2453,21 @@ function TimetablePage({
         <div className="tt-legend">
           <span><i className="tt-dot is-normal" />普通课程</span>
           <span><i className="tt-dot is-locked" />已锁定</span>
-          <span><i className="tt-dot is-conflict" />冲突</span>
+          <span><i className="tt-dot is-conflict" />硬冲突</span>
           <span><i className="tt-dot is-manual" />手工调整</span>
         </div>
-        <span className="tt-footer-note">本视图空档 {viewFreeSlots} 个 · 拖动课程可交换位置 · 锁定后重新排课保留原时间</span>
+        <span className="tt-footer-note">
+          {hasCustomKinds ? (
+            <>
+              {['morning', 'regular', 'evening', 'makeup'].map((kind) => {
+                const count = viewEntries.filter((entry) => kindOfSlot(entry.slotId) === kind).length;
+                if (count === 0 && kind !== 'regular') return null;
+                return (KIND_LABELS[kind] ?? kind) + ' ' + count + ' · ';
+              })}
+            </>
+          ) : null}
+          本视图空档 {viewFreeSlots} 个 · 拖动课程可交换位置 · 锁定后重新排课保留原时间
+        </span>
       </div>
       {immersive ? (
         <div className="tt-immersive-bar">
@@ -1924,6 +2483,8 @@ function TimetablePage({
 function ReleasePage({
   data,
   result,
+  report,
+  onInspect,
   onPublish,
   onClear,
   onExportCsv,
@@ -1932,6 +2493,8 @@ function ReleasePage({
 }: {
   data: SchoolData;
   result: SolverOutput | null;
+  report: InspectionReport | null;
+  onInspect: () => void;
   onPublish: () => void;
   onClear: () => void;
   onExportCsv: () => void;
@@ -1939,11 +2502,12 @@ function ReleasePage({
   onPrint: () => void;
 }) {
   const exportable = result ?? data.published ?? null;
+  const blocked = Boolean(result) && Boolean(report) && !report!.ok;
   return (
     <div className="release-layout">
       <section className="section-panel">
         <SectionHeading english="RELEASE" title="发布与导出" />
-        <p className="panel-note">候选课表通过检查后，可保存为正式版并导出 Excel、CSV 或打印。</p>
+        <p className="panel-note">候选课表通过检测后，可保存为正式版并导出 Excel、CSV 或打印。</p>
         <div className="summary-grid">
           <div>
             <span>候选状态</span>
@@ -1954,13 +2518,35 @@ function ReleasePage({
             <b>{result?.entries.length ?? 0}</b>
           </div>
           <div>
+            <span>检测结论</span>
+            <b className={blocked ? 'is-danger' : ''}>
+              {!result ? '—' : !report ? '未检测' : report.ok ? '通过' : '未通过'}
+            </b>
+          </div>
+          <div>
             <span>正式版</span>
             <b>{data.published ? '已保存' : '未发布'}</b>
           </div>
+        </div>
+        <div className={'release-gate ' + (blocked ? 'is-blocked' : result && report?.ok ? 'is-ready' : '')}>
           <div>
-            <span>更新时间</span>
-            <b>{fmtTime(data.updatedAt)}</b>
+            <b>{blocked ? '发布被检测结果阻断' : result && report?.ok ? '检测通过，可以发布' : '尚未生成可发布的候选课表'}</b>
+            <small>
+              {report
+                ? report.summary.hard +
+                  ' 项硬冲突 · ' +
+                  report.summary.must +
+                  ' 条必须规则 · ' +
+                  report.summary.prefer +
+                  ' 条尽量规则 · 未排 ' +
+                  report.summary.unplaced +
+                  ' 课时'
+                : '运行排课后会自动生成检测报告。'}
+            </small>
           </div>
+          <button className="ghost-button" onClick={onInspect} disabled={!result}>
+            查看检测报告
+          </button>
         </div>
         <div className="export-row">
           <button onClick={onExportCsv} disabled={!exportable}>
@@ -1974,13 +2560,23 @@ function ReleasePage({
           </button>
         </div>
         <div className="hero-actions">
-          <button className="action-button" onClick={onPublish} disabled={!result}>
+          <button
+            className="action-button"
+            onClick={onPublish}
+            disabled={!result || blocked}
+            title={blocked ? '存在硬冲突或必须规则违反，先处理检测报告中的问题' : undefined}
+          >
             保存为正式版 <span>↗</span>
           </button>
           <button className="ghost-button" onClick={onClear} disabled={!result}>
             清空候选
           </button>
         </div>
+        {blocked ? (
+          <p className="panel-note">
+            门禁规则：存在硬冲突或「必须」规则违反时不能发布；「尽量」规则只提示，不阻断。
+          </p>
+        ) : null}
         <div className="version-history"><h3>正式版版本与审计</h3>{(data.publishedVersions ?? []).length === 0 ? <p className="panel-note">尚无正式版发布记录。</p> : <ol>{(data.publishedVersions ?? []).slice().reverse().map((version) => <li key={version.id}><strong>{version.id}</strong><span>{fmtTime(version.createdAt)} · {version.result.entries.length} 课时</span></li>)}</ol>}</div>
       </section>
     </div>
@@ -1988,3 +2584,16 @@ function ReleasePage({
 }
 
 createRoot(document.getElementById('root')!).render(<HeroUIProvider><App /></HeroUIProvider>);
+
+
+
+
+
+
+
+
+
+
+
+
+

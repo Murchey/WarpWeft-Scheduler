@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = '1.0';
+﻿export const PROTOCOL_VERSION = '1.0';
 
 export type SolverStatus = 'QUEUED'|'PREPARING'|'SOLVING'|'FEASIBLE'|'IMPROVED'|'COMPLETED'|'CANCELLED'|'TIMEOUT'|'FAILED';
 export type SoftRuleKind = 'SUBJECT_DISTRIBUTION'|'TEACHER_CONTINUOUS'|'TEACHER_GAPS'|'TEACHER_WORKLOAD_BALANCE';
@@ -8,14 +8,21 @@ export interface RuleScope { type: 'all'|'grade'|'class'|'teacher'|'subject'|'ro
 export interface RuleTime { type: 'all'|'weekday'|'periodRange'; days?: number[]; from?: number; to?: number; }
 export interface RuleInput { id: string; kind: RuleKind; scope: RuleScope; time: RuleTime; importance: RuleImportance; params: Record<string,string|number>; enabled: boolean; note?: string; createdAt: string; source: 'preset'|'manual'|'import'|'migration'; }
 
-export interface TimeSlot { id: string; day: number; period: number; label: string; }
+export type SlotKind = 'morning' | 'regular' | 'evening' | 'makeup';
+export interface TimeSlot { id: string; day: number; period: number; label: string; kind?: SlotKind; start?: string; duration?: number; }
 export interface ClassRoom { id: string; name: string; capacity: number; type: string; }
-export interface CoursePlan { id: string; classId: string; subjectId: string; teacherId: string; weeklyPeriods: number; roomType?: string; fixedSlotId?: string; consecutive?: number; locked?: boolean; }
+export type WeekType = 'all' | 'odd' | 'even';
+export interface ElectiveBlock { id: string; name?: string; teacherId: string; roomType?: string; }
+export interface ElectiveGroup { id: string; name?: string; subjectId: string; weeklyPeriods: number; classIds: string[]; blocks: ElectiveBlock[]; }
+export interface CoursePlan { id: string; classId: string; subjectId: string; teacherId: string; weeklyPeriods: number; roomType?: string; fixedSlotId?: string; consecutive?: number; locked?: boolean; weeks?: WeekType; kind?: SlotKind; }
 export interface SolverInput {
   protocolVersion: string; dataSnapshotVersion: string; timeSlots: TimeSlot[]; classes: {id:string; name:string; size:number}[];
   teachers: {id:string; name:string}[]; subjects: {id:string; name:string}[]; rooms: ClassRoom[]; coursePlans: CoursePlan[];
-  unavailableSlots: {teacherId:string; slotId:string}[]; lockedEntries: ScheduleEntry[];
+  unavailableSlots: {teacherId:string; slotId:string}[]; lockedEntries: ScheduleEntry[]; electiveGroups?: ElectiveGroup[];
   hardConstraints: string[]; rules?: RuleInput[]; softConstraints: {kind:SoftRuleKind; weight:number}[]; timeLimitSeconds:number; randomSeed:number;
 }
-export interface ScheduleEntry { id:string; coursePlanId:string; classId:string; teacherId:string; roomId:string; slotId:string; source:'AUTO'|'MANUAL'; locked:boolean; }
+export interface ScheduleEntry { id:string; coursePlanId:string; classId:string; teacherId:string; roomId:string; slotId:string; source:'AUTO'|'MANUAL'; locked:boolean; weeks?:WeekType; groupId?:string; blockId?:string; }
 export interface SolverOutput { protocolVersion:string; status:SolverStatus; entries:ScheduleEntry[]; hardConstraintViolations:string[]; softScore:number; scoreBreakdown:Record<string,number>; unsatisfiedRules:string[]; explanation:string; elapsedMs:number; hasFeasibleSolution:boolean; }
+
+
+

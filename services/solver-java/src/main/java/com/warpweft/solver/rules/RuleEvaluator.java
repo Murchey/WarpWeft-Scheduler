@@ -16,32 +16,36 @@ import java.util.TreeSet;
 
 public final class RuleEvaluator {
     public static boolean canPlace(State state, Plan plan, Slot slot, Room room) {
+        // A morning plan only fits morning slots; regular plans never fill
+        // 早读/晚自习 unless the plan itself is declared as that kind.
+        if (!plan.kind().equals(slot.kind())) return false;
         if (state.unavailable.contains(plan.teacherId() + "|" + slot.id())) return false;
         if (room.capacity() < state.classes.get(plan.classId()).size()) return false;
         if (plan.roomType() != null && !plan.roomType().isBlank() && !plan.roomType().equals(room.type())) return false;
-        if (!state.classSlot.contains(plan.classId() + "|" + slot.id())
-            && !state.teacherSlot.contains(plan.teacherId() + "|" + slot.id())
-            && !state.roomSlot.contains(room.id() + "|" + slot.id())) {
-            for (Rule rule : state.rules) {
-                if (!"must".equals(rule.importance()) || !rule.applies(plan.teacherId(), plan.subjectId(), slot.day(), slot.period())) continue;
-                if ("TEACHER_MAX_DAILY".equals(rule.kind()) && state.teacherDayLoad(plan.teacherId(), slot.day()) >= rule.number("maxPerDay", 1)) return false;
-                if ("SUBJECT_MAX_PER_DAY".equals(rule.kind()) && state.subjectDayCount(plan.classId(), slot.day(), plan.subjectId()) >= rule.number("maxPerDay", 1)) return false;
-                if ("TEACHER_MAX_CONSECUTIVE".equals(rule.kind())) {
-                    TreeSet<Integer> periods = state.teacherPeriods(plan.teacherId(), slot.day());
-                    periods.add(slot.period());
-                    int run = 1;
-                    for (int p = slot.period() - 1; periods.contains(p); p--) run++;
-                    for (int p = slot.period() + 1; periods.contains(p); p++) run++;
-                    if (run > rule.number("maxConsecutive", 1)) return false;
-                }
+        int mask = State.weekMask(plan.weeks());
+        // Odd and even lessons may share a slot: only overlapping week masks clash.
+        if (!state.classSlotFree(plan.classId(), slot.id(), mask)) return false;
+        if (!state.teacherSlotFree(plan.teacherId(), slot.id(), mask)) return false;
+        if (!state.roomSlotFree(room.id(), slot.id(), mask)) return false;
+        for (Rule rule : state.rules) {
+            if (!"must".equals(rule.importance()) || !rule.applies(plan.teacherId(), plan.subjectId(), slot.day(), slot.period())) continue;
+            if ("TEACHER_MAX_DAILY".equals(rule.kind()) && state.teacherDayLoad(plan.teacherId(), slot.day(), mask) >= rule.number("maxPerDay", 1)) return false;
+            if ("SUBJECT_MAX_PER_DAY".equals(rule.kind()) && state.subjectDayCount(plan.classId(), slot.day(), plan.subjectId(), mask) >= rule.number("maxPerDay", 1)) return false;
+            if ("TEACHER_MAX_CONSECUTIVE".equals(rule.kind())) {
+                TreeSet<Integer> periods = state.teacherPeriods(plan.teacherId(), slot.day(), mask);
+                periods.add(slot.period());
+                int run = 1;
+                for (int p = slot.period() - 1; periods.contains(p); p--) run++;
+                for (int p = slot.period() + 1; periods.contains(p); p++) run++;
+                if (run > rule.number("maxConsecutive", 1)) return false;
             }
-            return true;
         }
-        return false;
+        return true;
     }
 
     public static int rulePlacementPenalty(State state, Plan plan, Slot slot) {
         int penalty = 0;
+        int mask = State.weekMask(plan.weeks());
         Map<Integer, Integer> minDay = new HashMap<>();
         Map<Integer, Integer> maxDay = new HashMap<>();
         for (Slot item : state.slots.values()) {
@@ -50,9 +54,9 @@ public final class RuleEvaluator {
         }
         for (Rule rule : state.rules) {
             if (!rule.applies(plan.teacherId(), plan.subjectId(), slot.day(), slot.period())) continue;
-            if ("TEACHER_MAX_DAILY".equals(rule.kind()) && state.teacherDayLoad(plan.teacherId(), slot.day()) >= rule.number("maxPerDay", 1)) penalty += 60;
-            if ("SUBJECT_MAX_PER_DAY".equals(rule.kind()) && state.subjectDayCount(plan.classId(), slot.day(), plan.subjectId()) >= rule.number("maxPerDay", 1)) penalty += 60;
-            if ("SUBJECT_SPREAD".equals(rule.kind()) && state.subjectDayCount(plan.classId(), slot.day(), plan.subjectId()) >= rule.number("maxPerDay", 1)) penalty += 40;
+            if ("TEACHER_MAX_DAILY".equals(rule.kind()) && state.teacherDayLoad(plan.teacherId(), slot.day(), mask) >= rule.number("maxPerDay", 1)) penalty += 60;
+            if ("SUBJECT_MAX_PER_DAY".equals(rule.kind()) && state.subjectDayCount(plan.classId(), slot.day(), plan.subjectId(), mask) >= rule.number("maxPerDay", 1)) penalty += 60;
+            if ("SUBJECT_SPREAD".equals(rule.kind()) && state.subjectDayCount(plan.classId(), slot.day(), plan.subjectId(), mask) >= rule.number("maxPerDay", 1)) penalty += 40;
             if ("SUBJECT_TIME_PREFERENCE".equals(rule.kind())) {
                 int mid = (minDay.getOrDefault(slot.day(), slot.period()) + maxDay.getOrDefault(slot.day(), slot.period())) / 2;
                 boolean morning = slot.period() <= mid;
@@ -66,7 +70,7 @@ public final class RuleEvaluator {
                     || ("last".equals(rule.params().path("avoid").asText()) && last)) penalty += 4;
             }
             if ("TEACHER_MAX_CONSECUTIVE".equals(rule.kind())) {
-                TreeSet<Integer> periods = state.teacherPeriods(plan.teacherId(), slot.day());
+                TreeSet<Integer> periods = state.teacherPeriods(plan.teacherId(), slot.day(), mask);
                 int run = 1;
                 for (int p = slot.period() - 1; periods.contains(p); p--) run++;
                 for (int p = slot.period() + 1; periods.contains(p); p++) run++;
@@ -192,3 +196,4 @@ public final class RuleEvaluator {
         return penalty;
     }
 }
+

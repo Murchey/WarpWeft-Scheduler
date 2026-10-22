@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import type { CoursePlan, SchoolData } from './types';
 import { uid } from './utils';
 
@@ -22,6 +22,8 @@ function PlanComposer({
   const [customSubject, setCustomSubject] = useState('');
   const [customTeacher, setCustomTeacher] = useState('');
   const [weeklyPeriods, setWeeklyPeriods] = useState(1);
+  const [weeks, setWeeks] = useState<'all' | 'odd' | 'even'>('all');
+  const [planKind, setPlanKind] = useState<'morning' | 'regular' | 'evening' | 'makeup'>('regular');
   const [roomType, setRoomType] = useState(data.rooms[0]?.type ?? '');
   const [fixedSlotId, setFixedSlotId] = useState('');
   const toggleClass = (id: string) => {
@@ -68,9 +70,9 @@ function PlanComposer({
       setError('请选择教师，或填写一位新教师');
       return;
     }
-    const duplicate = data.coursePlans.find((plan) => classIds.includes(plan.classId) && plan.subjectId === nextSubjectId && plan.teacherId === nextTeacherId);
+    const duplicate = data.coursePlans.find((plan) => classIds.includes(plan.classId) && plan.subjectId === nextSubjectId && plan.teacherId === nextTeacherId && (plan.weeks ?? 'all') === weeks && (plan.kind ?? 'regular') === planKind);
     if (duplicate) {
-      setError('所选班级中已存在同学科、同教师的教学计划，请调整后再添加');
+      setError('所选班级中已存在同学科、同教师、同周次的教学计划，请调整后再添加');
       return;
     }
     const plans: CoursePlan[] = classIds.map((classId) => ({
@@ -81,6 +83,8 @@ function PlanComposer({
       weeklyPeriods: Math.floor(weeklyPeriods),
       roomType: roomType.trim(),
       fixedSlotId,
+      weeks,
+      kind: planKind,
     }));
     setError('');
     commit(
@@ -117,6 +121,8 @@ function PlanComposer({
           </div>
           <div className="composer-fields">
             <label>周课时<input type="number" min={1} value={weeklyPeriods} onChange={(event) => setWeeklyPeriods(Number(event.target.value))} /></label>
+            <label>周次<select value={weeks} onChange={(event) => setWeeks(event.target.value as 'all' | 'odd' | 'even')}><option value="all">每周</option><option value="odd">单周</option><option value="even">双周</option></select></label>
+            <label>时段类型<select value={planKind} onChange={(event) => setPlanKind(event.target.value as 'morning' | 'regular' | 'evening' | 'makeup')}><option value="regular">常规</option><option value="morning">早读</option><option value="evening">晚自习</option><option value="makeup">补课</option></select></label>
             <label>教室类型<input list="composer-room-types" value={roomType} onChange={(event) => setRoomType(event.target.value)} placeholder="不限 / 普通教室" /><datalist id="composer-room-types">{roomTypes.map((type) => <option key={type} value={type} />)}</datalist></label>
             <label>固定时间<select value={fixedSlotId} onChange={(event) => setFixedSlotId(event.target.value)}><option value="">不固定</option>{data.timeSlots.map((slot) => <option key={slot.id} value={slot.id}>{slot.label}</option>)}</select></label>
           </div>
@@ -131,3 +137,4 @@ function PlanComposer({
 }
 
 export { PlanComposer };
+

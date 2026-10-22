@@ -20,60 +20,240 @@ public final class State {
     public final Map<String, Room> rooms = new LinkedHashMap<>();
     public final Map<String, ClassInfo> classes = new LinkedHashMap<>();
     public final Set<String> unavailable = new HashSet<>();
-    public final Set<String> classSlot = new HashSet<>();
-    public final Set<String> teacherSlot = new HashSet<>();
-    public final Set<String> roomSlot = new HashSet<>();
+    /** slot occupancy key → week mask bit set (all = odd|even). */
+    public final Map<String, Integer> classSlot = new HashMap<>();
+    public final Map<String, Integer> teacherSlot = new HashMap<>();
+    public final Map<String, Integer> roomSlot = new HashMap<>();
     final Map<String, Integer> teacherLoad = new HashMap<>();
+    // Incremental counters, bucketed by week parity: key|…|mask. A candidate
+    // whose week mask overlaps several buckets sums the matching buckets only.
+    final Map<String, Integer> classDayCount = new HashMap<>();
+    final Map<String, Integer> teacherDayCount = new HashMap<>();
+    final Map<String, Integer> classSubjectDayCount = new HashMap<>();
+    final Map<String, TreeSet<Integer>> teacherDayPeriods = new HashMap<>();
     public final List<Entry> entries = new ArrayList<>();
     public final List<Rule> rules = new ArrayList<>();
     final Set<String> pairedPlans = new HashSet<>();
+    /** groupId → member class ids; group lessons release every member class. */
+    final Map<String, List<String>> groupClasses = new HashMap<>();
 
-    State(Map<String, Slot> sourceSlots, Map<String, Room> sourceRooms, Map<String, ClassInfo> sourceClasses, Set<String> sourceUnavailable, List<Rule> sourceRules) {
+    /** all weeks occupy both parities; odd/even occupy one bit each. */
+    public static int weekMask(String weeks) {
+        if ("odd".equals(weeks)) return 1;
+        if ("even".equals(weeks)) return 2;
+        return 3;
+    }
+
+    /** Buckets that must be summed to answer "how many lessons in this week". */
+    static int[] buckets(int mask) {
+        if (mask == 1) return new int[] { 3, 1 };
+        if (mask == 2) return new int[] { 3, 2 };
+        return new int[] { 3, 1, 2 };
+    }
+
+    State(Map<String, Slot> sourceSlots, Map<String, Room> sourceRooms, Map<String, ClassInfo> sourceClasses,
+          Set<String> sourceUnavailable, List<Rule> sourceRules, Map<String, List<String>> sourceGroups) {
         slots.putAll(sourceSlots);
         rooms.putAll(sourceRooms);
         classes.putAll(sourceClasses);
         unavailable.addAll(sourceUnavailable);
         rules.addAll(sourceRules);
+        groupClasses.putAll(sourceGroups);
     }
 
-    public TreeSet<Integer> teacherPeriods(String teacherId, int day) {
+    /** Deep copy used by the ruin-and-recreate loop. */
+    State copy() {
+        State copy = new State(slots, rooms, classes, unavailable, rules, groupClasses);
+        copy.pairedPlans.addAll(pairedPlans);
+        for (Entry entry : entries) copy.add(entry);
+        return copy;
+    }
+
+    public TreeSet<Integer> teacherPeriods(String teacherId, int day, int mask) {
         TreeSet<Integer> periods = new TreeSet<>();
-        for (Entry entry : entries) {
-            if (!entry.teacherId().equals(teacherId)) continue;
-            Slot slot = slots.get(entry.slotId());
-            if (slot != null && slot.day() == day) periods.add(slot.period());
+        for (int bucket : buckets(mask)) {
+            TreeSet<Integer> stored = teacherDayPeriods.get(teacherId + "|" + day + "|" + bucket);
+            if (stored != null) periods.addAll(stored);
         }
         return periods;
     }
 
+    public boolean teacherPeriodTaken(String teacherId, int day, int period, int mask) {
+        for (int bucket : buckets(mask)) {
+            TreeSet<Integer> stored = teacherDayPeriods.get(teacherId + "|" + day + "|" + bucket);
+            if (stored != null && stored.contains(period)) return true;
+        }
+        return false;
+    }
+
     void add(Entry entry) {
+        Slot slot = slots.get(entry.slotId());
+        int mask = weekMask(entry.weeks());
         entries.add(entry);
-        classSlot.add(entry.classId() + "|" + entry.slotId());
-        teacherSlot.add(entry.teacherId() + "|" + entry.slotId());
-        roomSlot.add(entry.roomId() + "|" + entry.slotId());
+        if (entry.groupId() != null && groupClasses.containsKey(entry.groupId())) {
+            for (String classId : groupClasses.get(entry.groupId())) {
+                occupy(classSlot, classId + "|" + entry.slotId(), mask);
+            }
+        } else {
+            occupy(classSlot, entry.classId() + "|" + entry.slotId(), mask);
+        }
+        occupy(teacherSlot, entry.teacherId() + "|" + entry.slotId(), mask);
+        occupy(roomSlot, entry.roomId() + "|" + entry.slotId(), mask);
         teacherLoad.merge(entry.teacherId(), 1, Integer::sum);
+        if (slot != null) {
+            merge(classDayCount, entry.classId() + "|" + slot.day() + "|" + mask);
+            merge(teacherDayCount, entry.teacherId() + "|" + slot.day() + "|" + mask);
+            merge(classSubjectDayCount, entry.classId() + "|" + slot.day() + "|" + entry.subjectId() + "|" + mask);
+            teacherDayPeriods.computeIfAbsent(entry.teacherId() + "|" + slot.day() + "|" + mask, key -> new TreeSet<>()).add(slot.period());
+        }
     }
 
     void remove(Entry entry) {
+        Slot slot = slots.get(entry.slotId());
+        int mask = weekMask(entry.weeks());
         entries.remove(entry);
-        classSlot.remove(entry.classId() + "|" + entry.slotId());
-        teacherSlot.remove(entry.teacherId() + "|" + entry.slotId());
-        roomSlot.remove(entry.roomId() + "|" + entry.slotId());
+        if (entry.groupId() != null && groupClasses.containsKey(entry.groupId())) {
+            for (String classId : groupClasses.get(entry.groupId())) {
+                release(classSlot, classId + "|" + entry.slotId(), mask);
+            }
+        } else {
+            release(classSlot, entry.classId() + "|" + entry.slotId(), mask);
+        }
+        release(teacherSlot, entry.teacherId() + "|" + entry.slotId(), mask);
+        release(roomSlot, entry.roomId() + "|" + entry.slotId(), mask);
         teacherLoad.computeIfPresent(entry.teacherId(), (key, value) -> value <= 1 ? null : value - 1);
+        if (slot == null) return;
+        decrement(classDayCount, entry.classId() + "|" + slot.day() + "|" + mask);
+        decrement(teacherDayCount, entry.teacherId() + "|" + slot.day() + "|" + mask);
+        decrement(classSubjectDayCount, entry.classId() + "|" + slot.day() + "|" + entry.subjectId() + "|" + mask);
+        TreeSet<Integer> periods = teacherDayPeriods.get(entry.teacherId() + "|" + slot.day() + "|" + mask);
+        if (periods != null) {
+            periods.remove(slot.period());
+            if (periods.isEmpty()) teacherDayPeriods.remove(entry.teacherId() + "|" + slot.day() + "|" + mask);
+        }
     }
 
-    int classDayLoad(String classId, int day) {
-        return (int) entries.stream().filter(e -> e.classId().equals(classId))
-            .filter(e -> slots.get(e.slotId()).day() == day).count();
+    private static void occupy(Map<String, Integer> occupancy, String key, int mask) {
+        occupancy.merge(key, mask, (current, added) -> current | added);
     }
 
-    public int teacherDayLoad(String teacherId, int day) {
-        return (int) entries.stream().filter(e -> e.teacherId().equals(teacherId))
-            .filter(e -> slots.get(e.slotId()).day() == day).count();
+    private static void release(Map<String, Integer> occupancy, String key, int mask) {
+        Integer current = occupancy.get(key);
+        if (current == null) return;
+        int next = current & ~mask;
+        if (next == 0) occupancy.remove(key);
+        else occupancy.put(key, next);
     }
 
-    public int subjectDayCount(String classId, int day, String subjectId) {
-        return (int) entries.stream().filter(e -> e.classId().equals(classId) && e.subjectId().equals(subjectId))
-            .filter(e -> slots.get(e.slotId()).day() == day).count();
+    static boolean free(Map<String, Integer> occupancy, String key, int mask) {
+        Integer current = occupancy.get(key);
+        return current == null || (current & mask) == 0;
+    }
+
+    public boolean classSlotFree(String classId, String slotId, int mask) {
+        return free(classSlot, classId + "|" + slotId, mask);
+    }
+
+    public boolean teacherSlotFree(String teacherId, String slotId, int mask) {
+        return free(teacherSlot, teacherId + "|" + slotId, mask);
+    }
+
+    public boolean roomSlotFree(String roomId, String slotId, int mask) {
+        return free(roomSlot, roomId + "|" + slotId, mask);
+    }
+
+    private static void merge(Map<String, Integer> counts, String key) {
+        counts.merge(key, 1, Integer::sum);
+    }
+
+    private static void decrement(Map<String, Integer> counts, String key) {
+        Integer value = counts.get(key);
+        if (value == null) return;
+        if (value <= 1) counts.remove(key);
+        else counts.put(key, value - 1);
+    }
+
+    private static int sum(Map<String, Integer> counts, String keyPrefix, int mask) {
+        int total = 0;
+        for (int bucket : buckets(mask)) total += counts.getOrDefault(keyPrefix + "|" + bucket, 0);
+        return total;
+    }
+
+    public int classDayLoad(String classId, int day, int mask) {
+        return sum(classDayCount, classId + "|" + day, mask);
+    }
+
+    public int teacherDayLoad(String teacherId, int day, int mask) {
+        return sum(teacherDayCount, teacherId + "|" + day, mask);
+    }
+
+    public int teacherWeeklyLoad(String teacherId) {
+        return teacherLoad.getOrDefault(teacherId, 0);
+    }
+
+    public int subjectDayCount(String classId, int day, String subjectId, int mask) {
+        return sum(classSubjectDayCount, classId + "|" + day + "|" + subjectId, mask);
+    }
+
+    /** Immutable-enough snapshot for repair rollback. */
+    static final class Snapshot {
+        private final List<Entry> entries;
+        private final Map<String, Integer> classSlot;
+        private final Map<String, Integer> teacherSlot;
+        private final Map<String, Integer> roomSlot;
+        private final Map<String, Integer> teacherLoad;
+        private final Map<String, Integer> classDayCount;
+        private final Map<String, Integer> teacherDayCount;
+        private final Map<String, Integer> classSubjectDayCount;
+        private final Map<String, TreeSet<Integer>> teacherDayPeriods;
+        private final Set<String> pairedPlans;
+
+        private Snapshot(State state) {
+            entries = new ArrayList<>(state.entries);
+            classSlot = new HashMap<>(state.classSlot);
+            teacherSlot = new HashMap<>(state.teacherSlot);
+            roomSlot = new HashMap<>(state.roomSlot);
+            teacherLoad = new HashMap<>(state.teacherLoad);
+            classDayCount = new HashMap<>(state.classDayCount);
+            teacherDayCount = new HashMap<>(state.teacherDayCount);
+            classSubjectDayCount = new HashMap<>(state.classSubjectDayCount);
+            teacherDayPeriods = new HashMap<>();
+            for (Map.Entry<String, TreeSet<Integer>> item : state.teacherDayPeriods.entrySet()) {
+                teacherDayPeriods.put(item.getKey(), new TreeSet<>(item.getValue()));
+            }
+            pairedPlans = new HashSet<>(state.pairedPlans);
+        }
+    }
+
+    Snapshot snapshot() {
+        return new Snapshot(this);
+    }
+
+    void restore(Snapshot snapshot) {
+        entries.clear();
+        entries.addAll(snapshot.entries);
+        replace(classSlot, snapshot.classSlot);
+        replace(teacherSlot, snapshot.teacherSlot);
+        replace(roomSlot, snapshot.roomSlot);
+        replace(teacherLoad, snapshot.teacherLoad);
+        replace(classDayCount, snapshot.classDayCount);
+        replace(teacherDayCount, snapshot.teacherDayCount);
+        replace(classSubjectDayCount, snapshot.classSubjectDayCount);
+        teacherDayPeriods.clear();
+        for (Map.Entry<String, TreeSet<Integer>> item : snapshot.teacherDayPeriods.entrySet()) {
+            teacherDayPeriods.put(item.getKey(), new TreeSet<>(item.getValue()));
+        }
+        replace(pairedPlans, snapshot.pairedPlans);
+    }
+
+    private static <T> void replace(Set<T> target, Set<T> source) {
+        target.clear();
+        target.addAll(source);
+    }
+
+    private static <K, V> void replace(Map<K, V> target, Map<K, V> source) {
+        target.clear();
+        target.putAll(source);
     }
 }
+

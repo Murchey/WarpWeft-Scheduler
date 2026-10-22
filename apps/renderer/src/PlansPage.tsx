@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import type { Commit, CoursePlan, SchoolData } from './types';
 import { SectionHeading } from './components';
 import { PlanComposer } from './PlanComposer';
@@ -52,6 +52,8 @@ function PlansPage({
               <th>学科</th>
               <th>教师</th>
               <th>周课时</th>
+              <th>周次</th>
+              <th>时段类型</th>
               <th>教室类型</th>
               <th>固定时间</th>
               <th className="action-column">操作</th>
@@ -60,7 +62,7 @@ function PlansPage({
           <tbody>
             {data.coursePlans.length === 0 ? (
               <tr>
-                <td className="table-empty" colSpan={7}>
+                <td className="table-empty" colSpan={9}>
                   暂无教学计划，先新增一条。
                 </td>
               </tr>
@@ -103,6 +105,21 @@ function PlansPage({
                     />
                   </td>
                   <td>
+                    <select value={plan.weeks ?? 'all'} onChange={(event) => update(plan.id, { weeks: event.target.value as 'all' | 'odd' | 'even' })} title="单双周计划只在对应周次上课，可与其他周次共用同一时段">
+                      <option value="all">每周</option>
+                      <option value="odd">单周</option>
+                      <option value="even">双周</option>
+                    </select>
+                  </td>
+                  <td>
+                    <select value={plan.kind ?? 'regular'} onChange={(event) => update(plan.id, { kind: event.target.value as 'morning' | 'regular' | 'evening' | 'makeup' })} title="早读/晚自习/补课计划只会排进对应类型的时段">
+                      <option value="regular">常规</option>
+                      <option value="morning">早读</option>
+                      <option value="evening">晚自习</option>
+                      <option value="makeup">补课</option>
+                    </select>
+                  </td>
+                  <td>
                     <input list="plan-room-types" value={plan.roomType ?? ''} onChange={(event) => update(plan.id, { roomType: event.target.value })} placeholder="不限" />
                   </td>
                   <td>
@@ -127,7 +144,7 @@ function PlansPage({
         </table>
       </div>
       <p className="panel-note">
-        固定时间会优先占用指定时间格；修改教学计划会清空候选课表，避免旧课表与新计划混用。
+        固定时间会优先占用指定时间格；「单周 / 双周」计划只在对应周次上课，可以和另一周次的课程共用同一时段。修改教学计划会清空候选课表，避免旧课表与新计划混用。
       </p>
       {composerOpen ? <PlanComposer data={data} commit={commit} setError={setError} onClose={() => setComposerOpen(false)} /> : null}
     </section>
@@ -136,3 +153,4 @@ function PlansPage({
 
 
 export { PlansPage };
+

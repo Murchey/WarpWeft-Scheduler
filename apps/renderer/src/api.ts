@@ -381,3 +381,65 @@ export async function solveSchedule(input: SolverInput): Promise<SolverOutput> {
     throw new ApiError('本地求解器返回了无法解析的内容', { status: response.status });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Long-running solve jobs (checkpointed, pausable, resumable)
+// ---------------------------------------------------------------------------
+
+export interface LongJob {
+  id: string;
+  status: 'queued' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  elapsedMs: number;
+  timeLimitSeconds: number;
+  stagnationSeconds: number;
+  lessons: number;
+  total: number;
+  placed: number;
+  unplaced: number;
+  score: number | null;
+  rounds: number;
+  error: string | null;
+  hasFeasibleSolution: boolean;
+  canResume: boolean;
+}
+
+export interface LongJobDetail extends LongJob {
+  bestEntries: SolverOutput['entries'];
+  bestUpdatedAt: string | null;
+  inputSummary: {
+    timeSlots: number;
+    classes: number;
+    teachers: number;
+    rooms: number;
+    plans: number;
+    locked: number;
+  };
+}
+
+export async function startLongJob(input: SolverInput): Promise<{ job: LongJob }> {
+  return sendJson<{ job: LongJob }>('/api/solve/long', 'POST', input, 20000);
+}
+
+export async function fetchLongJobs(): Promise<{ jobs: LongJob[]; running: string | null }> {
+  return getJson<{ jobs: LongJob[]; running: string | null }>('/api/solve/jobs');
+}
+
+export async function fetchLongJob(id: string): Promise<LongJobDetail> {
+  return getJson<LongJobDetail>('/api/solve/jobs/' + encodeURIComponent(id));
+}
+
+export async function pauseLongJob(id: string): Promise<{ job: LongJob }> {
+  return sendJson<{ job: LongJob }>('/api/solve/jobs/' + encodeURIComponent(id) + '/pause', 'POST');
+}
+
+export async function resumeLongJob(id: string): Promise<{ job: LongJob }> {
+  return sendJson<{ job: LongJob }>('/api/solve/jobs/' + encodeURIComponent(id) + '/resume', 'POST');
+}
+
+export async function cancelLongJob(id: string): Promise<{ job: LongJob }> {
+  return sendJson<{ job: LongJob }>('/api/solve/jobs/' + encodeURIComponent(id) + '/cancel', 'POST');
+}

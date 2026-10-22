@@ -1,4 +1,4 @@
-export interface School {
+﻿export interface School {
   id: string;
   name: string;
 }
@@ -27,12 +27,38 @@ export interface Room {
   type: string;
 }
 
+export type SlotKind = 'morning' | 'regular' | 'evening' | 'makeup';
+
+export interface ElectiveBlock {
+  id: string;
+  name: string;
+  teacherId: string;
+  roomType?: string;
+}
+
+export interface ElectiveGroup {
+  id: string;
+  name: string;
+  subjectId: string;
+  weeklyPeriods: number;
+  classIds: string[];
+  blocks: ElectiveBlock[];
+}
+
 export interface TimeSlot {
   id: string;
   day: number;
   period: number;
   label: string;
+  /** morning = 早读, regular = 常规, evening = 晚自习, makeup = 补课. */
+  kind?: SlotKind;
+  /** HH:MM. Without it the "current period" cannot be computed. */
+  start?: string;
+  /** Minutes; regular slots default to 45 when a start exists. */
+  duration?: number;
 }
+
+export type WeekType = 'all' | 'odd' | 'even';
 
 export interface CoursePlan {
   id: string;
@@ -44,6 +70,10 @@ export interface CoursePlan {
   fixedSlotId?: string;
   consecutive?: number;
   locked?: boolean;
+  /** all = every week (default), odd/even = alternating weeks. */
+  weeks?: WeekType;
+  /** Which kind of slot the plan belongs to (default regular). */
+  kind?: SlotKind;
 }
 
 export type SolverStatus =
@@ -66,6 +96,9 @@ export interface ScheduleEntry {
   slotId: string;
   source: 'AUTO' | 'MANUAL';
   locked: boolean;
+  weeks?: WeekType;
+  groupId?: string;
+  blockId?: string;
 }
 
 export interface SolverOutput {
@@ -83,7 +116,9 @@ export interface SolverOutput {
 
 
 import type { RuleInstance } from '../../../packages/constraints/src';
+import type { Adjustment, LessonLog } from '../../../packages/adjustments/src';
 export type { RuleImportance, RuleKind, RuleScope, RuleTime, RuleInstance } from '../../../packages/constraints/src';
+export type { Adjustment, AdjustmentType, LessonLog, LessonStatus } from '../../../packages/adjustments/src';
 
 export interface SolverInput {
   protocolVersion: string;
@@ -96,6 +131,7 @@ export interface SolverInput {
   coursePlans: CoursePlan[];
   unavailableSlots: { teacherId: string; slotId: string }[];
   lockedEntries: ScheduleEntry[];
+  electiveGroups?: ElectiveGroup[];
   hardConstraints: string[];
   rules?: RuleInstance[];
   softConstraints: {
@@ -125,9 +161,16 @@ export interface SchoolData {
   auditLog?: { id: string; at: string; action: string; detail: string }[];
   candidate?: SolverOutput | null;
   published?: SolverOutput | null;
+  adjustments?: Adjustment[];
+  electiveGroups?: ElectiveGroup[];
+  lessonLogs?: LessonLog[];
   updatedAt?: string;
 }
 
 export type RunMode = 'single' | 'lan-server' | 'lan-client' | 'cloud';
 
 export type Commit = (next: SchoolData, options?: { invalidate?: boolean; immediate?: boolean }) => void;
+
+
+
+

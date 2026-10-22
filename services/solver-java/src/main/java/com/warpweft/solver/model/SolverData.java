@@ -17,7 +17,10 @@ public final class SolverData {
     public final Set<String> unavailable = new HashSet<>();
     public final List<Plan> plans = new ArrayList<>();
     public final List<Entry> locked = new ArrayList<>();
+    /** Already-placed lessons from a checkpoint: occupy slots but stay movable. */
+    public final List<Entry> seed = new ArrayList<>();
     public final List<Rule> rules = new ArrayList<>();
+    public final List<ElectiveGroup> groups = new ArrayList<>();
     public final List<String> violations = new ArrayList<>();
 
     public SolverData(String protocolVersion) {

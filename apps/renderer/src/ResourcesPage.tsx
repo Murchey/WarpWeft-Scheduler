@@ -1,9 +1,22 @@
 import React, { useState } from 'react';
 import { buildImportTemplate, readWorkbook } from '../../../packages/import-export/src';
-import type { ClassRoom, Commit, CoursePlan, Room, SchoolData, Subject, Teacher, TimeSlot } from './types';
+import type { ClassRoom, Commit, CoursePlan, Room, SchoolData, SlotKind, Subject, Teacher, TimeSlot } from './types';
 import { DAYS, EditableTable, SectionHeading } from './components';
 import { download } from './download';
 import { messageOf, uid } from './utils';
+
+const SLOT_KIND_MAP: Record<string, SlotKind> = {
+  早读: 'morning', morning: 'morning',
+  常规: 'regular', 普通: 'regular', regular: 'regular',
+  晚自习: 'evening', 晚修: 'evening', evening: 'evening',
+  补课: 'makeup', makeup: 'makeup',
+};
+const SLOT_KIND_OPTIONS = [
+  { value: 'morning', label: '早读' },
+  { value: 'regular', label: '常规' },
+  { value: 'evening', label: '晚自习' },
+  { value: 'makeup', label: '补课' },
+];
 
 function ResourcesPage({
   data,
@@ -32,7 +45,7 @@ function ResourcesPage({
     const rows = (data[collection] as unknown as Array<Record<string, unknown> & { id: string }>).map((row) =>
       row.id === id ? { ...row, [key]: value } : row,
     );
-    const invalidate = collection === 'timeSlots' && (key === 'day' || key === 'period');
+    const invalidate = collection === 'timeSlots' && (key === 'day' || key === 'period' || key === 'kind');
     commit({ ...data, [collection]: rows } as unknown as SchoolData, { invalidate });
   };
   const remove = (
@@ -68,7 +81,7 @@ function ResourcesPage({
     else {
       const periods = data.timeSlots.filter((slot) => slot.day === 1).map((slot) => slot.period);
       const period = (periods.length ? Math.max(...periods) : 0) + 1;
-      row = { id: uid('slot'), day: 1, period, label: '周一 第' + period + '节' };
+      row = { id: uid('slot'), day: 1, period, label: '周一 第' + period + '节', kind: 'regular' };
     }
     commit({ ...data, [collection]: [...(data[collection] as unknown as Array<Record<string, unknown>>), row] } as unknown as SchoolData, {
       invalidate: true,
@@ -87,7 +100,7 @@ function ResourcesPage({
     for (const day of [...batchDays].sort((a, b) => a - b)) {
       for (let period = from; period <= to; period += 1) {
         if (existing.has(day + '|' + period)) continue;
-        additions.push({ id: uid('slot'), day, period, label: DAYS[day] + ' 第' + period + '节' });
+        additions.push({ id: uid('slot'), day, period, label: DAYS[day] + ' 第' + period + '节', kind: 'regular' });
       }
     }
     if (additions.length === 0) {
@@ -279,9 +292,35 @@ function ResourcesPage({
         }
         slotKeys.add(key);
         const label = text(v['名称'] ?? v['label']) || DAYS[day] + ' 第' + period + '节';
+        const kindText = text(v['类型'] ?? v['时段类型'] ?? v['kind']);
+        const kind = kindText ? SLOT_KIND_MAP[kindText] : 'regular';
+        if (kindText && !kind) {
+          issues.push('时间段 第' + row.row + '行时段类型无法识别：' + kindText + '（可填 早读/常规/晚自习/补课）');
+          continue;
+        }
+        const start = text(v['开始时间'] ?? v['开始'] ?? v['start']);
+        if (start && !/^\d{1,2}:\d{2}$/.test(start)) {
+          issues.push('时间段 第' + row.row + '行开始时间格式应为 HH:MM');
+          continue;
+        }
+        const duration = numeric(v['时长'] ?? v['duration'], 0);
         const existing = next.timeSlots.find((item) => item.day === day && item.period === period);
-        if (existing) existing.label = label;
-        else next.timeSlots.push({ id: uid('slot'), day, period, label });
+        if (existing) {
+          existing.label = label;
+          existing.kind = kind;
+          existing.start = start || undefined;
+          existing.duration = duration > 0 ? duration : undefined;
+        } else {
+          next.timeSlots.push({
+            id: uid('slot'),
+            day,
+            period,
+            label,
+            kind,
+            start: start || undefined,
+            duration: duration > 0 ? duration : undefined,
+          });
+        }
       }
       const classByName = new Map(next.classes.map((item) => [item.name.trim().toLowerCase(), item]));
       const subjectByName = new Map(next.subjects.map((item) => [item.name.trim().toLowerCase(), item]));
@@ -324,13 +363,30 @@ function ResourcesPage({
             }
             fixedSlotId = fixed.id;
           }
-          const key = classItem.id + '|' + subjectItem.id + '|' + teacherItem.id;
+          const weekText = text(v['周次'] ?? v['单双周'] ?? v['weeks']).trim().toLowerCase();
+          let weeks: 'all' | 'odd' | 'even' = 'all';
+          if (weekText) {
+            if (['单周', '单', 'odd'].includes(weekText)) weeks = 'odd';
+            else if (['双周', '双', 'even'].includes(weekText)) weeks = 'even';
+            else if (['每周', '全', 'all'].includes(weekText)) weeks = 'all';
+            else {
+              issues.push('教学计划 第' + row.row + '行周次无法识别：' + weekText + '（可填 每周/单周/双周）');
+              continue;
+            }
+          }
+          const kindText = text(v['时段类型'] ?? v['类型'] ?? v['kind']).trim();
+          const planKind: SlotKind = kindText ? SLOT_KIND_MAP[kindText] : 'regular';
+          if (kindText && !SLOT_KIND_MAP[kindText]) {
+            issues.push('教学计划 第' + row.row + '行时段类型无法识别：' + kindText + '（可填 早读/常规/晚自习/补课）');
+            continue;
+          }
+          const key = classItem.id + '|' + subjectItem.id + '|' + teacherItem.id + '|' + weeks;
           if (planKeys.has(key)) {
             issues.push('教学计划 第' + row.row + '行重复：' + className + ' / ' + subjectName);
             continue;
           }
           planKeys.add(key);
-          plans.push({ id: uid('plan'), classId: classItem.id, subjectId: subjectItem.id, teacherId: teacherItem.id, weeklyPeriods, roomType, fixedSlotId });
+          plans.push({ id: uid('plan'), classId: classItem.id, subjectId: subjectItem.id, teacherId: teacherItem.id, weeklyPeriods, roomType, fixedSlotId, weeks, kind: planKind });
         }
         next.coursePlans = plans;
       }
@@ -507,9 +563,12 @@ function ResourcesPage({
           english="TIME SLOTS"
           rows={data.timeSlots}
           columns={[
-            { key: 'day', label: '星期', type: 'select', options: days, width: '28%' },
-            { key: 'period', label: '节次', type: 'number', width: '18%' },
-            { key: 'label', label: '显示名称', width: '44%' },
+            { key: 'day', label: '星期', type: 'select', options: days, width: '14%' },
+            { key: 'period', label: '节次', type: 'number', width: '10%' },
+            { key: 'kind', label: '时段类型', type: 'select', options: SLOT_KIND_OPTIONS, width: '18%', defaultValue: 'regular' },
+            { key: 'start', label: '开始', width: '12%' },
+            { key: 'duration', label: '分钟', type: 'number', width: '10%' },
+            { key: 'label', label: '显示名称', width: '30%' },
           ]}
           onChange={(id, key, value) => update('timeSlots', id, key, value)}
           onAdd={() => add('timeSlots')}
@@ -525,3 +584,5 @@ function ResourcesPage({
 }
 
 export { ResourcesPage };
+
+

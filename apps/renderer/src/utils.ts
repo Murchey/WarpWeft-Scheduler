@@ -9,3 +9,11 @@ export function uid(prefix: string): string {
 export function messageOf(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
 }
+
+/** Local calendar date as YYYY-MM-DD (not the UTC date toISOString would give). */
+export function todayLocal(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return now.getFullYear() + '-' + month + '-' + day;
+}

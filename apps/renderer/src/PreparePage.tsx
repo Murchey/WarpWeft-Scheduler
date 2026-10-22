@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import type { Commit, RuleInstance, SchoolData } from './types';
 import { AvailabilityEditor } from './AvailabilityEditor';
 import { PlansPage } from './PlansPage';
+import { ElectivePage } from './ElectivePage';
 import { ResourcesPage } from './ResourcesPage';
 import { RulesPage } from './RulesPage';
 
-export type PrepareSection = 'import' | 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots' | 'plans' | 'availability' | 'rules';
+export type PrepareSection = 'import' | 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots' | 'plans' | 'electives' | 'availability' | 'rules';
 
 function PreparePage({
   data,
@@ -38,6 +39,7 @@ function PreparePage({
     { id: 'rooms', label: '教室', english: 'ROOMS', count: String(data.rooms.length) },
     { id: 'timeSlots', label: '时间段', english: 'TIME SLOTS', count: String(data.timeSlots.length) },
     { id: 'plans', label: '教学计划', english: 'COURSE PLANS', count: String(data.coursePlans.length) },
+    { id: 'electives', label: '走班组', english: 'ELECTIVES', count: String((data.electiveGroups ?? []).length) },
     { id: 'availability', label: '教师时间', english: 'AVAILABILITY', count: unavailableCount > 0 ? unavailableCount + ' 人' : '未设置' },
     { id: 'rules', label: '排课规则', english: 'RULES', count: (data.rules ?? []).length > 0 ? (data.rules ?? []).length + ' 条' : '系统保证' },
   ];
@@ -88,6 +90,8 @@ function PreparePage({
         </div>
         {section === 'plans' ? (
           <PlansPage data={data} commit={commit} setError={setError} />
+        ) : section === 'electives' ? (
+          <ElectivePage data={data} commit={commit} setError={setError} />
         ) : section === 'availability' ? (
           <AvailabilityEditor data={data} commit={commit} />
         ) : section === 'rules' ? (
@@ -113,3 +117,4 @@ function PreparePage({
 }
 
 export { PreparePage };
+

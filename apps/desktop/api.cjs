@@ -17,6 +17,10 @@ const MAX_JOBS = 100;
 const MAX_LOGS = 500;
 const CLIENT_TTL_MS = 90_000;
 const CLIENT_PRUNE_MS = 30_000;
+const MAX_LONG_JOBS = 20;
+const LONG_JOB_MIN_SECONDS = 60;
+const LONG_JOB_MAX_SECONDS = 6 * 60 * 60;
+const LONG_JOB_MAX_STAGNATION = 60 * 60;
 
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -93,12 +97,27 @@ function validateData(data) {
   }
   for (const slot of data.timeSlots) {
     if (!(Number(slot.day) > 0) || !(Number(slot.period) > 0)) return '时间段 ' + slot.id + ' 的星期和节次必须大于 0';
+    if (slot.kind !== undefined && slot.kind !== null && !['morning', 'regular', 'evening', 'makeup'].includes(slot.kind)) {
+      return '时间段 ' + slot.id + ' 的时段类型无效（只能是 morning/regular/evening/makeup）';
+    }
+    if (slot.start !== undefined && slot.start !== null && slot.start !== '' && !/^\d{1,2}:\d{2}$/.test(String(slot.start))) {
+      return '时间段 ' + slot.id + ' 的开始时间无效（应为 HH:MM）';
+    }
+    if (slot.duration !== undefined && slot.duration !== null && !(Number(slot.duration) >= 0)) {
+      return '时间段 ' + slot.id + ' 的时长必须是非负数';
+    }
   }
   for (const plan of data.coursePlans) {
     if (!classIds.has(plan.classId)) return '教学计划 ' + plan.id + ' 引用了不存在的班级';
     if (!teacherIds.has(plan.teacherId)) return '教学计划 ' + plan.id + ' 引用了不存在的教师';
     if (!subjectIds.has(plan.subjectId)) return '教学计划 ' + plan.id + ' 引用了不存在的学科';
     if (plan.fixedSlotId && !slotIds.has(plan.fixedSlotId)) return '教学计划 ' + plan.id + ' 引用了不存在的固定时间';
+    if (plan.weeks !== undefined && plan.weeks !== null && !['all', 'odd', 'even'].includes(plan.weeks)) {
+      return '教学计划 ' + plan.id + ' 的周次无效（只能是 all/odd/even）';
+    }
+    if (plan.kind !== undefined && plan.kind !== null && !['morning', 'regular', 'evening', 'makeup'].includes(plan.kind)) {
+      return '教学计划 ' + plan.id + ' 的时段类型无效';
+    }
     if (!(Number(plan.weeklyPeriods) > 0)) return '教学计划 ' + plan.id + ' 的周课时必须大于 0';
   }
   for (const item of data.unavailableSlots || []) {
@@ -109,6 +128,59 @@ function validateData(data) {
     if (!collection || !Array.isArray(collection.entries)) continue;
     for (const entry of collection.entries) {
       if (!classIds.has(entry.classId) || !teacherIds.has(entry.teacherId) || !roomIds.has(entry.roomId) || !slotIds.has(entry.slotId)) return '课表条目 ' + entry.id + ' 引用了不存在的资源';
+    }
+  }
+  if (data.adjustments !== undefined) {
+    if (!Array.isArray(data.adjustments)) return 'adjustments 必须是数组';
+    const teacherIdsForAdjustment = teacherIds;
+    for (const item of data.adjustments) {
+      if (!item || typeof item.id !== 'string' || !item.id.trim()) return '调代课记录缺少 ID';
+      if (!['move', 'substitute', 'cancel'].includes(item.type)) return '调代课记录 ' + item.id + ' 的类型无效';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(item.date || ''))) return '调代课记录 ' + item.id + ' 的日期无效';
+      if (!slotIds.has(item.slotId)) return '调代课记录 ' + item.id + ' 引用了不存在的时间段';
+      if (!classIds.has(item.classId)) return '调代课记录 ' + item.id + ' 引用了不存在的班级';
+      if (item.type === 'move' && !slotIds.has(item.targetSlotId || '')) return '调代课记录 ' + item.id + ' 的调课目标无效';
+      if (item.type === 'substitute' && !teacherIdsForAdjustment.has(item.substituteTeacherId || '')) return '调代课记录 ' + item.id + ' 的代课教师不存在';
+      if (item.roomId && !roomIds.has(item.roomId)) return '调代课记录 ' + item.id + ' 引用了不存在的教室';
+      if (item.status !== 'active' && item.status !== 'revoked') return '调代课记录 ' + item.id + ' 的状态无效';
+    }
+  }
+  if (data.lessonLogs !== undefined) {
+    if (!Array.isArray(data.lessonLogs)) return 'lessonLogs 必须是数组';
+    const logIds = new Set();
+    for (const item of data.lessonLogs) {
+      if (!item || typeof item.id !== 'string' || !item.id.trim()) return '上课记录缺少 ID';
+      if (logIds.has(item.id)) return '上课记录 ID 重复：' + item.id;
+      logIds.add(item.id);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(item.date || ''))) return '上课记录 ' + item.id + ' 的日期无效';
+      if (!['normal', 'substituted', 'moved', 'cancelled'].includes(item.status)) return '上课记录 ' + item.id + ' 的状态无效';
+      if (!classIds.has(item.classId)) return '上课记录 ' + item.id + ' 引用了不存在的班级';
+      if (!teacherIds.has(item.teacherId)) return '上课记录 ' + item.id + ' 引用了不存在的教师';
+      if (!slotIds.has(item.slotId)) return '上课记录 ' + item.id + ' 引用了不存在的时间段';
+      if (!subjectIds.has(item.subjectId)) return '上课记录 ' + item.id + ' 引用了不存在的学科';
+    }
+  }
+  if (data.electiveGroups !== undefined) {
+    if (!Array.isArray(data.electiveGroups)) return 'electiveGroups 必须是数组';
+    const groupIds = new Set();
+    for (const group of data.electiveGroups) {
+      if (!group || typeof group.id !== 'string' || !group.id.trim()) return '走班组缺少 ID';
+      if (groupIds.has(group.id)) return '走班组 ID 重复：' + group.id;
+      groupIds.add(group.id);
+      if (!subjectIds.has(group.subjectId)) return '走班组 ' + group.id + ' 引用了不存在的学科';
+      if (!(Number(group.weeklyPeriods) > 0)) return '走班组 ' + group.id + ' 的周课时必须大于 0';
+      if (!Array.isArray(group.classIds) || group.classIds.length === 0) return '走班组 ' + group.id + ' 至少需要一个班级';
+      for (const classId of group.classIds) {
+        if (!classIds.has(classId)) return '走班组 ' + group.id + ' 引用了不存在的班级';
+      }
+      if (!Array.isArray(group.blocks) || group.blocks.length === 0) return '走班组 ' + group.id + ' 至少需要一个并行班';
+      const blockIds = new Set();
+      for (const block of group.blocks) {
+        if (!block || typeof block.id !== 'string' || !block.id.trim()) return '走班组 ' + group.id + ' 的并行班缺少 ID';
+        if (blockIds.has(block.id)) return '走班组 ' + group.id + ' 的并行班 ID 重复';
+        blockIds.add(block.id);
+        if (!teacherIds.has(block.teacherId)) return '走班组 ' + group.id + ' 的并行班引用了不存在的教师';
+      }
     }
   }
   return null;
@@ -463,7 +535,10 @@ function startApi({
   }
 
   function pump() {
-    while (active.size < effective.maxConcurrentJobs && queue.length > 0) {
+    // A long solve owns one concurrency slot: with maxConcurrentJobs=1 short
+    // solves queue behind it instead of starting a second JVM on the same box.
+    const capacity = Math.max(0, effective.maxConcurrentJobs - (longJobRunning ? 1 : 0));
+    while (active.size < capacity && queue.length > 0) {
       const item = queue.shift();
       const job = item.job;
       job.status = 'running';
@@ -504,7 +579,10 @@ function startApi({
     }
   }
 
-  function enqueueSolve(input, client) {
+  function enqueueSolve(rawInput, client) {
+    // Clients must not be able to point the solver at a server-side path: only
+    // the long-job runner owns checkpoint files.
+    const input = { ...rawInput, checkpointFile: undefined, stagnationSeconds: 0 };
     return new Promise((resolve, reject) => {
       const load = client ? clientLoad(client.id) : { running: 0, queued: 0 };
       const allowance = config.perClientActive + config.perClientQueued;
@@ -581,6 +659,440 @@ function startApi({
     item.job.reject(requestError('任务已取消', 409, 'JOB_CANCELLED'));
     return true;
   }
+
+  // ---------------------------------------------------------------------------
+  // Long-running solve jobs
+  //
+  // A short solve answers one HTTP request. A long solve (up to six hours) is a
+  // first-class task: its input, best checkpoint and status live in
+  // data/solve-jobs/, so the page can be closed, the server restarted, and the
+  // task resumed with the last best timetable as its starting point.
+  // ---------------------------------------------------------------------------
+  const longJobsDir = path.join(dataDir, 'solve-jobs');
+  fs.mkdirSync(longJobsDir, { recursive: true });
+  const longJobs = new Map();
+  const longChildren = new Map();
+  const longSaveTimes = new Map();
+  let longJobRunning = null;
+  let longSequence = 0;
+  let shuttingDown = false;
+
+  function longJobFile(id) {
+    return path.join(longJobsDir, id + '.json');
+  }
+
+  function loadLongJobs() {
+    let files = [];
+    try {
+      files = fs.readdirSync(longJobsDir).filter((file) => file.endsWith('.json') && !file.endsWith('.best.json'));
+    } catch {
+      return;
+    }
+    for (const file of files) {
+      try {
+        const job = JSON.parse(fs.readFileSync(path.join(longJobsDir, file), 'utf8'));
+        if (!job || typeof job.id !== 'string') continue;
+        if (job.status === 'running' || job.status === 'queued') {
+          job.status = 'interrupted';
+          job.error = '服务重启导致任务中断，可继续';
+        }
+        longJobs.set(job.id, job);
+      } catch {
+        // A corrupt checkpoint must not stop the server from starting.
+      }
+    }
+    if (longJobs.size > MAX_LONG_JOBS) {
+      const sorted = Array.from(longJobs.values()).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+      for (const job of sorted.slice(0, longJobs.size - MAX_LONG_JOBS)) {
+        longJobs.delete(job.id);
+        try {
+          fs.rmSync(longJobFile(job.id), { force: true });
+          if (job.bestFile) fs.rmSync(job.bestFile, { force: true });
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
+  function saveLongJob(job, throttleMs = 0) {
+    job.updatedAt = new Date().toISOString();
+    const now = Date.now();
+    const last = longSaveTimes.get(job.id) || 0;
+    if (throttleMs > 0 && now - last < throttleMs) return;
+    longSaveTimes.set(job.id, now);
+    const file = longJobFile(job.id);
+    const tmp = file + '.tmp';
+    const meta = {
+      id: job.id,
+      status: job.status,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+      startedAt: job.startedAt || null,
+      finishedAt: job.finishedAt || null,
+      elapsedMs: job.elapsedMs || 0,
+      timeLimitSeconds: job.timeLimitSeconds,
+      stagnationSeconds: job.stagnationSeconds,
+      lessons: job.lessons,
+      classes: job.classes,
+      plans: job.plans,
+      rounds: job.rounds || 0,
+      error: job.error || null,
+      clientId: job.clientId || null,
+      bestFile: job.bestFile,
+      input: job.input,
+      progress: job.progress || null,
+      hasFeasibleSolution: job.hasFeasibleSolution || false,
+      entryCount: job.entryCount || 0,
+    };
+    try {
+      fs.writeFileSync(tmp, JSON.stringify(meta), 'utf8');
+      fs.renameSync(tmp, file);
+    } catch (error) {
+      log('error', '保存长时任务失败：' + error.message, job.id);
+    }
+  }
+
+  function readLongBest(job) {
+    if (!job.bestFile) return null;
+    try {
+      const stat = fs.statSync(job.bestFile);
+      if (job.bestMtime === stat.mtimeMs && job.best) return job.best;
+      const best = JSON.parse(fs.readFileSync(job.bestFile, 'utf8'));
+      job.bestMtime = stat.mtimeMs;
+      job.best = best;
+      return best;
+    } catch {
+      return job.best || null;
+    }
+  }
+
+  function longJobSummary(job) {
+    const best = readLongBest(job);
+    const total = best && typeof best.total === 'number' ? best.total : job.total || job.lessons || 0;
+    const placed = best && typeof best.placed === 'number' ? best.placed : (job.progress && job.progress.placed) || 0;
+    return {
+      id: job.id,
+      status: job.status,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt || job.createdAt,
+      startedAt: job.startedAt || null,
+      finishedAt: job.finishedAt || null,
+      elapsedMs: job.elapsedMs || (best && best.elapsedMs) || 0,
+      timeLimitSeconds: job.timeLimitSeconds,
+      stagnationSeconds: job.stagnationSeconds || 0,
+      lessons: job.lessons,
+      total,
+      placed,
+      unplaced: Math.max(0, total - placed),
+      score: best && typeof best.score === 'number' ? best.score : null,
+      rounds: job.rounds || 0,
+      error: job.error || null,
+      clientId: job.clientId || null,
+      hasFeasibleSolution: !!job.hasFeasibleSolution,
+      canResume: ['paused', 'interrupted', 'failed', 'cancelled', 'completed'].includes(job.status) && !longJobRunning,
+    };
+  }
+
+  function longJobDetail(job) {
+    const best = readLongBest(job);
+    return {
+      ...longJobSummary(job),
+      bestEntries: best && Array.isArray(best.entries) ? best.entries : [],
+      bestUpdatedAt: best ? best.updatedAt || null : null,
+      inputSummary: {
+        timeSlots: (job.input.timeSlots || []).length,
+        classes: (job.input.classes || []).length,
+        teachers: (job.input.teachers || []).length,
+        rooms: (job.input.rooms || []).length,
+        plans: (job.input.coursePlans || []).length,
+        locked: (job.input.lockedEntries || []).length,
+      },
+    };
+  }
+
+  function runLongJob(job) {
+    if (longJobRunning) {
+      throw requestError('已有长时任务在运行，请先暂停或取消', 409, 'LONG_JOB_BUSY', { running: longJobRunning });
+    }
+    const best = readLongBest(job);
+    const previous = best && Array.isArray(best.entries) ? best.entries : [];
+    const locks = job.input.lockedEntries || [];
+    const lockedIds = new Set(locks.map((entry) => entry.id));
+    const input = {
+      ...job.input,
+      timeLimitSeconds: job.timeLimitSeconds,
+      stagnationSeconds: job.stagnationSeconds,
+      checkpointFile: job.bestFile,
+    };
+    if (previous.length > 0) {
+      // Resume by seeding: everything already placed stays as a starting point
+      // (repair may still move it), while user-locked lessons stay locked.
+      input.seedEntries = previous.filter((entry) => !entry.locked && !lockedIds.has(entry.id));
+      input.lockedEntries = [...locks, ...previous.filter((entry) => entry.locked && !lockedIds.has(entry.id))];
+    }
+    job.status = 'running';
+    job.startedAt = job.startedAt || new Date().toISOString();
+    job.finishedAt = null;
+    job.error = null;
+    job.pauseRequested = false;
+    job.cancelRequested = false;
+    job.rounds = (job.rounds || 0) + 1;
+    job.progress = job.progress || null;
+    saveLongJob(job);
+    longJobRunning = job.id;
+    log('info', '长时任务开始：' + job.lessons + ' 课时，时限 ' + job.timeLimitSeconds + ' 秒，第 ' + job.rounds + ' 轮', job.id);
+
+    if (!javaInfo.available) {
+      job.status = 'failed';
+      job.error = 'Java 21 不可用：' + (javaInfo.output || javaInfo.command);
+      job.finishedAt = new Date().toISOString();
+      longJobRunning = null;
+      saveLongJob(job);
+      return;
+    }
+    if (!fs.existsSync(jarPath)) {
+      job.status = 'failed';
+      job.error = 'Java 求解器未构建：请先运行 npm run build:solver';
+      job.finishedAt = new Date().toISOString();
+      longJobRunning = null;
+      saveLongJob(job);
+      return;
+    }
+    const child = spawn(javaCommand, javaArgs, { windowsHide: true });
+    longChildren.set(job.id, child);
+    const startedAt = Date.now();
+    let stdout = '';
+    let stderrTail = '';
+    let stderrBuffer = '';
+    let settled = false;
+
+    const progressTimer = setInterval(() => {
+      const checkpoint = readLongBest(job);
+      if (checkpoint) {
+        job.progress = {
+          placed: checkpoint.placed,
+          total: checkpoint.total,
+          unplaced: checkpoint.unplaced,
+          score: checkpoint.score,
+          elapsedMs: checkpoint.elapsedMs,
+          at: new Date().toISOString(),
+        };
+        job.elapsedMs = checkpoint.elapsedMs || Date.now() - startedAt;
+        saveLongJob(job, 3000);
+      }
+    }, 1000);
+    if (typeof progressTimer.unref === 'function') progressTimer.unref();
+
+    const guard = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {
+        // ignore
+      }
+    }, (job.timeLimitSeconds + 300) * 1000);
+    if (typeof guard.unref === 'function') guard.unref();
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearInterval(progressTimer);
+      clearTimeout(guard);
+      longChildren.delete(job.id);
+      longJobRunning = null;
+      const checkpoint = readLongBest(job);
+      if (checkpoint) {
+        job.progress = {
+          placed: checkpoint.placed,
+          total: checkpoint.total,
+          unplaced: checkpoint.unplaced,
+          score: checkpoint.score,
+          elapsedMs: checkpoint.elapsedMs,
+          at: new Date().toISOString(),
+        };
+        job.elapsedMs = checkpoint.elapsedMs || job.elapsedMs;
+        job.entryCount = Array.isArray(checkpoint.entries) ? checkpoint.entries.length : 0;
+      }
+      job.finishedAt = new Date().toISOString();
+      saveLongJob(job);
+      pump();
+    };
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      const text = String(chunk);
+      stderrTail = (stderrTail + text).slice(-4000);
+      stderrBuffer += text;
+      let index = stderrBuffer.indexOf('\n');
+      while (index >= 0) {
+        const line = stderrBuffer.slice(0, index).trim();
+        stderrBuffer = stderrBuffer.slice(index + 1);
+        if (line) {
+          if (line.startsWith('[progress] ')) {
+            try {
+              const progress = JSON.parse(line.slice('[progress] '.length));
+              job.progress = { ...progress, at: new Date().toISOString() };
+              job.elapsedMs = progress.elapsedMs || job.elapsedMs;
+              saveLongJob(job, 3000);
+            } catch {
+              log('debug', '无法解析进度行：' + line, job.id);
+            }
+          } else {
+            log('debug', line.startsWith('[java]') ? line : '[java] ' + line, job.id);
+          }
+        }
+        index = stderrBuffer.indexOf('\n');
+      }
+    });
+    child.stdin.on('error', () => {});
+    child.on('error', (error) => {
+      job.status = 'failed';
+      job.error = '无法启动 Java 求解器：' + error.message;
+      finish();
+      log('error', job.error, job.id);
+    });
+    child.on('close', (code) => {
+      if (job.cancelRequested) {
+        job.status = 'cancelled';
+        job.error = '已取消';
+      } else if (shuttingDown) {
+        job.status = 'interrupted';
+        job.error = '服务停止导致任务中断，可继续';
+      } else if (job.pauseRequested) {
+        job.status = 'paused';
+        job.error = '已暂停';
+      } else if (code === 0) {
+        try {
+          const output = JSON.parse(stdout.trim());
+          job.hasFeasibleSolution = !!output.hasFeasibleSolution;
+          job.entryCount = Array.isArray(output.entries) ? output.entries.length : 0;
+          job.status = output.hasFeasibleSolution ? 'completed' : 'failed';
+          job.error = output.hasFeasibleSolution ? null : output.explanation || '未找到可行课表';
+          job.elapsedMs = output.elapsedMs || job.elapsedMs;
+        } catch {
+          job.status = 'failed';
+          job.error = (stderrTail.trim() || 'Java 求解器返回了非 JSON 内容').slice(0, 500);
+        }
+      } else {
+        job.status = 'failed';
+        job.error = (stderrTail.trim() || 'Java 求解器退出码 ' + code).slice(0, 500);
+      }
+      finish();
+      const summary = longJobSummary(job);
+      log(job.status === 'completed' ? 'info' : 'warn', '长时任务结束：' + job.status + '，' + summary.placed + '/' + summary.total + ' 课时', job.id);
+    });
+    child.stdin.end(JSON.stringify(input));
+  }
+
+  function createLongJob(input, client) {
+    const seconds = Math.round(Number(input.timeLimitSeconds));
+    const timeLimitSeconds = Number.isFinite(seconds) && seconds > 0
+      ? Math.min(LONG_JOB_MAX_SECONDS, Math.max(LONG_JOB_MIN_SECONDS, seconds))
+      : 3600;
+    const stagnation = Math.round(Number(input.stagnationSeconds));
+    const stagnationSeconds = Number.isFinite(stagnation) && stagnation >= 0
+      ? Math.min(LONG_JOB_MAX_STAGNATION, stagnation)
+      : 600;
+    const jobsInFlight = Array.from(longJobs.values()).filter((job) => job.status === 'running' || job.status === 'queued');
+    if (jobsInFlight.length > 0) {
+      throw requestError('已有长时任务在运行（' + jobsInFlight[0].id + '），请先暂停或取消', 409, 'LONG_JOB_BUSY', {
+        running: jobsInFlight[0].id,
+      });
+    }
+    longSequence += 1;
+    const id = 'long-' + Date.now().toString(36) + '-' + longSequence;
+    const job = {
+      id,
+      clientId: client ? client.id : null,
+      status: 'queued',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      timeLimitSeconds,
+      stagnationSeconds,
+      lessons: (input.coursePlans || []).reduce((sum, plan) => sum + (Number(plan.weeklyPeriods) || 0), 0),
+      classes: (input.classes || []).length,
+      plans: (input.coursePlans || []).length,
+      total: (input.coursePlans || []).reduce((sum, plan) => sum + (Number(plan.weeklyPeriods) || 0), 0),
+      bestFile: path.join(longJobsDir, id + '.best.json'),
+      input,
+    };
+    longJobs.set(id, job);
+    if (longJobs.size > MAX_LONG_JOBS) {
+      const sorted = Array.from(longJobs.values()).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+      const stale = sorted.find((item) => item.status !== 'running' && item.status !== 'queued');
+      if (stale) {
+        longJobs.delete(stale.id);
+        try {
+          fs.rmSync(longJobFile(stale.id), { force: true });
+          if (stale.bestFile) fs.rmSync(stale.bestFile, { force: true });
+        } catch {
+          // ignore
+        }
+      }
+    }
+    runLongJob(job);
+    return job;
+  }
+
+  function pauseLongJob(id) {
+    const job = longJobs.get(id);
+    if (!job) throw requestError('长时任务不存在', 404, 'LONG_JOB_NOT_FOUND');
+    if (job.status !== 'running') throw requestError('任务当前不在运行（' + job.status + '）', 409, 'LONG_JOB_NOT_RUNNING');
+    job.pauseRequested = true;
+    job.status = 'paused';
+    job.error = '已暂停';
+    job.finishedAt = new Date().toISOString();
+    const child = longChildren.get(id);
+    if (child) {
+      try {
+        child.kill();
+      } catch {
+        // ignore
+      }
+    }
+    saveLongJob(job);
+    log('warn', '长时任务已暂停', id);
+    return job;
+  }
+
+  function resumeLongJob(id) {
+    const job = longJobs.get(id);
+    if (!job) throw requestError('长时任务不存在', 404, 'LONG_JOB_NOT_FOUND');
+    if (job.status === 'running') throw requestError('任务已在运行', 409, 'LONG_JOB_RUNNING');
+    runLongJob(job);
+    return job;
+  }
+
+  function cancelLongJob(id) {
+    const job = longJobs.get(id);
+    if (!job) throw requestError('长时任务不存在', 404, 'LONG_JOB_NOT_FOUND');
+    if (job.status === 'running') {
+      job.cancelRequested = true;
+      job.status = 'cancelled';
+      job.error = '已取消';
+      job.finishedAt = new Date().toISOString();
+      const child = longChildren.get(id);
+      if (child) {
+        try {
+          child.kill();
+        } catch {
+          // ignore
+        }
+      }
+      saveLongJob(job);
+      log('warn', '长时任务已取消', id);
+      return job;
+    }
+    job.status = 'cancelled';
+    job.error = '已取消';
+    job.finishedAt = new Date().toISOString();
+    saveLongJob(job);
+    return job;
+  }
+
+  loadLongJobs();
 
   function serverStats() {
     const now = readCpuTimes();
@@ -812,6 +1324,47 @@ function startApi({
         }
       }
 
+      if (req.method === 'POST' && url.pathname === '/api/solve/long') {
+        let input;
+        try {
+          input = JSON.parse(await readBody(req));
+        } catch {
+          return fail(res, 400, '请求不是有效 JSON', 'INVALID_BODY');
+        }
+        if (!input || !Array.isArray(input.coursePlans) || !Array.isArray(input.timeSlots)) {
+          return fail(res, 400, '缺少 timeSlots / coursePlans', 'INVALID_DATA');
+        }
+        try {
+          const job = createLongJob(input, client);
+          return send(res, 202, { job: longJobSummary(job) });
+        } catch (error) {
+          return fail(res, error.statusCode || 500, error.message, error.code || 'LONG_JOB_FAILED');
+        }
+      }
+      if (req.method === 'GET' && url.pathname === '/api/solve/jobs') {
+        const jobs = Array.from(longJobs.values())
+          .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+          .map(longJobSummary);
+        return send(res, 200, { jobs, running: longJobRunning });
+      }
+      const longJobRoute = url.pathname.match(/^\/api\/solve\/jobs\/([^/]+)$/);
+      if (req.method === 'GET' && longJobRoute) {
+        const job = longJobs.get(decodeURIComponent(longJobRoute[1]));
+        if (!job) return fail(res, 404, '长时任务不存在', 'LONG_JOB_NOT_FOUND');
+        return send(res, 200, longJobDetail(job));
+      }
+      const longJobAction = url.pathname.match(/^\/api\/solve\/jobs\/([^/]+)\/(pause|resume|cancel)$/);
+      if (req.method === 'POST' && longJobAction) {
+        const id = decodeURIComponent(longJobAction[1]);
+        const action = longJobAction[2];
+        try {
+          const job = action === 'pause' ? pauseLongJob(id) : action === 'resume' ? resumeLongJob(id) : cancelLongJob(id);
+          return send(res, 200, { job: longJobSummary(job) });
+        } catch (error) {
+          return fail(res, error.statusCode || 500, error.message, error.code || 'LONG_JOB_FAILED');
+        }
+      }
+
       if (req.method === 'GET' || req.method === 'HEAD') {
         if (url.pathname.startsWith('/api/')) {
           return fail(res, 404, 'Not found', 'NOT_FOUND');
@@ -837,6 +1390,19 @@ function startApi({
     }
   });
   server.on('error', (error) => log('error', 'API 服务异常：' + error.message));
+  server.on('close', () => {
+    // A long solve can outlive the listening socket. Kill it so the process
+    // (and a test run) can exit; the next start marks the job "interrupted".
+    shuttingDown = true;
+    for (const [id, child] of longChildren) {
+      try {
+        child.kill();
+      } catch {
+        // ignore
+      }
+      longChildren.delete(id);
+    }
+  });
   server.on('clientError', (_error, socket) => {
     if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
   });

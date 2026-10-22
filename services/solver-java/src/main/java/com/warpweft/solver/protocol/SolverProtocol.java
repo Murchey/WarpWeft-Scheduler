@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.warpweft.solver.engine.Scheduler;
 import com.warpweft.solver.engine.State;
 import com.warpweft.solver.model.ClassInfo;
+import com.warpweft.solver.model.ElectiveBlock;
+import com.warpweft.solver.model.ElectiveGroup;
 import com.warpweft.solver.model.Entry;
 import com.warpweft.solver.model.Plan;
 import com.warpweft.solver.model.Room;
@@ -38,7 +40,14 @@ public final class SolverProtocol {
                 System.out.println(JSON.writeValueAsString(result));
                 return;
             }
-            ObjectNode result = Scheduler.solve(data, Math.max(1, integer(root, "timeLimitSeconds", 30)), Math.max(1, integer(root, "randomSeed", 1)), started);
+            ObjectNode result = Scheduler.solve(
+                data,
+                Math.max(1, integer(root, "timeLimitSeconds", 30)),
+                Math.max(1, integer(root, "randomSeed", 1)),
+                started,
+                text(root, "checkpointFile", ""),
+                integer(root, "stagnationSeconds", 0)
+            );
             System.out.println(JSON.writeValueAsString(result));
         } catch (Throwable error) {
             ObjectNode result = failure("unknown", List.of("Java 求解器异常：" + error.getMessage()));
@@ -55,7 +64,7 @@ public final class SolverProtocol {
         SolverData data = new SolverData(protocolVersion);
         for (JsonNode node : root.path("timeSlots")) {
             data.slots.put(text(node, "id", ""), new Slot(
-                text(node, "id", ""), integer(node, "day", 0), integer(node, "period", 0), text(node, "label", "")
+                text(node, "id", ""), integer(node, "day", 0), integer(node, "period", 0), text(node, "label", ""), text(node, "kind", "regular")
             ));
         }
         for (JsonNode node : root.path("rooms")) {
@@ -80,7 +89,7 @@ public final class SolverProtocol {
             Plan plan = new Plan(
                 text(node, "id", ""), text(node, "classId", ""), text(node, "subjectId", ""),
                 text(node, "teacherId", ""), integer(node, "weeklyPeriods", 0),
-                text(node, "roomType", ""), text(node, "fixedSlotId", "")
+                text(node, "roomType", ""), text(node, "fixedSlotId", ""), text(node, "weeks", "all"), text(node, "kind", "regular")
             );
             if (plan.weeklyPeriods() <= 0) data.violations.add("教学计划 " + plan.id() + " 的周课时必须大于 0");
             if (!classIds.contains(plan.classId())) data.violations.add("教学计划 " + plan.id() + " 引用了不存在的班级");
@@ -88,6 +97,41 @@ public final class SolverProtocol {
             if (!subjectIds.contains(plan.subjectId())) data.violations.add("教学计划 " + plan.id() + " 引用了不存在的学科");
             if (!plan.fixedSlotId().isBlank() && !data.slots.containsKey(plan.fixedSlotId())) data.violations.add("教学计划 " + plan.id() + " 引用了不存在的固定时间");
             data.plans.add(plan);
+        }
+        for (JsonNode node : root.path("electiveGroups")) {
+            String groupId = text(node, "id", "");
+            List<String> groupClasses = new ArrayList<>();
+            for (JsonNode classNode : node.path("classIds")) {
+                String classId = classNode.asText("");
+                if (!classIds.contains(classId)) {
+                    data.violations.add("走班组 " + groupId + " 引用了不存在的班级：" + classId);
+                    continue;
+                }
+                groupClasses.add(classId);
+            }
+            List<ElectiveBlock> blocks = new ArrayList<>();
+            for (JsonNode blockNode : node.path("blocks")) {
+                String teacherId = text(blockNode, "teacherId", "");
+                if (!teacherIds.contains(teacherId)) {
+                    data.violations.add("走班组 " + groupId + " 的并行班引用了不存在的教师：" + teacherId);
+                    continue;
+                }
+                blocks.add(new ElectiveBlock(
+                    text(blockNode, "id", groupId + "-block-" + (blocks.size() + 1)),
+                    text(blockNode, "name", ""),
+                    teacherId,
+                    text(blockNode, "roomType", "")
+                ));
+            }
+            int weekly = integer(node, "weeklyPeriods", 0);
+            if (weekly <= 0) data.violations.add("走班组 " + groupId + " 的周课时必须大于 0");
+            if (groupClasses.isEmpty()) data.violations.add("走班组 " + groupId + " 没有参与班级");
+            if (blocks.isEmpty()) data.violations.add("走班组 " + groupId + " 没有并行班");
+            if (!subjectIds.contains(text(node, "subjectId", ""))) data.violations.add("走班组 " + groupId + " 引用了不存在的学科");
+            if (!data.violations.isEmpty()) continue;
+            data.groups.add(new ElectiveGroup(
+                groupId, text(node, "name", groupId), text(node, "subjectId", ""), weekly, groupClasses, blocks
+            ));
         }
         for (JsonNode node : root.path("rules")) {
             if (!node.path("enabled").asBoolean(true)) continue;
@@ -116,12 +160,25 @@ public final class SolverProtocol {
                 data.violations.add("锁定课程 " + entry.id() + " 引用了不存在的教学计划");
                 continue;
             }
-            entry = new Entry(entry.id(), plan.id(), plan.classId(), plan.subjectId(), plan.teacherId(), entry.roomId(), entry.slotId(), "MANUAL", true);
+            entry = new Entry(entry.id(), plan.id(), plan.classId(), plan.subjectId(), plan.teacherId(), entry.roomId(), entry.slotId(), plan.weeks(), "MANUAL", true);
             if (!data.slots.containsKey(entry.slotId()) || !data.rooms.containsKey(entry.roomId())) {
                 data.violations.add("锁定课程 " + entry.id() + " 引用了不存在的时间或教室");
                 continue;
             }
             data.locked.add(entry);
+        }
+        // Resume checkpoint: keep the lessons where they are but let repair move
+        // them again. Invalid seeds are dropped, not fatal — the job continues.
+        for (JsonNode node : root.path("seedEntries")) {
+            String planId = text(node, "coursePlanId", "");
+            Plan plan = data.plans.stream().filter(p -> p.id().equals(planId)).findFirst().orElse(null);
+            if (plan == null) continue;
+            Entry entry = new Entry(
+                text(node, "id", ""), plan.id(), plan.classId(), plan.subjectId(), plan.teacherId(),
+                text(node, "roomId", ""), text(node, "slotId", ""), plan.weeks(), "AUTO", false
+            );
+            if (!data.slots.containsKey(entry.slotId()) || !data.rooms.containsKey(entry.roomId())) continue;
+            data.seed.add(entry);
         }
         return data;
     }
@@ -149,6 +206,9 @@ public final class SolverProtocol {
             item.put("teacherId", entry.teacherId());
             item.put("roomId", entry.roomId());
             item.put("slotId", entry.slotId());
+            item.put("weeks", entry.weeks());
+            if (entry.groupId() != null) item.put("groupId", entry.groupId());
+            if (entry.blockId() != null) item.put("blockId", entry.blockId());
             item.put("source", entry.source());
             item.put("locked", entry.locked());
         }
@@ -187,3 +247,6 @@ public final class SolverProtocol {
         return result;
     }
 }
+
+
+
