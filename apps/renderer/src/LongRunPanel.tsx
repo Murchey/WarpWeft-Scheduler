@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   cancelLongJob,
   deleteLongJob,
@@ -61,6 +61,7 @@ export function LongRunPanel({
   showStartControls = true,
   onRegisterStart,
   onActiveChange,
+  onJobsChange,
 }: {
   inputFactory: (seconds: number) => SolverInput;
   onApplyResult: (job: LongJobDetail) => void;
@@ -72,6 +73,7 @@ export function LongRunPanel({
   showStartControls?: boolean;
   onRegisterStart?: (start: () => Promise<void>) => void;
   onActiveChange?: (active: boolean) => void;
+  onJobsChange?: (jobs: LongJob[]) => void;
 }) {
   const [job, setJob] = useState<LongJobDetail | null>(null);
   const [jobs, setJobs] = useState<LongJob[]>([]);
@@ -207,6 +209,9 @@ export function LongRunPanel({
   useEffect(() => {
     onActiveChange?.(Boolean(job && (job.status === 'queued' || job.status === 'running')));
   }, [job?.status, onActiveChange]);
+  useEffect(() => {
+    onJobsChange?.(jobs);
+  }, [jobs, onJobsChange]);
 
   const restartWithCurrentData = () =>
     withBusy('restart', async () => {
@@ -441,6 +446,7 @@ export function LongRunPanel({
     </section>
   );
 }
+
 
 
 
