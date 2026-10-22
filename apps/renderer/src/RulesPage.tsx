@@ -9,7 +9,6 @@ import {
   describeRule,
   findRuleConflicts,
   ruleImpact,
-  parseRuleText,
   ruleWarnings,
   scopeLabel,
   timeLabel,
@@ -30,8 +29,6 @@ function RulesPage({
   const [filter, setFilter] = useState<'all' | 'teacher' | 'subject' | 'structure'>('all');
   const [draft, setDraft] = useState<RuleInstance | null>(null);
   const [simulating, setSimulating] = useState('');
-  const [nlText, setNlText] = useState('');
-  const [nlError, setNlError] = useState('');
   const [simulations, setSimulations] = useState<Record<string, string>>({});
   const saveRules = (next: RuleInstance[]) => {
     commit({ ...data, rules: next }, { invalidate: true });
@@ -51,16 +48,6 @@ function RulesPage({
     }
     setError('');
     setDraft(createRule(data, kind));
-  };
-  const parseSentence = () => {
-    const parsed = parseRuleText(nlText, data);
-    if (parsed.error || !parsed.rule) {
-      setNlError(parsed.error ?? '无法解析这条规则');
-      return;
-    }
-    setNlError('');
-    setNlText('');
-    setDraft(parsed.rule);
   };
   const saveDraft = (next: RuleInstance) => {
     const exists = rules.some((rule) => rule.id === next.id);
@@ -119,14 +106,6 @@ function RulesPage({
               </button>
             ))}
           </div>
-          <div className="rules-add">
-            <span>新建规则</span>
-            {availableKinds.map((definition) => (
-              <button key={definition.kind} type="button" className="rules-add-button" onClick={() => openNew(definition.kind)}>
-                + {definition.label}
-              </button>
-            ))}
-          </div>
         </div>
       </section>
 
@@ -141,14 +120,27 @@ function RulesPage({
         </section>
       ) : null}
 
-      <section className="section-panel rules-nl">
-        <div className="rules-nl-head"><div><span className="kicker">// NATURAL LANGUAGE</span><h3>用一句话添加规则</h3></div><span className="status-tag muted">先解析，再确认</span></div>
-        <div className="rules-nl-row">
-          <input value={nlText} onChange={(event) => setNlText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') parseSentence(); }} placeholder="例如：数学每天不超过2节，尽量上午" />
-          <button type="button" className="action-button" onClick={parseSentence}>解析规则</button>
+      <section className="section-panel rules-create">
+        <div className="rules-create-head">
+          <div>
+            <span className="kicker">// CREATE RULE</span>
+            <h3>新建规则</h3>
+            <p>先选规则类型，再设置对象、条件和“必须 / 尽量 / 避免”。系统硬规则已由求解器自动保证。</p>
+          </div>
+          <span className="status-tag">{availableKinds.length} 种可用</span>
         </div>
-        <p className="panel-note">支持：学科每日上限、学科时间偏好、避开首末节、学科分散、教师每日上限、教师连续上限、教师半天无课。解析后会在构建器中预览，不会直接保存。</p>
-        {nlError ? <p className="rules-nl-error">{nlError}</p> : null}
+        <div className="rules-create-grid">
+          {availableKinds.map((definition) => (
+            <button key={definition.kind} type="button" className="rules-create-card" onClick={() => openNew(definition.kind)}>
+              <span className="rules-create-cat">
+                {definition.category === 'teacher' ? '教师' : definition.category === 'subject' ? '课程' : '结构'}
+              </span>
+              <b>{definition.label}</b>
+              <small>{definition.description}</small>
+              <em>+ 新建</em>
+            </button>
+          ))}
+        </div>
       </section>
 
       {visible.length === 0 ? (
@@ -343,3 +335,4 @@ function RuleBuilder({
 }
 
 export { RulesPage };
+

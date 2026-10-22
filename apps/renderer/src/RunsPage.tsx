@@ -21,6 +21,7 @@ export function RunsPage({ data, result, issues, running, progress, timeLimit, s
   const missing = result ? missingPlans(data, result) : [];
   const [repairScope, setRepairScope] = useState<'class' | 'teacher' | 'rule'>('class');
   const [repairId, setRepairId] = useState(data.classes[0]?.id ?? '');
+  const [computeMode, setComputeMode] = useState<'short' | 'long'>('short');
   const repairEntities = repairScope === 'class' ? data.classes : repairScope === 'teacher' ? data.teachers : (data.rules ?? []).map((rule) => ({ id: rule.id, name: describeRule(rule, data) }));
   const currentRepairId = repairEntities.some((item) => item.id === repairId) ? repairId : (repairEntities[0]?.id ?? '');
   const checked = issues.length === 0;
@@ -49,16 +50,53 @@ export function RunsPage({ data, result, issues, running, progress, timeLimit, s
           </>
         )}
       </section>
-      <section className={'section-panel wizard-card ' + (!checked ? 'wizard-locked' : '')}><div className="wizard-card-head"><span className="wizard-number">03</span><div><span className="kicker">SOLVER SETTINGS</span><h2>计算设置</h2></div><span className="status-tag">{checked ? '已就绪' : '待检查'}</span></div>{!checked ? <p className="panel-note">完成数据检查后配置计算时限。</p> : <><div className="run-controls"><label>计算时限<select value={timeLimit} disabled={!canConfigure} onChange={(event) => setTimeLimit(Number(event.target.value))}><option value={10}>10 秒</option><option value={30}>30 秒</option><option value={60}>60 秒</option><option value={120}>120 秒</option></select></label></div>{expected > 400 ? <p className="panel-note">本次 {expected} 课时，建议选 60–120 秒：时限越长，求解器会继续尝试更多随机起点；若仍差几节，多半是教室/体育馆等资源接近上限，需要增加资源或放宽规则。</p> : null}<div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div></>}</section>
-      <section className={'section-panel wizard-card wizard-final ' + (!checked ? 'wizard-locked' : '')}><div className="wizard-card-head"><span className="wizard-number">04</span><div><span className="kicker">RUN SCHEDULE</span><h2>开始排课</h2></div><span className={result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{result ? result.status : '尚未运行'}</span></div>{result && lockedCount > 0 ? <p className="panel-note">本次重新排课将保留 {lockedCount} 条锁定课程的位置。</p> : <p className="panel-note">确认前面三步后，开始生成候选课表。</p>}<button className="action-button wizard-run-button" onClick={onRun} disabled={!checked || running}>{running ? '正在计算…' : result ? '确认配置并重新排课' : '确认配置并开始排课'} <span>↗</span></button></section>
+      <section className={'section-panel wizard-card ' + (!checked ? 'wizard-locked' : '')}>
+        <div className="wizard-card-head"><span className="wizard-number">03</span><div><span className="kicker">SOLVER SETTINGS</span><h2>计算设置</h2></div><span className="status-tag">{!checked ? '待检查' : computeMode === 'long' ? '长时任务' : '已就绪'}</span></div>
+        {!checked ? <p className="panel-note">完成数据检查后配置计算方式。</p> : (
+          <>
+            <div className="compute-mode" role="group" aria-label="运行方式">
+              <button type="button" className={computeMode === 'short' ? 'active' : ''} onClick={() => setComputeMode('short')} aria-pressed={computeMode === 'short'}>
+                短时计算
+              </button>
+              <button type="button" className={computeMode === 'long' ? 'active' : ''} onClick={() => setComputeMode('long')} aria-pressed={computeMode === 'long'}>
+                长时任务
+              </button>
+            </div>
+            {computeMode === 'short' ? (
+              <>
+                <div className="run-controls"><label>计算时限<select value={timeLimit} disabled={!canConfigure} onChange={(event) => setTimeLimit(Number(event.target.value))}><option value={10}>10 秒</option><option value={30}>30 秒</option><option value={60}>60 秒</option><option value={120}>120 秒</option></select></label></div>
+                {expected > 400 ? <p className="panel-note">本次 {expected} 课时，建议选 60–120 秒：时限越长，求解器会继续尝试更多随机起点；若仍差几节，多半是教室/体育馆等资源接近上限，需要增加资源或放宽规则。</p> : null}
+                <div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div>
+              </>
+            ) : (
+              <>
+                <p className="panel-note">长时任务在后台持续优化，可暂停/继续；检查点会写入服务端，关闭页面或刷新后仍可接续。适合 120+ 班级或资源紧张、短时算不完的数据。同一时间只允许一个长时任务。</p>
+                <LongRunPanel
+                  inputFactory={inputFactory}
+                  onApplyResult={onApplyLongResult}
+                  onNotice={onNotice}
+                  onError={onError}
+                  disabled={!checked || running}
+                />
+              </>
+            )}
+          </>
+        )}
+      </section>
+      <section className={'section-panel wizard-card wizard-final ' + (!checked ? 'wizard-locked' : '')}>
+        <div className="wizard-card-head"><span className="wizard-number">04</span><div><span className="kicker">RUN SCHEDULE</span><h2>开始排课</h2></div><span className={computeMode === 'long' ? 'status-tag' : result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{computeMode === 'long' ? '长时任务' : result ? result.status : '尚未运行'}</span></div>
+        {computeMode === 'long' ? (
+          <p className="panel-note">当前为长时任务模式：请在「计算设置」中启动、暂停或继续；完成后用「载入最佳课表」写入候选。短时按钮已停用，避免重复计算。</p>
+        ) : result && lockedCount > 0 ? (
+          <p className="panel-note">本次重新排课将保留 {lockedCount} 条锁定课程的位置。</p>
+        ) : (
+          <p className="panel-note">确认前面三步后，开始生成候选课表。</p>
+        )}
+        <button className="action-button wizard-run-button" onClick={onRun} disabled={!checked || running || computeMode === 'long'}>
+          {computeMode === 'long' ? '长时任务请在计算设置中启动' : running ? '正在计算…' : result ? '确认配置并重新排课' : '确认配置并开始排课'} <span>↗</span>
+        </button>
+      </section>
     </div>
-    <LongRunPanel
-      inputFactory={inputFactory}
-      onApplyResult={onApplyLongResult}
-      onNotice={onNotice}
-      onError={onError}
-      disabled={!checked || running}
-    />
     <section className="section-panel candidate-panel"><div className="panel-head"><SectionHeading english="CURRENT CANDIDATE" title="当前候选" /><span className={result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{result?.status ?? '尚未生成'}</span></div>{result ? <div className="result-summary"><div className="summary-grid"><div><span>已排课时</span><b>{result.entries.length}</b></div><div><span>计划课时</span><b>{expected}</b></div><div><span>未排课时</span><b>{Math.max(0, expected - result.entries.length)}</b></div><div><span>耗时</span><b>{result.elapsedMs} ms</b></div></div><p className="panel-note">{result.explanation || '求解器没有返回说明。'}</p>{result.hardConstraintViolations.length ? <ul className="issue-list">{result.hardConstraintViolations.map((item) => <li key={item}>{item}</li>)}</ul> : null}{missing.length ? <MissingReasons data={data} missing={missing} /> : null}{result && result.entries.length > 0 ? (
                 <div className="repair-controls">
                   <div><span className="kicker">// LOCAL REPAIR</span><b>局部重排</b><small>只重排所选范围，其他课程保持当前位置。</small></div>
@@ -78,3 +116,4 @@ export function RunsPage({ data, result, issues, running, progress, timeLimit, s
               <div className="hero-actions"><button className="action-button" onClick={onTimetable}>查看并调整课表 <span>→</span></button><button className="ghost-button" onClick={onClear}>清空候选</button></div></div> : <EmptyState title="尚未生成候选课表" message="完成向导后，候选课表会显示在这里。" />}</section>
   </div>;
 }
+

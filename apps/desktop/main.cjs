@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+﻿const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { startApi } = require('./api.cjs');
@@ -22,7 +22,7 @@ function startLocalApi() {
   return instance;
 }
 
-ipcMain.handle('warpweft:save-export', async (_event, payload) => {
+ipcMain.handle('warpweft:save-export', async (event, payload) => {
   const rawName = String(payload?.filename || 'warpweft-export');
   const filename = path
     .basename(rawName)
@@ -34,19 +34,44 @@ ipcMain.handle('warpweft:save-export', async (_event, payload) => {
   } else if (ArrayBuffer.isView(data)) {
     buffer = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
   } else {
-    throw new Error('导出数据格式无效');
+    return { status: 'failed', error: '导出数据格式无效' };
   }
-  if (buffer.length > 50 * 1024 * 1024) throw new Error('导出文件过大');
-  const downloads = app.getPath('downloads');
-  fs.mkdirSync(downloads, { recursive: true });
-  let target = path.join(downloads, filename);
-  if (fs.existsSync(target)) {
-    const extension = path.extname(filename);
-    const base = path.basename(filename, extension);
-    target = path.join(downloads, base + '-' + Date.now() + extension);
+  if (buffer.length > 50 * 1024 * 1024) return { status: 'failed', error: '导出文件过大' };
+  if (buffer.length === 0) return { status: 'failed', error: '导出内容为空' };
+
+  const extension = path.extname(filename).toLowerCase();
+  const filters =
+    extension === '.csv'
+      ? [{ name: 'CSV 文件', extensions: ['csv'] }]
+      : extension === '.xlsx'
+        ? [{ name: 'Excel 工作簿', extensions: ['xlsx'] }]
+        : [];
+  const options = {
+    title: '保存导出文件',
+    defaultPath: path.join(app.getPath('downloads'), filename),
+    filters,
+  };
+  const window = BrowserWindow.fromWebContents(event.sender);
+  const chosen = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options);
+  if (chosen.canceled || !chosen.filePath) return { status: 'canceled' };
+  try {
+    fs.mkdirSync(path.dirname(chosen.filePath), { recursive: true });
+    fs.writeFileSync(chosen.filePath, buffer);
+    return { status: 'saved', path: chosen.filePath };
+  } catch (error) {
+    return { status: 'failed', error: error.message };
   }
-  fs.writeFileSync(target, buffer);
-  return target;
+});
+
+ipcMain.handle('warpweft:show-item', async (_event, target) => {
+  if (typeof target !== 'string' || !target.trim()) return { ok: false, error: '没有文件路径' };
+  try {
+    if (!fs.existsSync(target)) return { ok: false, error: '文件不存在：' + target };
+    shell.showItemInFolder(target);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
 });
 
 function createWindow() {

@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   cancelLongJob,
   fetchLongJob,
+  fetchLongJobByUuid,
   fetchLongJobs,
+  getApiBase,
   pauseLongJob,
   resumeLongJob,
   startLongJob,
@@ -10,6 +12,7 @@ import {
 import type { LongJob, LongJobDetail } from './api';
 import type { SolverInput } from './types';
 import { SectionHeading } from './components';
+import { latestTaskForEndpoint, newTaskUuid, rememberTask, snapshotIdOf } from './taskIndex';
 
 const STATUS_LABELS: Record<string, string> = {
   queued: '排队中',
@@ -81,6 +84,21 @@ export function LongRunPanel({
     try {
       const detail = await fetchLongJob(id);
       setJob(detail);
+      // Adopt a task created elsewhere (or before the local index existed) so
+      // the next reload can find it by UUID instead of "latest job on server".
+      if (detail.taskUuid) {
+        const endpoint = getApiBase();
+        const stored = latestTaskForEndpoint(window.localStorage, endpoint);
+        if (stored?.jobId !== detail.id) {
+          rememberTask(window.localStorage, {
+            taskUuid: detail.taskUuid,
+            jobId: detail.id,
+            snapshotId: detail.snapshotId ?? '',
+            endpoint,
+            submittedAt: detail.createdAt,
+          });
+        }
+      }
       return detail;
     } catch (cause) {
       setPanelError(cause instanceof Error ? cause.message : String(cause));
@@ -91,6 +109,22 @@ export function LongRunPanel({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      // Prefer the task this browser remembered for the current server. This is
+      // what makes "close the page, come back later" find the same task even if
+      // other computers created newer jobs in the meantime.
+      const stored = latestTaskForEndpoint(window.localStorage, getApiBase());
+      if (stored) {
+        try {
+          const detail = await fetchLongJobByUuid(stored.taskUuid);
+          if (!cancelled) {
+            setJob(detail);
+            await refreshList();
+          }
+          return;
+        } catch {
+          // Task was cleaned up or belongs to another client: fall back to the list.
+        }
+      }
       const list = await refreshList();
       if (cancelled || list.length === 0) return;
       const latest = list[0];
@@ -130,8 +164,24 @@ export function LongRunPanel({
   const start = () =>
     withBusy('start', async () => {
       try {
-        const created = await startLongJob(inputFactory(seconds));
-        onNotice('长时任务已启动：' + created.job.id + '（时限 ' + formatElapsed(seconds * 1000) + '）');
+        const input = inputFactory(seconds);
+        const taskUuid = newTaskUuid();
+        const snapshotId = snapshotIdOf(input);
+        const created = await startLongJob(input, taskUuid, snapshotId);
+        rememberTask(window.localStorage, {
+          taskUuid,
+          jobId: created.job.id,
+          snapshotId,
+          endpoint: getApiBase(),
+          submittedAt: new Date().toISOString(),
+        });
+        onNotice(
+          (created.reused ? '已恢复同一任务：' : '长时任务已启动：') +
+            created.job.id +
+            '（时限 ' +
+            formatElapsed(seconds * 1000) +
+            '）',
+        );
         await refreshList();
         await loadJob(created.job.id);
       } catch (cause) {
@@ -178,6 +228,25 @@ export function LongRunPanel({
 
   const activeStatus = job?.status ?? '';
   const isRunning = activeStatus === 'running';
+
+  const applyBest = () => {
+    if (!job) return;
+    let changed = false;
+    try {
+      const current = inputFactory(job.timeLimitSeconds || 3600);
+      const summary = job.inputSummary;
+      changed =
+        summary.plans !== (current.coursePlans?.length ?? 0) ||
+        summary.timeSlots !== (current.timeSlots?.length ?? 0) ||
+        summary.classes !== (current.classes?.length ?? 0) ||
+        summary.teachers !== (current.teachers?.length ?? 0) ||
+        summary.rooms !== (current.rooms?.length ?? 0);
+    } catch {
+      changed = false;
+    }
+    if (changed && !window.confirm('该长时任务基于较早的工作区数据（班级/教师/计划数量已变化）。仍要载入它的最佳课表吗？')) return;
+    onApplyResult(job);
+  };
 
   return (
     <section className="section-panel long-run">
@@ -262,7 +331,7 @@ export function LongRunPanel({
                 {busy === 'resume' ? '启动中…' : '继续计算'}
               </button>
             ) : null}
-            <button className="action-button" onClick={() => onApplyResult(job)} disabled={job.bestEntries.length === 0}>
+            <button className="action-button" onClick={applyBest} disabled={job.bestEntries.length === 0}>
               载入最佳课表 <span>→</span>
             </button>
             {isRunning || job.status === 'paused' ? (
@@ -278,3 +347,5 @@ export function LongRunPanel({
     </section>
   );
 }
+
+

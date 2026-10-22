@@ -1,8 +1,12 @@
 ﻿import React, { useState } from 'react';
 import type { Commit, CoursePlan, SchoolData } from './types';
 import { SectionHeading } from './components';
+import type { Column } from './components';
+import { ResourceWorkspace } from './ResourceWorkspace';
 import { PlanComposer } from './PlanComposer';
 import { uid } from './utils';
+
+const PLAN_PREVIEW = 8;
 
 function PlansPage({
   data,
@@ -15,6 +19,7 @@ function PlansPage({
 }) {
   const roomTypes = Array.from(new Set(data.rooms.map((room) => room.type).filter(Boolean)));
   const [composerOpen, setComposerOpen] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const total = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
   const update = (id: string, patch: Partial<CoursePlan>) => {
     const plans = data.coursePlans.map((plan) => (plan.id === id ? { ...plan, ...patch } : plan));
@@ -24,13 +29,75 @@ function PlansPage({
     if (!window.confirm('删除这条教学计划？相关候选课表会被清空。')) return;
     commit({ ...data, coursePlans: data.coursePlans.filter((plan) => plan.id !== id) }, { invalidate: true });
   };
+  const removeMany = (ids: string[]) => {
+    const selected = new Set(ids);
+    commit({ ...data, coursePlans: data.coursePlans.filter((plan) => !selected.has(plan.id)) }, { invalidate: true, immediate: true });
+  };
+  const batchEdit = (ids: string[], key: string, value: string | number) => {
+    const selected = new Set(ids);
+    const plans = data.coursePlans.map((plan) =>
+      selected.has(plan.id) ? ({ ...plan, [key]: value } as CoursePlan) : plan,
+    );
+    commit({ ...data, coursePlans: plans }, { invalidate: true, immediate: true });
+  };
+  const planColumns: Column<CoursePlan>[] = [
+    { key: 'classId', label: '班级', type: 'select', options: data.classes.map((item) => ({ value: item.id, label: item.name })) },
+    { key: 'subjectId', label: '学科', type: 'select', options: data.subjects.map((item) => ({ value: item.id, label: item.name })) },
+    { key: 'teacherId', label: '教师', type: 'select', options: data.teachers.map((item) => ({ value: item.id, label: item.name })) },
+    { key: 'weeklyPeriods', label: '周课时', type: 'number', width: '9%' },
+    {
+      key: 'weeks',
+      label: '周次',
+      type: 'select',
+      width: '10%',
+      defaultValue: 'all',
+      options: [
+        { value: 'all', label: '每周' },
+        { value: 'odd', label: '单周' },
+        { value: 'even', label: '双周' },
+      ],
+    },
+    {
+      key: 'kind',
+      label: '时段类型',
+      type: 'select',
+      width: '12%',
+      defaultValue: 'regular',
+      options: [
+        { value: 'regular', label: '常规' },
+        { value: 'morning', label: '早读' },
+        { value: 'evening', label: '晚自习' },
+        { value: 'makeup', label: '补课' },
+      ],
+    },
+    { key: 'roomType', label: '教室类型', width: '12%' },
+    {
+      key: 'fixedSlotId',
+      label: '固定时间',
+      type: 'select',
+      width: '14%',
+      defaultValue: '',
+      options: [{ value: '', label: '不固定' }, ...data.timeSlots.map((slot) => ({ value: slot.id, label: slot.label }))],
+    },
+  ];
+  const planLabel = (plan: CoursePlan) => {
+    const klass = data.classes.find((item) => item.id === plan.classId)?.name ?? '';
+    const subject = data.subjects.find((item) => item.id === plan.subjectId)?.name ?? '';
+    const teacher = data.teachers.find((item) => item.id === plan.teacherId)?.name ?? '';
+    return [klass, subject, teacher, plan.roomType ?? ''].join(' ');
+  };
   return (
     <section className="section-panel table-panel">
       <div className="panel-head">
         <SectionHeading english="COURSE PLAN REGISTER" title="教学计划" />
-        <button className="mini-button" onClick={() => { if (!data.classes.length) { setError('请先添加至少一个班级'); return; } setError(''); setComposerOpen(true); }}>
-          + 批量新增
-        </button>
+        <div className="panel-head-actions">
+          <button className="ghost-button" onClick={() => setWorkspaceOpen(true)}>
+            查看全部（{data.coursePlans.length}）
+          </button>
+          <button className="mini-button" onClick={() => { if (!data.classes.length) { setError('请先添加至少一个班级'); return; } setError(''); setComposerOpen(true); }}>
+            + 批量新增
+          </button>
+        </div>
       </div>
       <datalist id="plan-room-types">{roomTypes.map((type) => <option key={type} value={type} />)}</datalist>
       <div className="plan-summary">
@@ -67,7 +134,7 @@ function PlansPage({
                 </td>
               </tr>
             ) : (
-              data.coursePlans.map((plan) => (
+              data.coursePlans.slice(0, PLAN_PREVIEW).map((plan) => (
                 <tr key={plan.id}>
                   <td>
                     <select value={plan.classId} onChange={(event) => update(plan.id, { classId: event.target.value })}>
@@ -145,7 +212,47 @@ function PlansPage({
       </div>
       <p className="panel-note">
         固定时间会优先占用指定时间格；「单周 / 双周」计划只在对应周次上课，可以和另一周次的课程共用同一时段。修改教学计划会清空候选课表，避免旧课表与新计划混用。
+        {data.coursePlans.length > PLAN_PREVIEW ? ' 当前只显示前 ' + PLAN_PREVIEW + ' 条，点击「查看全部」进入完整列表与批量操作。' : ''}
       </p>
+      {workspaceOpen ? (
+        <ResourceWorkspace<CoursePlan>
+          title="教学计划"
+          english="COURSE PLAN REGISTER"
+          rows={data.coursePlans}
+          columns={planColumns}
+          batchFields={[
+            { key: 'teacherId', label: '教师', type: 'select', options: data.teachers.map((item) => ({ value: item.id, label: item.name })) },
+            { key: 'weeklyPeriods', label: '周课时', type: 'number', placeholder: '如 3' },
+            {
+              key: 'weeks',
+              label: '周次',
+              type: 'select',
+              options: [
+                { value: 'all', label: '每周' },
+                { value: 'odd', label: '单周' },
+                { value: 'even', label: '双周' },
+              ],
+            },
+            {
+              key: 'kind',
+              label: '时段类型',
+              type: 'select',
+              options: [
+                { value: 'regular', label: '常规' },
+                { value: 'morning', label: '早读' },
+                { value: 'evening', label: '晚自习' },
+                { value: 'makeup', label: '补课' },
+              ],
+            },
+          ]}
+          searchText={planLabel}
+          onChange={(id, key, value) => update(id, { [key]: value } as Partial<CoursePlan>)}
+          onBatchEdit={batchEdit}
+          onRemoveMany={removeMany}
+          onClose={() => setWorkspaceOpen(false)}
+          note="批量修改教师/周课时/周次/时段类型会清空候选课表；删除同样会失效候选。"
+        />
+      ) : null}
       {composerOpen ? <PlanComposer data={data} commit={commit} setError={setError} onClose={() => setComposerOpen(false)} /> : null}
     </section>
   );
@@ -153,4 +260,5 @@ function PlansPage({
 
 
 export { PlansPage };
+
 

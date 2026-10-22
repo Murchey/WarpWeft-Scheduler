@@ -8,7 +8,7 @@ import {
 import type { AdjustmentEntry, LessonLog, LessonStatus } from '../../../packages/adjustments/src';
 import type { Commit, SchoolData } from './types';
 import { SectionHeading } from './components';
-import { download } from './download';
+import { download, exportMessage } from './download';
 import { exportCsv } from '../../../packages/import-export/src';
 import { messageOf } from './utils';
 import { findSubject, findTeacher } from './selectors';
@@ -85,8 +85,11 @@ export function LessonLogPanel({
         备注: log.note ?? '',
       }));
       const csv = exportCsv(rows);
-      const saved = await download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), 'text/csv', 'warpweft-lessons-' + date + '.csv');
-      setNotice(saved ? '上课记录已导出到 ' + saved : '上课记录已开始下载');
+      const result = await download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), 'text/csv', 'warpweft-lessons-' + date + '.csv');
+      const message = exportMessage(result, '上课记录');
+      if (!message) return;
+      if (message.tone === 'error') setError(message.text);
+      else setNotice(message.text);
     } catch (cause) {
       setError('导出上课记录失败：' + messageOf(cause));
     }
@@ -195,4 +198,5 @@ export function LessonLogPanel({
     </section>
   );
 }
+
 

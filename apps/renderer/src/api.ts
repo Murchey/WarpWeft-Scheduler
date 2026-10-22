@@ -405,6 +405,8 @@ export interface LongJob {
   error: string | null;
   hasFeasibleSolution: boolean;
   canResume: boolean;
+  taskUuid?: string | null;
+  snapshotId?: string | null;
 }
 
 export interface LongJobDetail extends LongJob {
@@ -420,8 +422,8 @@ export interface LongJobDetail extends LongJob {
   };
 }
 
-export async function startLongJob(input: SolverInput): Promise<{ job: LongJob }> {
-  return sendJson<{ job: LongJob }>('/api/solve/long', 'POST', input, 20000);
+export async function startLongJob(input: SolverInput, taskUuid?: string, snapshotId?: string): Promise<{ job: LongJob; reused?: boolean }> {
+  return sendJson<{ job: LongJob; reused?: boolean }>('/api/solve/long', 'POST', { ...input, taskUuid, snapshotId }, 20000);
 }
 
 export async function fetchLongJobs(): Promise<{ jobs: LongJob[]; running: string | null }> {
@@ -430,6 +432,10 @@ export async function fetchLongJobs(): Promise<{ jobs: LongJob[]; running: strin
 
 export async function fetchLongJob(id: string): Promise<LongJobDetail> {
   return getJson<LongJobDetail>('/api/solve/jobs/' + encodeURIComponent(id));
+}
+
+export async function fetchLongJobByUuid(taskUuid: string): Promise<LongJobDetail> {
+  return getJson<LongJobDetail>('/api/solve/jobs/by-uuid/' + encodeURIComponent(taskUuid));
 }
 
 export async function pauseLongJob(id: string): Promise<{ job: LongJob }> {

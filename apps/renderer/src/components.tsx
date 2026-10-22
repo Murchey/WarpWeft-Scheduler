@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 
 export const DAYS = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
@@ -30,6 +30,8 @@ function EditableTable<T extends { id: string }>({
   onRemove,
   addLabel,
   note,
+  previewCount,
+  onOpenAll,
 }: {
   title: string;
   english: string;
@@ -40,14 +42,25 @@ function EditableTable<T extends { id: string }>({
   onRemove: (id: string) => void;
   addLabel: string;
   note?: string;
+  /** Show only this many rows in the outer panel; the rest live in the workspace. */
+  previewCount?: number;
+  onOpenAll?: () => void;
 }) {
+  const visibleRows = previewCount === undefined ? rows : rows.slice(0, Math.max(0, previewCount));
   return (
     <section className="section-panel resource-panel">
       <div className="panel-head">
         <SectionHeading english={english} title={title} />
-        <button className="mini-button" onClick={onAdd}>
-          + {addLabel}
-        </button>
+        <div className="panel-head-actions">
+          {onOpenAll ? (
+            <button className="ghost-button" onClick={onOpenAll}>
+              查看全部（{rows.length}）
+            </button>
+          ) : null}
+          <button className="mini-button" onClick={onAdd}>
+            + {addLabel}
+          </button>
+        </div>
       </div>
       <div className="table-scroll">
         <table className="data-table">
@@ -69,7 +82,7 @@ function EditableTable<T extends { id: string }>({
                 </td>
               </tr>
             ) : (
-              rows.map((row) => (
+              visibleRows.map((row) => (
                 <tr key={row.id}>
                   {columns.map((column) => (
                     <td key={column.key}>

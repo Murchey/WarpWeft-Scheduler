@@ -14,7 +14,7 @@ import type { Adjustment, AdjustmentDraft, AdjustmentEntry, AdjustmentType } fro
 import type { Commit, ScheduleEntry, SchoolData } from './types';
 import { EmptyState } from './runViews';
 import { SectionHeading } from './components';
-import { download } from './download';
+import { download, exportMessage } from './download';
 import { LessonLogPanel } from './LessonLogPanel';
 import { messageOf, todayLocal, uid } from './utils';
 import { findRoom, findTeacher, planOf, planSubjectName } from './selectors';
@@ -51,6 +51,8 @@ export function AdjustmentsPage({
   const [targetSlotId, setTargetSlotId] = useState('');
   const [substituteTeacherId, setSubstituteTeacherId] = useState('');
   const [reason, setReason] = useState('');
+  const [dragEntryId, setDragEntryId] = useState('');
+  const [dropCell, setDropCell] = useState('');
 
   const result = data.candidate ?? data.published ?? null;
   const adjustments = data.adjustments ?? [];
@@ -71,6 +73,18 @@ export function AdjustmentsPage({
     [adjustments, date, selectedEntryId],
   );
   const hasCandidate = Boolean(result && result.entries.length > 0);
+  const dragEntry = dragEntryId ? (result?.entries ?? []).find((entry) => entry.id === dragEntryId) : undefined;
+  const dropValidation = (entryId: string, slotId: string) => {
+    if (!result) return { ok: false, errors: ['没有候选课表'] };
+    return validateAdjustment(
+      { ...data, entries: result.entries as AdjustmentEntry[] },
+      { date, type: 'move', originalEntryId: entryId, targetSlotId: slotId, reason, createdBy: operator },
+      adjustments,
+    );
+  };
+  const freeSlots = result && selected
+    ? daySlots.filter((slot) => slot.id !== selected.slotId && dropValidation(selected.id, slot.id).ok)
+    : [];
 
   const draft: AdjustmentDraft | null = selected
     ? {
@@ -148,6 +162,42 @@ export function AdjustmentsPage({
     setNotice('已记录：' + detail);
   };
 
+  const dropMove = (entryId: string, targetSlot: string) => {
+    if (!result) return;
+    const entry = baseOf(entryId);
+    if (!entry) return;
+    const check = dropValidation(entryId, targetSlot);
+    if (!check.ok) {
+      setError('不能移动到这里：' + check.errors.join('；'));
+      return;
+    }
+    const createdAt = new Date().toISOString();
+    const adjustment: Adjustment = {
+      id: uid('adjust'),
+      date,
+      type: 'move',
+      slotId: entry.slotId,
+      classId: entry.classId,
+      originalEntryId: entry.id,
+      targetSlotId: targetSlot,
+      createdBy: operator.trim() || undefined,
+      createdAt,
+      status: 'active',
+    };
+    const detail = describeAdjustment(adjustment, data) + ' · 操作人 ' + (adjustment.createdBy ?? '未填写');
+    commit(
+      {
+        ...data,
+        adjustments: [...adjustments, adjustment],
+        auditLog: [...(data.auditLog ?? []), { id: uid('audit'), at: createdAt, action: 'ADJUSTMENT', detail }],
+      },
+      { immediate: true },
+    );
+    setSelectedEntryId('');
+    setDragEntryId('');
+    setDropCell('');
+    setNotice('已记录：' + detail);
+  };
   const revoke = (adjustment: Adjustment) => {
     if (!window.confirm('撤销这条调整？撤销记录会保留在审计里。')) return;
     const at = new Date().toISOString();
@@ -197,14 +247,15 @@ export function AdjustmentsPage({
           { 项目: '导出时间', 值: new Date().toLocaleString('zh-CN') },
         ],
       });
-      const saved = await download(
-        new Blob([bytes.buffer as ArrayBuffer], {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }),
+      const exported = await download(
+        bytes,
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'warpweft-notice-' + date + '.xlsx',
       );
-      setNotice(saved ? '代课通知单已导出到 ' + saved : '代课通知单已开始下载');
+      const message = exportMessage(exported, '代课通知单');
+      if (!message) return;
+      if (message.tone === 'error') setError(message.text);
+      else setNotice(message.text);
     } catch (cause) {
       setError('导出通知单失败：' + messageOf(cause));
     }
@@ -225,8 +276,11 @@ export function AdjustmentsPage({
         记录时间: item.createdAt,
       }));
       const csv = exportCsv(rows);
-      const saved = await download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), 'text/csv', 'warpweft-adjustments-' + date + '.csv');
-      setNotice(saved ? '调整清单已导出到 ' + saved : '调整清单已开始下载');
+      const exported = await download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), 'text/csv', 'warpweft-adjustments-' + date + '.csv');
+      const message = exportMessage(exported, '调整清单');
+      if (!message) return;
+      if (message.tone === 'error') setError(message.text);
+      else setNotice(message.text);
     } catch (cause) {
       setError('导出调整清单失败：' + messageOf(cause));
     }
@@ -318,8 +372,32 @@ export function AdjustmentsPage({
                       <th className="adjust-period-cell">第{slot.period}节</th>
                       {data.classes.map((klass) => {
                         const slotEntries = effective.filter((entry) => entry.slotId === slot.id && entry.classId === klass.id);
+                        const cellKey = slot.id + '|' + klass.id;
+                        const dropHere = dragEntry && dragEntry.classId === klass.id && dragEntry.slotId !== slot.id
+                          ? dropValidation(dragEntry.id, slot.id)
+                          : null;
                         return (
-                          <td key={klass.id} className={slotEntries.length ? 'is-filled' : ''}>
+                          <td
+                            key={klass.id}
+                            className={
+                              (slotEntries.length ? ' is-filled' : '') +
+                              (dropCell === cellKey && dropHere ? (dropHere.ok ? ' is-drop-ok' : ' is-drop-bad') : '')
+                            }
+                            onDragOver={(event) => {
+                              if (!dragEntry || dragEntry.classId !== klass.id) return;
+                              event.preventDefault();
+                              setDropCell(cellKey);
+                            }}
+                            onDragLeave={() => setDropCell('')}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              const entryId = event.dataTransfer.getData('text/plain') || dragEntryId;
+                              if (!entryId) return;
+                              const entry = baseOf(entryId);
+                              if (!entry || entry.classId !== klass.id) return;
+                              dropMove(entryId, slot.id);
+                            }}
+                          >
                             {slotEntries.length === 0 ? (
                               <span className="adjust-empty">·</span>
                             ) : (
@@ -337,7 +415,19 @@ export function AdjustmentsPage({
                                       (adjustment ? ' is-adjusted' : '')
                                     }
                                     onClick={() => selectEntry(entry.id)}
-                                    title={adjustment ? describeAdjustment(adjustment, data) : '点击调整这节课程'}
+                                    draggable={Boolean(base)}
+                                    onDragStart={(event) => {
+                                      if (!base) return;
+                                      event.dataTransfer.effectAllowed = 'move';
+                                      event.dataTransfer.setData('text/plain', entry.id);
+                                      setDragEntryId(entry.id);
+                                      selectEntry(entry.id);
+                                    }}
+                                    onDragEnd={() => {
+                                      setDragEntryId('');
+                                      setDropCell('');
+                                    }}
+                                    title={adjustment ? describeAdjustment(adjustment, data) : '点击调整或拖动到同班其它节次'}
                                   >
                                     <b>{planSubjectName(data, plan)}</b>
                                     <small>{findTeacher(data, entry.teacherId)?.name ?? entry.teacherId} · {findRoom(data, entry.roomId)?.name ?? entry.roomId}</small>
@@ -397,15 +487,36 @@ export function AdjustmentsPage({
                     ))}
                   </div>
                   {draftType === 'move' ? (
-                    <label className="adjust-field">
-                      调到
-                      <select value={targetSlotId} onChange={(event) => setTargetSlotId(event.target.value)}>
-                        <option value="">选择目标时间</option>
-                        {daySlots.filter((slot) => slot.id !== selected.slotId).map((slot) => (
-                          <option key={slot.id} value={slot.id}>{slot.label}</option>
-                        ))}
-                      </select>
-                    </label>
+                    <>
+                      <label className="adjust-field">
+                        调到
+                        <select value={targetSlotId} onChange={(event) => setTargetSlotId(event.target.value)}>
+                          <option value="">选择目标时间</option>
+                          {daySlots.filter((slot) => slot.id !== selected.slotId).map((slot) => (
+                            <option key={slot.id} value={slot.id}>{slot.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="adjust-free">
+                        <span>当天空闲时段（{freeSlots.length}）</span>
+                        {freeSlots.length === 0 ? (
+                          <small>没有可移动的空闲时段，可直接拖到左侧课表试试。</small>
+                        ) : (
+                          <div className="adjust-free-list">
+                            {freeSlots.map((slot) => (
+                              <button
+                                key={slot.id}
+                                type="button"
+                                className={targetSlotId === slot.id ? 'active' : ''}
+                                onClick={() => setTargetSlotId(slot.id)}
+                              >
+                                {slot.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </>
                   ) : null}
                   {draftType === 'substitute' ? (
                     <label className="adjust-field">
@@ -493,5 +604,11 @@ export function AdjustmentsPage({
     </div>
   );
 }
+
+
+
+
+
+
 
 

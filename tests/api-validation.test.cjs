@@ -22,6 +22,23 @@ test('API accepts week parity plans and rejects unknown week types', () => {
   assert.match(validateData(data), /周次无效/);
 });
 
+test('API validates the semester date range', () => {
+  const data = {
+    classes: [{ id: 'c1' }], teachers: [{ id: 't1' }], subjects: [{ id: 's1' }],
+    rooms: [{ id: 'r1', capacity: 30 }], timeSlots: [{ id: 'slot-1', day: 1, period: 1 }],
+    coursePlans: [{ id: 'p1', classId: 'c1', teacherId: 't1', subjectId: 's1', weeklyPeriods: 1 }],
+  };
+  assert.equal(validateData(data), null);
+  data.semester = { startDate: '2026-09-01', endDate: '2027-01-18' };
+  assert.equal(validateData(data), null);
+  data.semester.startDate = '2026-9-1';
+  assert.match(validateData(data), /学期日期格式/);
+  data.semester = { startDate: '2026-02-30', endDate: '2026-03-01' };
+  assert.match(validateData(data), /学期日期格式/);
+  data.semester = { startDate: '2026-09-10', endDate: '2026-09-01' };
+  assert.match(validateData(data), /不能晚于/);
+});
+
 test('API validates slot kinds and start times', () => {
   const data = {
     classes: [{ id: 'c1' }], teachers: [{ id: 't1' }], subjects: [{ id: 's1' }],

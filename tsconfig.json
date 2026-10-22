@@ -8,7 +8,9 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["node", "react", "react-dom"]
   },
   "include": ["apps/renderer/src", "packages"]
 }
+

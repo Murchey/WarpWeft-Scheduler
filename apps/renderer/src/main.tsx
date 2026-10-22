@@ -7,7 +7,15 @@ import { ApiError, cancelServerJob, deleteServerClient, fetchServerOverview, loa
 import { DAYS, SectionHeading } from './components';
 import { PreparePage } from './PreparePage';
 import type { PrepareSection } from './PreparePage';
-import { download } from './download';
+import { download, exportMessage } from './download';
+import type { ExportResult } from './download';
+import { TimetableExportDialog } from './TimetableExportDialog';
+import { timetableFileName } from './timetableExport';
+import { loadTimetableTemplate } from './timetableTemplateLoader';
+import { fillTimetableTemplate } from './timetableTemplate';
+import type { TimetableExportSettings } from './timetableExport';
+import { checkMove, checkSwap } from './dnd';
+import { semesterWeeks } from '../../../packages/semester/src';
 import { messageOf, todayLocal, uid } from './utils';
 import { activeRules, describeRule, matchedPlans, unscheduledHints } from './rules';
 import { RUN_MODE_OPTIONS } from './runConfig';
@@ -275,7 +283,7 @@ function App() {
   const [tab, setTab] = useState<Tab>(
     normalizedTab && (TABS as readonly string[]).includes(normalizedTab) ? (normalizedTab as Tab) : '工作台',
   );
-  const validSections: PrepareSection[] = ['import', 'classes', 'teachers', 'subjects', 'rooms', 'timeSlots', 'plans', 'electives', 'availability', 'rules'];
+  const validSections: PrepareSection[] = ['import', 'classes', 'teachers', 'subjects', 'rooms', 'timeSlots', 'semester', 'plans', 'electives', 'availability', 'rules'];
   const requestedSection = params.get('section') as PrepareSection | null;
   const [prepareSection, setPrepareSection] = useState<PrepareSection>(
     requestedSection && validSections.includes(requestedSection)
@@ -318,6 +326,7 @@ function App() {
   const [view, setView] = useState<View>('class');
   const [entityId, setEntityId] = useState('');
   const [selectedEntryId, setSelectedEntryId] = useState('');
+  const [exportOpen, setExportOpen] = useState<null | 'export' | 'publish'>(null);
   const [history, setHistory] = useState<SolverOutput[]>([]);
   const [timeLimit, setTimeLimit] = useState(30);
   const saveTimer = useRef<number | null>(null);
@@ -501,14 +510,15 @@ function App() {
           占用率: ratio(row.ratio),
         })),
       });
-      const savedPath = await download(
-        new Blob([bytes.buffer as ArrayBuffer], {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }),
+      const result = await download(
+        bytes,
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'warpweft-inspection.xlsx',
       );
-      setNotice(savedPath ? '检测报告已导出到 ' + savedPath : '检测报告已开始下载，请查看系统下载目录');
+      const message = exportMessage(result, '检测报告');
+      if (!message) return;
+      if (message.tone === 'error') setError(message.text);
+      else setNotice(message.text);
     } catch (cause) {
       setError('导出检测报告失败：' + messageOf(cause));
     }
@@ -518,8 +528,11 @@ function App() {
     if (!report) return;
     try {
       const csv = exportCsv(reportRows(report));
-      const savedPath = await download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), 'text/csv', 'warpweft-inspection.csv');
-      setNotice(savedPath ? '检测 CSV 已导出到 ' + savedPath : '检测 CSV 已开始下载，请查看系统下载目录');
+      const result = await download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), 'text/csv', 'warpweft-inspection.csv');
+      const message = exportMessage(result, '检测 CSV');
+      if (!message) return;
+      if (message.tone === 'error') setError(message.text);
+      else setNotice(message.text);
     } catch (cause) {
       setError('导出检测 CSV 失败：' + messageOf(cause));
     }
@@ -587,14 +600,15 @@ function App() {
           备注: log.note ?? '',
         })),
       });
-      const savedPath = await download(
-        new Blob([bytes.buffer as ArrayBuffer], {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }),
+      const result = await download(
+        bytes,
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'warpweft-workload.xlsx',
       );
-      setNotice(savedPath ? '统计报表已导出到 ' + savedPath : '统计报表已开始下载，请查看系统下载目录');
+      const message = exportMessage(result, '统计报表');
+      if (!message) return;
+      if (message.tone === 'error') setError(message.text);
+      else setNotice(message.text);
     } catch (cause) {
       setError('导出统计报表失败：' + messageOf(cause));
     }
@@ -604,8 +618,11 @@ function App() {
     if (!stats) return;
     try {
       const csv = exportCsv(teacherRowsForExport(stats));
-      const savedPath = await download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), 'text/csv', 'warpweft-teacher-workload.csv');
-      setNotice(savedPath ? '教师周课时表已导出到 ' + savedPath : '教师周课时表已开始下载，请查看系统下载目录');
+      const result = await download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), 'text/csv', 'warpweft-teacher-workload.csv');
+      const message = exportMessage(result, '教师周课时表');
+      if (!message) return;
+      if (message.tone === 'error') setError(message.text);
+      else setNotice(message.text);
     } catch (cause) {
       setError('导出教师周课时表失败：' + messageOf(cause));
     }
@@ -840,6 +857,38 @@ function App() {
     applyResult(previous);
   };
 
+  const publishVersion = (settings: TimetableExportSettings, outcome: ExportResult) => {
+    if (!data || !result) return;
+    const createdAt = new Date().toISOString();
+    const version = {
+      id: uid('version'),
+      createdAt,
+      name: settings.title || '班级课表',
+      title: settings.title || '班级课表',
+      schoolName: settings.schoolName || data.school.name,
+      fileName: timetableFileName(data, settings),
+      filePath: outcome.path ?? null,
+      result,
+      note: '手动发布',
+    };
+    const audit = {
+      id: uid('audit'),
+      at: createdAt,
+      action: 'PUBLISH',
+      detail: `发布课表 ${version.id} · ${version.fileName}${version.filePath ? ' · ' + version.filePath : ''}`,
+    };
+    commit(
+      {
+        ...data,
+        published: result,
+        publishedVersions: [...(data.publishedVersions ?? []), version],
+        auditLog: [...(data.auditLog ?? []), audit],
+      },
+      { immediate: true },
+    );
+    setNotice('已发布正式版：' + version.fileName + (version.filePath ? '（' + version.filePath + '）' : ''));
+  };
+
   const publish = () => {
     if (!data || !result) return;
     if (report && !report.ok) {
@@ -853,10 +902,38 @@ function App() {
       setTab('课表检测');
       return;
     }
-    const version = { id: uid('version'), createdAt: new Date().toISOString(), result, note: '手动发布' };
-    const audit = { id: uid('audit'), at: version.createdAt, action: 'PUBLISH', detail: `发布课表 ${version.id}` };
-    commit({ ...data, published: result, publishedVersions: [...(data.publishedVersions ?? []), version], auditLog: [...(data.auditLog ?? []), audit] }, { immediate: true });
-    setNotice('当前候选课表已保存为正式版');
+    setExportOpen('publish');
+  };
+
+  const renameVersion = (id: string) => {
+    if (!data) return;
+    const current = (data.publishedVersions ?? []).find((version) => version.id === id);
+    if (!current) return;
+    const next = window.prompt('版本名称', current.name ?? current.title ?? '班级课表');
+    if (!next || !next.trim()) return;
+    commit({
+      ...data,
+      publishedVersions: (data.publishedVersions ?? []).map((version) => (version.id === id ? { ...version, name: next.trim() } : version)),
+    }, { immediate: true });
+    setNotice('版本名称已更新为「' + next.trim() + '」');
+  };
+
+  const revealVersion = async (path?: string | null) => {
+    if (!path) {
+      setError('该版本没有记录本地文件路径：浏览器下载由下载目录管理，桌面端保存时才会记录路径。');
+      return;
+    }
+    const bridge = (window as unknown as { warpweft?: { showItemInFolder?: (value: string) => void } }).warpweft;
+    if (bridge?.showItemInFolder) {
+      bridge.showItemInFolder(path);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(path);
+      setNotice('已复制文件路径：' + path);
+    } catch {
+      setNotice('文件路径：' + path);
+    }
   };
 
   const clearCandidate = () => {
@@ -875,36 +952,47 @@ function App() {
     if (!target) return;
     try {
       const csv = exportCsv(exportRows(data, target));
-      const savedPath = await download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), 'text/csv', 'warpweft-timetable.csv');
-      setNotice(savedPath ? 'CSV 已导出到 ' + savedPath : 'CSV 已开始下载，请查看系统下载目录');
+      const result = await download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), 'text/csv', 'warpweft-timetable.csv');
+      const message = exportMessage(result, 'CSV');
+      if (!message) return;
+      if (message.tone === 'error') setError(message.text);
+      else setNotice(message.text);
     } catch (cause) {
       setError('导出 CSV 失败：' + messageOf(cause));
     }
   };
 
-  const exportExcelFile = async () => {
+  const openTimetableExport = () => {
     if (!data) return;
+    if (!(result ?? data.published)) return;
+    setExportOpen('export');
+  };
+
+  const exportTimetable = async (settings: TimetableExportSettings, onStage: (stage: 'generating' | 'writing') => void): Promise<boolean> => {
+    if (!data) return false;
     const target = result ?? data.published;
-    if (!target) return;
+    if (!target) return false;
     try {
-      const bytes = exportWorkbook({
-      课表: exportRows(data, target),
-      元数据: [
-        { 项目: '学校', 值: data.school.name },
-        { 项目: '导出时间', 值: new Date().toLocaleString('zh-CN') },
-        { 项目: '课表状态', 值: target.status },
-      ],
-    });
-      const savedPath = await download(
-        new Blob([bytes.buffer as ArrayBuffer], {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }),
+      const template = await loadTimetableTemplate(settings.layout);
+      const filled = await fillTimetableTemplate(template, data, target, settings);
+      onStage('writing');
+      const outcome = await download(
+        filled.buffer,
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'warpweft-timetable.xlsx',
+        timetableFileName(data, settings),
       );
-      setNotice(savedPath ? 'Excel 已导出到 ' + savedPath : 'Excel 已开始下载，请查看系统下载目录');
+      const message = exportMessage(outcome, '课表');
+      if (!message) return false;
+      if (message.tone === 'error') {
+        setError(message.text);
+        return false;
+      }
+      setNotice(message.text);
+      if (exportOpen === 'publish') publishVersion(settings, outcome);
+      return true;
     } catch (cause) {
-      setError('导出 Excel 失败：' + messageOf(cause));
+      setError('导出课表失败：' + messageOf(cause));
+      return false;
     }
   };
 
@@ -1080,7 +1168,7 @@ function App() {
             running={running}
             onInspect={() => setTab('课表检测')}
             onExportCsv={exportCsvFile}
-            onExportExcel={exportExcelFile}
+            onExportExcel={openTimetableExport}
             onPrint={() => window.print()}
           />
         ) : null}
@@ -1099,6 +1187,10 @@ function App() {
             onTimetable={() => setTab('课表预览')}
             onRun={() => setTab('排课任务')}
             onPublish={publish}
+            onExportTimetable={openTimetableExport}
+            versions={data.publishedVersions ?? []}
+            onRenameVersion={renameVersion}
+            onRevealVersion={(path) => void revealVersion(path)}
           />
         ) : null}
         {tab === '统计报表' ? (
@@ -1121,7 +1213,7 @@ function App() {
             onPublish={publish}
             onClear={clearCandidate}
             onExportCsv={exportCsvFile}
-            onExportExcel={exportExcelFile}
+            onExportExcel={openTimetableExport}
             onPrint={() => {
               if (!result) return;
               setTab('课表预览');
@@ -1132,6 +1224,16 @@ function App() {
         {tab === '服务端' && runMode === 'lan-server' ? <ServerPage apiOnline={apiOnline} /> : null}
         {tab === '设置' ? <SettingsPage runMode={runMode} theme={theme} onThemeChange={setTheme} onEditMode={() => setModeSettingsOpen(true)} apiOnline={apiOnline} data={data} commit={commit} /> : null}
       </main>
+      {exportOpen && data && (result ?? data.published) ? (
+        <TimetableExportDialog
+          data={data}
+          result={result ?? data.published!}
+          initialClassId={selectedClassId || data.classes[0]?.id || ''}
+          mode={exportOpen}
+          onClose={() => setExportOpen(null)}
+          onConfirm={exportTimetable}
+        />
+      ) : null}
       {modeSettingsOpen ? <RuntimeModeDialog current={runMode} onSave={saveRunMode} onClose={() => setModeSettingsOpen(false)} /> : null}
     </div>
   );
@@ -1178,11 +1280,9 @@ function Dashboard({
       <section className="hero-panel">
         <div className="hero-copy">
           <h2>
-            把一周课表
-            <br />
-            <strong>排得有序。</strong>
+            <strong>经纬排课已就绪</strong>
           </h2>
-          <p>从教学计划开始，生成一份可检查、可调整、可发布的候选课表。</p>
+          <p className="hero-subtitle">WarpWeft-Scheduler</p>
           <button className="ink-button" onClick={onPrepare}>
             继续准备数据 <span>→</span>
           </button>
@@ -1842,6 +1942,7 @@ function TimetablePage({
   const [immersive, setImmersive] = useState(false);
   const [swapMode, setSwapMode] = useState(false);
   const [weekFilter, setWeekFilter] = useState<'all' | 'odd' | 'even'>('all');
+  const [weekNo, setWeekNo] = useState<number | null>(null);
   const [overlayDate, setOverlayDate] = useState(
     () => new URLSearchParams(window.location.search).get('adjustDate') || window.localStorage.getItem('warpweft-adjust-date') || '',
   );
@@ -1955,49 +2056,31 @@ function TimetablePage({
   const viewConflictCount = viewEntries.filter((entry) => conflicts.has(entry.id)).length;
   const viewFreeSlots = Math.max(0, data.timeSlots.length - viewLessonCount);
   const canMove = Boolean(selected) && view === 'class' && !selected?.locked && !selectedPlan?.fixedSlotId && !selected?.groupId && !overlayDate;
-  const selectedWeeks = selected ? weeksOf(selected) : 'all';
   const selectedGroup = selected ? groupOfEntry(selected) : undefined;
   const selectedBlock = selected ? blockOfEntry(selected) : undefined;
   const slotAt = (day: number, period: number) => data.timeSlots.find((slot) => slot.day === day && slot.period === period);
   const entriesAt = (slotId: string) => viewEntries.filter((entry) => entry.slotId === slotId);
-  const canPlaceSelected = (slot: TimeSlot): boolean => {
-    if (!selected || !result || !canMove) return false;
-    if (selectedPlan?.fixedSlotId && selectedPlan.fixedSlotId !== slot.id) return false;
-    if ((data.unavailableSlots ?? []).some((item) => item.teacherId === selected.teacherId && item.slotId === slot.id)) return false;
-    return !baseEntries.some((entry) =>
-      entry.id !== selected.id &&
-      entry.slotId === slot.id &&
-      weeksOverlap(weeksOf(entry), selectedWeeks) &&
-      (entry.teacherId === selected.teacherId || entry.roomId === selected.roomId)
-    );
+  const dropContext = {
+    data,
+    entries: result?.entries ?? [],
+    view,
+    overlay: Boolean(overlayDate),
   };
+  const canPlaceSelected = (slot: TimeSlot): boolean =>
+    Boolean(selected) && Boolean(result) && canMove && checkMove(selected as ScheduleEntry, slot, dropContext).ok;
   const moveTargets = canMove ? data.timeSlots.filter((slot) => slot.id !== selected?.slotId && canPlaceSelected(slot)) : [];
-  const canSwapSelectedWith = (targetEntry: ScheduleEntry): boolean => {
-    if (overlayDate || selected?.groupId) return false;
-    if (!selected || !result || view !== 'class' || targetEntry.id === selected.id) return false;
-    if (selected.locked || targetEntry.locked) return false;
-    if (targetEntry.classId !== selected.classId) return false;
-    if (targetEntry.coursePlanId === selected.coursePlanId) return false;
-    const targetPlan = planOf(data, targetEntry);
-    if (selectedPlan?.fixedSlotId || targetPlan?.fixedSlotId) return false;
-    const unavailable = data.unavailableSlots ?? [];
-    if (unavailable.some((item) => item.teacherId === selected.teacherId && item.slotId === targetEntry.slotId)) return false;
-    if (unavailable.some((item) => item.teacherId === targetEntry.teacherId && item.slotId === selected.slotId)) return false;
-    const blocksTarget = result.entries.some((entry) =>
-      entry.id !== selected.id && entry.id !== targetEntry.id && entry.slotId === targetEntry.slotId &&
-      weeksOverlap(weeksOf(entry), selectedWeeks) &&
-      (entry.teacherId === selected.teacherId || entry.roomId === selected.roomId)
-    );
-    const blocksSource = result.entries.some((entry) =>
-      entry.id !== selected.id && entry.id !== targetEntry.id && entry.slotId === selected.slotId &&
-      weeksOverlap(weeksOf(entry), weeksOf(targetEntry)) &&
-      (entry.teacherId === targetEntry.teacherId || entry.roomId === targetEntry.roomId)
-    );
-    return !blocksTarget && !blocksSource;
-  };
+  const canSwapSelectedWith = (targetEntry: ScheduleEntry): boolean =>
+    Boolean(selected) && Boolean(result) && checkSwap(selected as ScheduleEntry, targetEntry, dropContext).ok;
   const swapTargets = selected && view === 'class' && result ? result.entries.filter(canSwapSelectedWith) : [];
   const swapTargetIds = new Set(swapTargets.map((entry) => entry.id));
   const moveLabel = selected ? planSubjectName(data, selectedPlan) : '';
+  const draggedEntry = dragId ? baseEntries.find((entry) => entry.id === dragId) : undefined;
+  const dragDecisionFor = (slot: TimeSlot | undefined, cellEntries: ScheduleEntry[]): { ok: boolean; reason: string } | null => {
+    if (!draggedEntry || !slot || view !== 'class' || overlayDate) return null;
+    if (cellEntries.length === 0) return checkMove(draggedEntry, slot, dropContext);
+    if (cellEntries.length === 1) return checkSwap(draggedEntry, cellEntries[0], dropContext);
+    return { ok: false, reason: '时间格内有多门课程，无法放置' };
+  };
 
   if (!result) {
     return (
@@ -2076,10 +2159,11 @@ function TimetablePage({
               key={value}
               type="button"
               role="tab"
-              aria-selected={weekFilter === value}
-              className={weekFilter === value ? 'active' : ''}
+              aria-selected={weekFilter === value && weekNo === null}
+              className={weekFilter === value && weekNo === null ? 'active' : ''}
               onClick={() => {
                 setWeekFilter(value);
+                setWeekNo(null);
                 setSelectedEntryId('');
                 setSwapMode(false);
               }}
@@ -2088,7 +2172,35 @@ function TimetablePage({
               {label}
             </button>
           ))}
+          {semesterWeeks(data.semester).length > 0 ? (
+            <select
+              className="tt-week-select"
+              value={weekNo ?? ''}
+              aria-label="按周次查看"
+              onChange={(event) => {
+                const next = event.target.value ? Number(event.target.value) : null;
+                setWeekNo(next);
+                setWeekFilter(next ? (next % 2 === 1 ? 'odd' : 'even') : 'all');
+                setSelectedEntryId('');
+                setSwapMode(false);
+              }}
+            >
+              <option value="">按周次…</option>
+              {semesterWeeks(data.semester).map((week) => (
+                <option key={week.index} value={week.index}>{week.label}</option>
+              ))}
+            </select>
+          ) : null}
         </div>
+        {weekNo ? (() => {
+          const week = semesterWeeks(data.semester).find((item) => item.index === weekNo);
+          return week ? (
+            <div className="tt-warning is-info">
+              <b>第{weekNo}周 · {week.startDate} ~ {week.endDate}（{week.parity === 'odd' ? '单周' : '双周'}）</b>
+              <span>当前只显示这一周会上的课程；单双周课程按周次序号过滤。</span>
+            </div>
+          ) : null;
+        })() : null}
         <label className="tt-week-overlay" title="把所选日期的调课/代课/停课叠加到课表上查看">
           <input
             type="checkbox"
@@ -2273,6 +2385,7 @@ function TimetablePage({
                     const slot = slotAt(day, period);
                     const cellEntries = slot ? entriesAt(slot.id) : [];
                     const isDragOver = dragOver === slot?.id;
+                    const dragDecision = dragDecisionFor(slot, cellEntries);
                     const moveHere = Boolean(slot) && canMove && cellEntries.length === 0 && (slot ? canPlaceSelected(slot) : false);
                     return (
                       <td
@@ -2282,18 +2395,25 @@ function TimetablePage({
                           'tt-cell' +
                           (cellEntries.length ? ' is-filled' : ' is-empty') +
                           (isDragOver ? ' is-drop' : '') +
-                          (moveHere ? ' can-move' : '')
+                          (moveHere ? ' can-move' : '') +
+                          (dragDecision && dragId ? (dragDecision.ok ? ' is-drag-ok' : ' is-drag-bad') : '')
                         }
-                        title={moveHere && selected ? '把「' + moveLabel + '」移动到这里' : undefined}
+                        title={dragDecision && dragId ? (dragDecision.ok ? '可用：松开移动到这里' : '不可用：' + dragDecision.reason) : moveHere && selected ? '把「' + moveLabel + '」移动到这里' : undefined}
                         onDragOver={(event) => {
                           if (view !== 'class' || !slot) return;
                           event.preventDefault();
+                          if (dragDecision) event.dataTransfer.dropEffect = dragDecision.ok ? 'move' : 'none';
                           setDragOver(slot.id);
                         }}
                         onDragLeave={() => setDragOver('')}
                         onDrop={(event) => {
                           if (view !== 'class' || !slot) return;
                           event.preventDefault();
+                          if (dragDecision && !dragDecision.ok) {
+                            setDragOver('');
+                            setDragId('');
+                            return;
+                          }
                           const entryId = event.dataTransfer.getData('text/plain') || dragId;
                           setDragOver('');
                           setDragId('');
@@ -2305,6 +2425,11 @@ function TimetablePage({
                           else if (!canMove) setSelectedEntryId('');
                         }}
                       >
+                        {dragDecision && dragId && isDragOver ? (
+                          <span className={'tt-drop-badge ' + (dragDecision.ok ? 'ok' : 'bad')} role="status">
+                            {dragDecision.ok ? '可用' : '不可用'}
+                          </span>
+                        ) : null}
                         {cellEntries.length ? (
                           <>
                           {(view === 'class' ? cellEntries.filter((entry) => !entry.groupId) : cellEntries).map((entry) => {
@@ -2584,6 +2709,14 @@ function ReleasePage({
 }
 
 createRoot(document.getElementById('root')!).render(<HeroUIProvider><App /></HeroUIProvider>);
+
+
+
+
+
+
+
+
 
 
 

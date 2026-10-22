@@ -2,8 +2,11 @@ import React, { useState } from 'react';
 import { buildImportTemplate, readWorkbook } from '../../../packages/import-export/src';
 import type { ClassRoom, Commit, CoursePlan, Room, SchoolData, SlotKind, Subject, Teacher, TimeSlot } from './types';
 import { DAYS, EditableTable, SectionHeading } from './components';
-import { download } from './download';
+import type { Column } from './components';
+import { ResourceWorkspace } from './ResourceWorkspace';
+import { download, exportMessage } from './download';
 import { messageOf, uid } from './utils';
+import { isValidSemester } from '../../../packages/semester/src';
 
 const SLOT_KIND_MAP: Record<string, SlotKind> = {
   早读: 'morning', morning: 'morning',
@@ -33,9 +36,11 @@ function ResourcesPage({
 }) {
   const days = DAYS.slice(1).map((label, index) => ({ value: String(index + 1), label }));
   const [replaceOnImport, setReplaceOnImport] = useState(false);
+  const [importFeedback, setImportFeedback] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [batchDays, setBatchDays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [batchFrom, setBatchFrom] = useState(1);
   const [batchTo, setBatchTo] = useState(2);
+  const [workspace, setWorkspace] = useState<null | 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots'>(null);
   const update = (
     collection: 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots',
     id: string,
@@ -88,6 +93,51 @@ function ResourcesPage({
     });
   };
 
+  const removeMany = (
+    collection: 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots',
+    ids: string[],
+  ) => {
+    const selected = new Set(ids);
+    if (collection === 'classes' && data.coursePlans.some((plan) => selected.has(plan.classId))) {
+      setError('选中的班级仍被教学计划引用，请先删除相关教学计划');
+      return;
+    }
+    if (collection === 'teachers' && data.coursePlans.some((plan) => selected.has(plan.teacherId))) {
+      setError('选中的教师仍被教学计划引用，请先删除相关教学计划');
+      return;
+    }
+    if (collection === 'subjects' && data.coursePlans.some((plan) => selected.has(plan.subjectId))) {
+      setError('选中的学科仍被教学计划引用，请先删除相关教学计划');
+      return;
+    }
+    if (collection === 'rooms' && data.rooms.length - ids.length < 1) {
+      setError('至少需要保留一间教室');
+      return;
+    }
+    if (collection === 'timeSlots' && data.coursePlans.some((plan) => plan.fixedSlotId && selected.has(plan.fixedSlotId))) {
+      setError('选中的时间段仍被教学计划设为固定时间，请先调整相关计划');
+      return;
+    }
+    const rows = (data[collection] as Array<{ id: string }>).filter((row) => !selected.has(row.id));
+    commit({ ...data, [collection]: rows } as unknown as SchoolData, { invalidate: true, immediate: true });
+    setNotice('已删除 ' + ids.length + ' 条记录');
+  };
+
+  const batchEdit = (
+    collection: 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots',
+    ids: string[],
+    key: string,
+    value: string | number,
+  ) => {
+    const selected = new Set(ids);
+    const rows = (data[collection] as unknown as Array<Record<string, unknown> & { id: string }>).map((row) =>
+      selected.has(row.id) ? { ...row, [key]: value } : row,
+    );
+    const invalidate = collection === 'timeSlots' && (key === 'day' || key === 'period' || key === 'kind');
+    commit({ ...data, [collection]: rows } as unknown as SchoolData, { invalidate, immediate: true });
+    setNotice('已批量修改 ' + ids.length + ' 条记录');
+  };
+
   const addBatchSlots = () => {
     const from = Math.max(1, Math.floor(Number(batchFrom) || 1));
     const to = Math.max(from, Math.floor(Number(batchTo) || from));
@@ -112,10 +162,12 @@ function ResourcesPage({
   };
 
   const importWorkbookFile = async (file: File) => {
+    setImportFeedback(null);
     try {
       if (replaceOnImport && !window.confirm('导入前将清空当前工作区的基础资料、时间段和教学计划，确定继续？')) return;
       const rows = readWorkbook(await file.arrayBuffer());
       if (rows.length === 0) {
+        setImportFeedback({ tone: 'error', text: 'Excel 文件为空，请先下载模板并按表头填写。' });
         setError('Excel 文件为空，请先下载模板并按表头填写。');
         return;
       }
@@ -123,6 +175,15 @@ function ResourcesPage({
       const numeric = (value: unknown, fallback = 0) => {
         const parsed = Number(value);
         return Number.isFinite(parsed) ? parsed : fallback;
+      };
+      const isoDateValue = (value: unknown): string => {
+        const raw = text(value);
+        if (/^\\d{4}-\\d{2}-\\d{2}$/.test(raw)) return raw;
+        const serial = Number(value);
+        if (Number.isFinite(serial) && serial > 20000 && serial < 80000) {
+          return new Date(Date.UTC(1899, 11, 30) + serial * 86400000).toISOString().slice(0, 10);
+        }
+        return '';
       };
       const dayMap: Record<string, number> = {
         周一: 1, 星期一: 1, 一: 1, '1': 1,
@@ -149,6 +210,7 @@ function ResourcesPage({
         return result;
       };
       const schoolRows = takeRows(['学校', 'school']);
+      const semesterRows = takeRows(['学期', 'semester']);
       const classRows = takeRows(['班级', 'class']);
       const teacherRows = takeRows(['教师', 'teacher']);
       const subjectRows = takeRows(['学科', 'subject']);
@@ -156,8 +218,10 @@ function ResourcesPage({
       const slotRows = takeRows(['时间段', 'slot']);
       const planRows = takeRows(['教学计划', 'plan']);
       const planSheetFound = [...grouped.keys()].some((sheet) => sheet.includes('教学计划') || sheet.includes('plan'));
-      if (![...schoolRows, ...classRows, ...teacherRows, ...subjectRows, ...roomRows, ...slotRows, ...planRows].length) {
-        setError('未识别到可导入的工作表。请使用模板中的“班级/教师/学科/教室/时间段/教学计划”表头。');
+      if (![...schoolRows, ...semesterRows, ...classRows, ...teacherRows, ...subjectRows, ...roomRows, ...slotRows, ...planRows].length) {
+        const emptyMessage = '未识别到可导入的工作表。请使用模板中的“班级/教师/学科/教室/时间段/教学计划”表头。';
+        setImportFeedback({ tone: 'error', text: emptyMessage });
+        setError(emptyMessage);
         return;
       }
       const next: SchoolData = {
@@ -173,6 +237,18 @@ function ResourcesPage({
       if (schoolRow) {
         const schoolName = text(schoolRow.values['名称'] ?? schoolRow.values['学校名称'] ?? schoolRow.values['name']);
         if (schoolName) next.school = { ...next.school, name: schoolName };
+      }
+      const semesterRow = semesterRows.find((row) => text(row.values['开始日期'] ?? row.values['startDate']) || text(row.values['结束日期'] ?? row.values['endDate']));
+      if (semesterRow) {
+        const startDate = isoDateValue(semesterRow.values['开始日期'] ?? semesterRow.values['startDate']);
+        const endDate = isoDateValue(semesterRow.values['结束日期'] ?? semesterRow.values['endDate']);
+        if (!startDate || !endDate) {
+          issues.push('学期工作表需要同时填写开始日期和结束日期（YYYY-MM-DD）。');
+        } else if (!isValidSemester({ startDate, endDate })) {
+          issues.push('学期日期无效：' + startDate + ' ~ ' + endDate + '，请确认格式并保证开始日期不晚于结束日期。');
+        } else {
+          next.semester = { startDate, endDate };
+        }
       }
       if (replaceOnImport) {
         next.rules = [];
@@ -391,28 +467,50 @@ function ResourcesPage({
         next.coursePlans = plans;
       }
       if (issues.length) {
+        const failure =
+          '导入校验未通过（未写入数据）：\n' +
+          issues.slice(0, 6).join('\n') +
+          (issues.length > 6 ? '\n…还有 ' + (issues.length - 6) + ' 项' : '');
+        setImportFeedback({ tone: 'error', text: failure });
         setError('导入校验未通过（未写入数据）：\n' + issues.join('\n'));
         return;
       }
       commit(next, { invalidate: true, immediate: true });
       setError('');
-      setNotice((replaceOnImport ? '已清空并导入：' : 'Excel 导入完成：') + '班级 ' + next.classes.length + '，教师 ' + next.teachers.length + '，学科 ' + next.subjects.length + '，教室 ' + next.rooms.length + '，时间段 ' + next.timeSlots.length + '，教学计划 ' + next.coursePlans.length);
+      const summary =
+        '班级 ' +
+        next.classes.length +
+        '，教师 ' +
+        next.teachers.length +
+        '，学科 ' +
+        next.subjects.length +
+        '，教室 ' +
+        next.rooms.length +
+        '，时间段 ' +
+        next.timeSlots.length +
+        '，教学计划 ' +
+        next.coursePlans.length;
+      setImportFeedback({ tone: 'success', text: (replaceOnImport ? '已清空并导入：' : '导入完成：') + summary });
+      setNotice((replaceOnImport ? '已清空并导入：' : 'Excel 导入完成：') + summary);
     } catch (cause) {
-      setError('Excel 导入失败：' + messageOf(cause));
+      const failure = 'Excel 导入失败：' + messageOf(cause);
+      setImportFeedback({ tone: 'error', text: failure });
+      setError(failure);
     }
   };
 
   const downloadTemplate = async () => {
     try {
       const bytes = buildImportTemplate();
-      const savedPath = await download(
-        new Blob([bytes.buffer as ArrayBuffer], {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }),
+      const result = await download(
+        bytes,
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'warpweft-import-template.xlsx',
       );
-      setNotice(savedPath ? '模板已保存到 ' + savedPath : '模板已开始下载，请查看系统下载目录');
+      const message = exportMessage(result, '模板');
+      if (!message) return;
+      if (message.tone === 'error') setError(message.text);
+      else setNotice(message.text);
     } catch (cause) {
       setError('下载模板失败：' + messageOf(cause));
     }
@@ -423,6 +521,17 @@ function ResourcesPage({
       <div className="resource-single">
         <section className="section-panel resource-panel import-panel">
           <div className="panel-head"><SectionHeading english="IMPORT / VALIDATE" title="Excel 导入" /></div>
+          {importFeedback ? (
+            <div
+              className={'import-feedback is-' + importFeedback.tone}
+              role={importFeedback.tone === 'error' ? 'alert' : 'status'}
+            >
+              <span>{importFeedback.text}</span>
+              <button type="button" className="import-feedback-close" aria-label="关闭导入结果" onClick={() => setImportFeedback(null)}>
+                ×
+              </button>
+            </div>
+          ) : null}
           <p className="panel-note">支持学校、班级、教师、学科、教室、时间段和教学计划。建议先下载模板；基础资料按名称复用，教学计划会整体替换，导入后自动清空候选课表。</p>
           <div className="import-actions">
             <label className="file-button file-button-primary">
@@ -452,86 +561,172 @@ function ResourcesPage({
   }
 
   if (kind === 'classes') {
+    const columns: Column<ClassRoom>[] = [
+      { key: 'name', label: '班级名称', width: '38%' },
+      { key: 'grade', label: '年级', width: '30%' },
+      { key: 'size', label: '人数', type: 'number', width: '22%' },
+    ];
     return (
       <div className="resource-single">
         <EditableTable<ClassRoom>
           title="班级"
           english="CLASS REGISTER"
           rows={data.classes}
-          columns={[
-            { key: 'name', label: '班级名称', width: '38%' },
-            { key: 'grade', label: '年级', width: '30%' },
-            { key: 'size', label: '人数', type: 'number', width: '22%' },
-          ]}
+          columns={columns}
           onChange={(id, key, value) => update('classes', id, key, value)}
           onAdd={() => add('classes')}
           onRemove={(id) => remove('classes', id)}
           addLabel="新增班级"
           note="班级人数会影响教室容量校验；被教学计划引用的班级不能删除。"
+          previewCount={6}
+          onOpenAll={() => setWorkspace('classes')}
         />
+        {workspace === 'classes' ? (
+          <ResourceWorkspace<ClassRoom>
+            title="班级"
+            english="CLASS REGISTER"
+            rows={data.classes}
+            columns={columns}
+            batchFields={[
+              { key: 'grade', label: '年级', type: 'text', placeholder: '如 八年级' },
+              { key: 'size', label: '人数', type: 'number', placeholder: '如 45' },
+            ]}
+            searchText={(row) => row.name + ' ' + (row.grade ?? '')}
+            onChange={(id, key, value) => update('classes', id, key, value)}
+            onBatchEdit={(ids, key, value) => batchEdit('classes', ids, key, value)}
+            onRemoveMany={(ids) => removeMany('classes', ids)}
+            onClose={() => setWorkspace(null)}
+            note="被教学计划引用的班级不能删除；批量删除会一次校验并整体提交。"
+          />
+        ) : null}
       </div>
     );
   }
 
   if (kind === 'teachers') {
+    const columns: Column<Teacher>[] = [{ key: 'name', label: '教师姓名', width: '78%' }];
     return (
       <div className="resource-single">
         <EditableTable<Teacher>
           title="教师"
           english="TEACHER REGISTER"
           rows={data.teachers}
-          columns={[{ key: 'name', label: '教师姓名', width: '78%' }]}
+          columns={columns}
           onChange={(id, key, value) => update('teachers', id, key, value)}
           onAdd={() => add('teachers')}
           onRemove={(id) => remove('teachers', id)}
           addLabel="新增教师"
           note="教师不能在同一时间上两门课；被教学计划引用的教师不能删除。"
+          previewCount={6}
+          onOpenAll={() => setWorkspace('teachers')}
         />
+        {workspace === 'teachers' ? (
+          <ResourceWorkspace<Teacher>
+            title="教师"
+            english="TEACHER REGISTER"
+            rows={data.teachers}
+            columns={columns}
+            batchFields={[]}
+            searchText={(row) => row.name}
+            onChange={(id, key, value) => update('teachers', id, key, value)}
+            onBatchEdit={(ids, key, value) => batchEdit('teachers', ids, key, value)}
+            onRemoveMany={(ids) => removeMany('teachers', ids)}
+            onClose={() => setWorkspace(null)}
+            note="教师当前仅支持批量删除；改名请逐条编辑。被教学计划引用的教师不能删除。"
+          />
+        ) : null}
       </div>
     );
   }
 
   if (kind === 'subjects') {
+    const columns: Column<Subject>[] = [{ key: 'name', label: '学科名称', width: '78%' }];
     return (
       <div className="resource-single">
         <EditableTable<Subject>
           title="学科"
           english="SUBJECT REGISTER"
           rows={data.subjects}
-          columns={[{ key: 'name', label: '学科名称', width: '78%' }]}
+          columns={columns}
           onChange={(id, key, value) => update('subjects', id, key, value)}
           onAdd={() => add('subjects')}
           onRemove={(id) => remove('subjects', id)}
           addLabel="新增学科"
           note="教学计划通过学科引用课程名称。"
+          previewCount={6}
+          onOpenAll={() => setWorkspace('subjects')}
         />
+        {workspace === 'subjects' ? (
+          <ResourceWorkspace<Subject>
+            title="学科"
+            english="SUBJECT REGISTER"
+            rows={data.subjects}
+            columns={columns}
+            batchFields={[]}
+            searchText={(row) => row.name}
+            onChange={(id, key, value) => update('subjects', id, key, value)}
+            onBatchEdit={(ids, key, value) => batchEdit('subjects', ids, key, value)}
+            onRemoveMany={(ids) => removeMany('subjects', ids)}
+            onClose={() => setWorkspace(null)}
+            note="学科当前仅支持批量删除；被教学计划引用的学科不能删除。"
+          />
+        ) : null}
       </div>
     );
   }
 
   if (kind === 'rooms') {
+    const columns: Column<Room>[] = [
+      { key: 'name', label: '教室名称', width: '38%' },
+      { key: 'capacity', label: '容量', type: 'number', width: '22%' },
+      { key: 'type', label: '类型', width: '34%' },
+    ];
     return (
       <div className="resource-single">
         <EditableTable<Room>
           title="教室"
           english="ROOM REGISTER"
           rows={data.rooms}
-          columns={[
-            { key: 'name', label: '教室名称', width: '38%' },
-            { key: 'capacity', label: '容量', type: 'number', width: '22%' },
-            { key: 'type', label: '类型', width: '34%' },
-          ]}
+          columns={columns}
           onChange={(id, key, value) => update('rooms', id, key, value)}
           onAdd={() => add('rooms')}
           onRemove={(id) => remove('rooms', id)}
           addLabel="新增教室"
           note="教室类型会与教学计划的教室类型要求匹配；容量必须大于等于班级人数。"
+          previewCount={6}
+          onOpenAll={() => setWorkspace('rooms')}
         />
+        {workspace === 'rooms' ? (
+          <ResourceWorkspace<Room>
+            title="教室"
+            english="ROOM REGISTER"
+            rows={data.rooms}
+            columns={columns}
+            batchFields={[
+              { key: 'type', label: '类型', type: 'text', placeholder: '如 实验室' },
+              { key: 'capacity', label: '容量', type: 'number', placeholder: '如 50' },
+            ]}
+            searchText={(row) => row.name + ' ' + (row.type ?? '')}
+            onChange={(id, key, value) => update('rooms', id, key, value)}
+            onBatchEdit={(ids, key, value) => batchEdit('rooms', ids, key, value)}
+            onRemoveMany={(ids) => removeMany('rooms', ids)}
+            onClose={() => setWorkspace(null)}
+            note="至少保留一间教室；批量删除会先校验再整体提交。"
+          />
+        ) : null}
       </div>
     );
   }
 
   if (kind === 'timeSlots') {
+    const columns: Column<TimeSlot>[] = [
+      { key: 'day', label: '星期', type: 'select', options: days, width: '14%' },
+      { key: 'period', label: '节次', type: 'number', width: '10%' },
+      { key: 'kind', label: '时段类型', type: 'select', options: SLOT_KIND_OPTIONS, width: '18%', defaultValue: 'regular' },
+      { key: 'start', label: '开始', width: '12%' },
+      { key: 'duration', label: '分钟', type: 'number', width: '10%' },
+      { key: 'label', label: '显示名称', width: '30%' },
+    ];
     return (
       <div className="resource-single resource-stack">
         <section className="section-panel slot-batch">
@@ -562,20 +757,34 @@ function ResourcesPage({
           title="时间段"
           english="TIME SLOTS"
           rows={data.timeSlots}
-          columns={[
-            { key: 'day', label: '星期', type: 'select', options: days, width: '14%' },
-            { key: 'period', label: '节次', type: 'number', width: '10%' },
-            { key: 'kind', label: '时段类型', type: 'select', options: SLOT_KIND_OPTIONS, width: '18%', defaultValue: 'regular' },
-            { key: 'start', label: '开始', width: '12%' },
-            { key: 'duration', label: '分钟', type: 'number', width: '10%' },
-            { key: 'label', label: '显示名称', width: '30%' },
-          ]}
+          columns={columns}
           onChange={(id, key, value) => update('timeSlots', id, key, value)}
           onAdd={() => add('timeSlots')}
           onRemove={(id) => remove('timeSlots', id)}
           addLabel="新增时间段"
           note="修改星期或节次会清空候选课表；请先确认课表结构。"
+          previewCount={6}
+          onOpenAll={() => setWorkspace('timeSlots')}
         />
+        {workspace === 'timeSlots' ? (
+          <ResourceWorkspace<TimeSlot>
+            title="时间段"
+            english="TIME SLOTS"
+            rows={data.timeSlots}
+            columns={columns}
+            batchFields={[
+              { key: 'kind', label: '时段类型', type: 'select', options: SLOT_KIND_OPTIONS },
+              { key: 'duration', label: '时长（分钟）', type: 'number', placeholder: '如 45' },
+              { key: 'start', label: '开始时间', type: 'text', placeholder: '如 08:00' },
+            ]}
+            searchText={(row) => row.label + ' ' + row.kind}
+            onChange={(id, key, value) => update('timeSlots', id, key, value)}
+            onBatchEdit={(ids, key, value) => batchEdit('timeSlots', ids, key, value)}
+            onRemoveMany={(ids) => removeMany('timeSlots', ids)}
+            onClose={() => setWorkspace(null)}
+            note="修改星期、节次或时段类型会清空候选课表；被设为固定时间的时间段不能删除。"
+          />
+        ) : null}
       </div>
     );
   }
@@ -584,5 +793,10 @@ function ResourcesPage({
 }
 
 export { ResourcesPage };
+
+
+
+
+
 
 

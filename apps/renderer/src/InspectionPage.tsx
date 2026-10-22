@@ -3,6 +3,7 @@ import { CATEGORY_LABELS } from '../../../packages/inspection/src';
 import type { InspectionIssue, InspectionRefs, InspectionReport, UtilizationRow } from '../../../packages/inspection/src';
 import { EmptyState } from './runViews';
 import { SectionHeading } from './components';
+import type { SchoolData } from './types';
 
 type Filter = 'all' | 'hard' | 'must' | 'prefer';
 
@@ -90,6 +91,10 @@ export function InspectionPage({
   onTimetable,
   onRun,
   onPublish,
+  onExportTimetable,
+  versions,
+  onRenameVersion,
+  onRevealVersion,
   hasCandidate,
   published,
 }: {
@@ -101,6 +106,10 @@ export function InspectionPage({
   onTimetable: () => void;
   onRun: () => void;
   onPublish: () => void;
+  onExportTimetable: () => void;
+  versions: NonNullable<SchoolData['publishedVersions']>;
+  onRenameVersion: (id: string) => void;
+  onRevealVersion: (path?: string | null) => void;
   hasCandidate: boolean;
   published: boolean;
 }) {
@@ -158,6 +167,9 @@ export function InspectionPage({
             </small>
           </div>
           <div className="inspect-verdict-actions">
+            <button className="ghost-button" onClick={onExportTimetable}>
+              导出课表（排版）
+            </button>
             <button className="ghost-button" onClick={onExportExcel}>
               导出检测报告
             </button>
@@ -168,7 +180,7 @@ export function InspectionPage({
               打印
             </button>
             <button className="action-button" onClick={report.ok ? onPublish : onTimetable}>
-              {report.ok ? (published ? '重新发布' : '保存为正式版') : '去调整课表'} <span>↗</span>
+              {report.ok ? (published ? '重新导出并发布' : '导出并保存为正式版') : '去调整课表'} <span>↗</span>
             </button>
           </div>
         </div>
@@ -268,6 +280,39 @@ export function InspectionPage({
           <p className="panel-note">占用率 = 该班已排课时 ÷ 可用时间格；接近 100% 说明这个班几乎没有空档。</p>
         </section>
       </div>
+
+      <section className="section-panel version-panel">
+        <div className="panel-head">
+          <SectionHeading english="PUBLISHED VERSIONS" title="已发布版本" />
+          <span className="status-tag muted">{versions.length} 个</span>
+        </div>
+        <p className="panel-note">每次发布都会导出按班级课表网格排版的 Excel，并记录文件名与保存路径；可在这里改名或打开所在文件夹。</p>
+        {versions.length === 0 ? (
+          <p className="panel-note">还没有正式版。检测通过后点击「导出并保存为正式版」。</p>
+        ) : (
+          <div className="version-list">
+            {versions
+              .slice()
+              .reverse()
+              .map((version) => (
+                <div className="version-row" key={version.id}>
+                  <div className="version-copy">
+                    <b>{version.name ?? version.title ?? version.id}</b>
+                    <small>
+                      {new Date(version.createdAt).toLocaleString('zh-CN')} · {version.fileName ?? '未记录文件名'}
+                    </small>
+                    <small className="version-path">{version.filePath ?? '浏览器导出：文件在下载目录，未记录绝对路径'}</small>
+                  </div>
+                  <div className="version-actions">
+                    <button type="button" className="ghost-button" onClick={() => onRenameVersion(version.id)}>重命名</button>
+                    <button type="button" className="ghost-button" onClick={() => onRevealVersion(version.filePath)}>打开所在文件夹</button>
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
+

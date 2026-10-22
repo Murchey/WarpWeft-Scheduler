@@ -157,10 +157,21 @@ export interface SchoolData {
   unavailableSlots?: { teacherId: string; slotId: string }[];
   rules?: RuleInstance[];
   softConstraints?: { kind: SolverInput['softConstraints'][number]['kind']; weight: number }[];
-  publishedVersions?: { id: string; createdAt: string; result: SolverOutput; note?: string }[];
+  publishedVersions?: {
+    id: string;
+    createdAt: string;
+    result: SolverOutput;
+    note?: string;
+    name?: string;
+    title?: string;
+    schoolName?: string;
+    fileName?: string;
+    filePath?: string | null;
+  }[];
   auditLog?: { id: string; at: string; action: string; detail: string }[];
   candidate?: SolverOutput | null;
   published?: SolverOutput | null;
+  semester?: { startDate: string; endDate: string };
   adjustments?: Adjustment[];
   electiveGroups?: ElectiveGroup[];
   lessonLogs?: LessonLog[];
@@ -170,6 +181,8 @@ export interface SchoolData {
 export type RunMode = 'single' | 'lan-server' | 'lan-client' | 'cloud';
 
 export type Commit = (next: SchoolData, options?: { invalidate?: boolean; immediate?: boolean }) => void;
+
+
 
 
 

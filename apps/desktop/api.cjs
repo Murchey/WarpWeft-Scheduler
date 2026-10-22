@@ -1,4 +1,4 @@
-const http = require('node:http');
+﻿const http = require('node:http');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -66,6 +66,20 @@ function validateData(data) {
   if (!data || typeof data !== 'object') return '数据格式无效';
   for (const key of ['classes', 'teachers', 'subjects', 'rooms', 'timeSlots', 'coursePlans']) {
     if (!Array.isArray(data[key])) return key + ' 必须是数组';
+  }
+  if (data.semester !== undefined && data.semester !== null) {
+    const semester = data.semester;
+    const parse = (value) => {
+      if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+      const date = new Date(value + 'T00:00:00Z');
+      if (!Number.isFinite(date.getTime())) return null;
+      return date.toISOString().slice(0, 10) === value ? date : null;
+    };
+    const start = parse(semester.startDate);
+    const end = parse(semester.endDate);
+    if (!start || !end) return '学期日期格式必须是 YYYY-MM-DD（且为有效日期）';
+    if (start.getTime() > end.getTime()) return '学期开始日期不能晚于结束日期';
+    if (end.getTime() - start.getTime() > 2 * 366 * 86400000) return '学期跨度不能超过 2 年';
   }
   const unique = (items, label) => {
     const seen = new Set();
@@ -671,6 +685,8 @@ function startApi({
   const longJobsDir = path.join(dataDir, 'solve-jobs');
   fs.mkdirSync(longJobsDir, { recursive: true });
   const longJobs = new Map();
+  const longJobsByUuid = new Map();
+  const TASK_UUID_PATTERN = /^[A-Za-z0-9_.:-]{8,64}$/;
   const longChildren = new Map();
   const longSaveTimes = new Map();
   let longJobRunning = null;
@@ -697,6 +713,7 @@ function startApi({
           job.error = '服务重启导致任务中断，可继续';
         }
         longJobs.set(job.id, job);
+        if (job.taskUuid) longJobsByUuid.set(job.taskUuid, job);
       } catch {
         // A corrupt checkpoint must not stop the server from starting.
       }
@@ -705,6 +722,7 @@ function startApi({
       const sorted = Array.from(longJobs.values()).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
       for (const job of sorted.slice(0, longJobs.size - MAX_LONG_JOBS)) {
         longJobs.delete(job.id);
+        if (job.taskUuid) longJobsByUuid.delete(job.taskUuid);
         try {
           fs.rmSync(longJobFile(job.id), { force: true });
           if (job.bestFile) fs.rmSync(job.bestFile, { force: true });
@@ -739,6 +757,8 @@ function startApi({
       rounds: job.rounds || 0,
       error: job.error || null,
       clientId: job.clientId || null,
+      taskUuid: job.taskUuid || null,
+      snapshotId: job.snapshotId || null,
       bestFile: job.bestFile,
       input: job.input,
       progress: job.progress || null,
@@ -789,6 +809,8 @@ function startApi({
       rounds: job.rounds || 0,
       error: job.error || null,
       clientId: job.clientId || null,
+      taskUuid: job.taskUuid || null,
+      snapshotId: job.snapshotId || null,
       hasFeasibleSolution: !!job.hasFeasibleSolution,
       canResume: ['paused', 'interrupted', 'failed', 'cancelled', 'completed'].includes(job.status) && !longJobRunning,
     };
@@ -986,7 +1008,21 @@ function startApi({
     child.stdin.end(JSON.stringify(input));
   }
 
-  function createLongJob(input, client) {
+  function createLongJob(input, client, taskMeta = {}) {
+    const taskUuid = typeof taskMeta.taskUuid === 'string' ? taskMeta.taskUuid.trim() : '';
+    const snapshotId = typeof taskMeta.snapshotId === 'string' ? taskMeta.snapshotId.trim() : '';
+    if (taskUuid) {
+      if (!TASK_UUID_PATTERN.test(taskUuid)) {
+        throw requestError('任务 UUID 格式无效（8-64 位字母、数字或 _.:-）', 400, 'INVALID_TASK_UUID');
+      }
+      const existing = longJobsByUuid.get(taskUuid);
+      if (existing) {
+        if ((existing.snapshotId || '') !== snapshotId) {
+          throw requestError('任务 UUID 已被另一份数据快照使用，请生成新的任务 UUID', 409, 'TASK_UUID_CONFLICT');
+        }
+        return { job: existing, reused: true };
+      }
+    }
     const seconds = Math.round(Number(input.timeLimitSeconds));
     const timeLimitSeconds = Number.isFinite(seconds) && seconds > 0
       ? Math.min(LONG_JOB_MAX_SECONDS, Math.max(LONG_JOB_MIN_SECONDS, seconds))
@@ -1006,6 +1042,8 @@ function startApi({
     const job = {
       id,
       clientId: client ? client.id : null,
+      taskUuid: taskUuid || null,
+      snapshotId: snapshotId || null,
       status: 'queued',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1019,11 +1057,13 @@ function startApi({
       input,
     };
     longJobs.set(id, job);
+    if (taskUuid) longJobsByUuid.set(taskUuid, job);
     if (longJobs.size > MAX_LONG_JOBS) {
       const sorted = Array.from(longJobs.values()).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
       const stale = sorted.find((item) => item.status !== 'running' && item.status !== 'queued');
       if (stale) {
         longJobs.delete(stale.id);
+        if (stale.taskUuid) longJobsByUuid.delete(stale.taskUuid);
         try {
           fs.rmSync(longJobFile(stale.id), { force: true });
           if (stale.bestFile) fs.rmSync(stale.bestFile, { force: true });
@@ -1033,7 +1073,7 @@ function startApi({
       }
     }
     runLongJob(job);
-    return job;
+    return { job, reused: false };
   }
 
   function pauseLongJob(id) {
@@ -1335,8 +1375,12 @@ function startApi({
           return fail(res, 400, '缺少 timeSlots / coursePlans', 'INVALID_DATA');
         }
         try {
-          const job = createLongJob(input, client);
-          return send(res, 202, { job: longJobSummary(job) });
+          const { taskUuid, snapshotId, ...solverInput } = input;
+          const created = createLongJob(solverInput, client, { taskUuid, snapshotId });
+          return send(res, created.reused ? 200 : 202, {
+            job: longJobSummary(created.job),
+            reused: created.reused,
+          });
         } catch (error) {
           return fail(res, error.statusCode || 500, error.message, error.code || 'LONG_JOB_FAILED');
         }
@@ -1346,6 +1390,16 @@ function startApi({
           .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
           .map(longJobSummary);
         return send(res, 200, { jobs, running: longJobRunning });
+      }
+      const longJobByUuid = url.pathname.match(/^\/api\/solve\/jobs\/by-uuid\/([^/]+)$/);
+      if (req.method === 'GET' && longJobByUuid) {
+        const taskUuid = decodeURIComponent(longJobByUuid[1]);
+        const job = longJobsByUuid.get(taskUuid);
+        if (!job) return fail(res, 404, '任务不存在或已被清理', 'LONG_JOB_NOT_FOUND');
+        if (job.clientId && client && job.clientId !== client.id) {
+          return fail(res, 403, '该任务属于其他客户端，当前客户端无权读取', 'TASK_FORBIDDEN');
+        }
+        return send(res, 200, longJobDetail(job));
       }
       const longJobRoute = url.pathname.match(/^\/api\/solve\/jobs\/([^/]+)$/);
       if (req.method === 'GET' && longJobRoute) {
@@ -1427,3 +1481,8 @@ function startApi({
 }
 
 module.exports = { startApi, validateData };
+
+
+
+
+
