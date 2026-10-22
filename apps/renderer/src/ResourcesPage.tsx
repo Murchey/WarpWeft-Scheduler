@@ -177,6 +177,7 @@ function ResourcesPage({
       }
       const text = (value: unknown) => String(value ?? '').trim();
       const numeric = (value: unknown, fallback = 0) => {
+        if (text(value) === '') return fallback;
         const parsed = Number(value);
         return Number.isFinite(parsed) ? parsed : fallback;
       };
@@ -448,8 +449,10 @@ function ResourcesPage({
         if (!meta.maxPeriods) issues.push('时间段 工作表 B1 必须填写“每天最多节数”。');
         const periods = Array.from({ length: maxPeriods }, (_, index) => index + 1);
         const weekdays = meta.weekdays?.length ? meta.weekdays : [1, 2, 3, 4, 5];
+        const dayPeriods = meta.dayPeriods ?? {};
         for (const day of weekdays) {
-          for (const period of periods) {
+          const periodsForDay = (dayPeriods[day]?.length ? dayPeriods[day] : periods).filter((period) => period >= 1 && period <= maxPeriods);
+          for (const period of periodsForDay) {
             const info = periodRows.get(period);
             addSlot(
               day,
@@ -880,6 +883,8 @@ function ResourcesPage({
 }
 
 export { ResourcesPage };
+
+
 
 
 

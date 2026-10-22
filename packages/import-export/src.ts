@@ -8,6 +8,8 @@ export interface WorkbookMeta {
   maxPeriods?: number;
   /** Optional weekdays (1=Monday) from the 时间段 sheet. */
   weekdays?: number[];
+  /** Per-day period overrides from 单日节次设置; absent/empty means all periods. */
+  dayPeriods?: Record<number, number[]>;
 }
 
 export interface ReadWorkbookResult {
@@ -52,6 +54,25 @@ function parseWeekdays(value: string): number[] | undefined {
  * settings block (每天最多节数 / 上课星期) above its header row, so its header
  * row is detected instead of assuming row 1.
  */
+
+function dayNumber(value: unknown): number | null {
+  const text = cellText(value);
+  const match = text.match(/^(?:周|星期)([一二三四五六日天])$/);
+  if (match) return DAY_INDEX[match[1]];
+  if (/^[1-7]$/.test(text)) return Number(text);
+  return null;
+}
+
+function parsePeriodList(value: unknown): number[] {
+  return Array.from(
+    new Set(
+      cellText(value)
+        .split(/[;；,，、\s]+/)
+        .map(Number)
+        .filter((period) => Number.isInteger(period) && period > 0),
+    ),
+  ).sort((a, b) => a - b);
+}
 export function readWorkbookWithMeta(buffer: ArrayBuffer): ReadWorkbookResult {
   const workbook = XLSX.read(buffer, { type: 'array' });
   const rows: ImportRow[] = [];
@@ -82,7 +103,11 @@ export function readWorkbookWithMeta(buffer: ArrayBuffer): ReadWorkbookResult {
     }
     const headers = (aoa[headerRow] ?? []).map((cell) => normalizeHeader(cell));
     if (!headers.some(Boolean)) continue;
-    for (let index = headerRow + 1; index < aoa.length; index += 1) {
+    const sectionRow = /时间段|时间|slot/i.test(sheetName)
+      ? aoa.findIndex((row, index) => index > headerRow && row.some((cell) => cellText(cell).startsWith('单日节次设置')))
+      : -1;
+    const dataEnd = sectionRow > headerRow ? sectionRow : aoa.length;
+    for (let index = headerRow + 1; index < dataEnd; index += 1) {
       const cells = aoa[index] ?? [];
       const values: Record<string, unknown> = {};
       let hasValue = false;
@@ -94,6 +119,22 @@ export function readWorkbookWithMeta(buffer: ArrayBuffer): ReadWorkbookResult {
       });
       if (!hasValue) continue;
       rows.push({ sheet: sheetName, row: index + 1, values });
+    }
+    if (sectionRow > headerRow) {
+      const dayHeaderIndex = aoa.findIndex((row, index) => index > sectionRow && row.some((cell) => dayNumber(cell) !== null));
+      if (dayHeaderIndex >= 0) {
+        const dayHeader = aoa[dayHeaderIndex] ?? [];
+        const dayValues = aoa[dayHeaderIndex + 1] ?? [];
+        dayHeader.forEach((cell, column) => {
+          const day = dayNumber(cell);
+          if (!day) return;
+          const periods = parsePeriodList(dayValues[column]);
+          if (periods.length) {
+            if (!meta.dayPeriods) meta.dayPeriods = {};
+            meta.dayPeriods[day] = periods;
+          }
+        });
+      }
     }
   }
   return { rows, meta };
@@ -187,6 +228,9 @@ const INSTRUCTIONS: (string | number)[][] = [
   ['时间段', 'A5', '至少一行', '从第 5 行开始写节次（1、2、3…）。', '1'],
   ['时间段', 'B5', '选填', '该节开始时间，格式 HH:MM。', '08:00'],
   ['时间段', 'C5', '选填', '该节时长（分钟）。', '45'],
+  ['时间段', 'A14', '选填', '单日节次设置标题；不写等于该天满节次。', '单日节次设置（不写等于满节次）'],
+  ['时间段', 'A15', '选填', '周一至周日表头；只填需要限制的天。', '周一 … 周日'],
+  ['时间段', 'A16', '选填', '对应天可用节次，用分号分隔，如 1;2;3;4;5;8。', '1;2;3;4'],
   ['教学计划', '整表', '排课时必填', '只导入基础资料时可留空；但排课前至少要有一行，否则没有可排的课。', ''],
   ['教学计划', 'A2', '必填', '班级名称，须与“班级”工作表一致。', '七年级1班'],
   ['教学计划', 'B2', '必填', '学科名称，须与“学科”工作表一致。', '语文'],
@@ -224,8 +268,12 @@ export function buildImportTemplate(): ArrayBuffer {
         ['', '', '', ''],
         ['节次', '开始时间（选填）', '时长（分钟，选填）'],
         ...Array.from({ length: 8 }, (_, index) => [index + 1, '', '']),
+        ['', '', '', ''],
+        ['单日节次设置（不写等于满节次）', '', '', ''],
+        ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
+        ['', '', '', '', '', '', ''],
       ],
-      widths: [14, 22, 20, 20],
+      widths: [14, 18, 18, 18, 18, 18, 18],
     },
     {
       name: '教学计划',
@@ -240,5 +288,9 @@ export function buildImportTemplate(): ArrayBuffer {
   }
   return XLSX.write(workbook, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
 }
+
+
+
+
 
 

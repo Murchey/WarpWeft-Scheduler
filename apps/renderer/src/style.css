@@ -1159,3 +1159,16 @@ html[data-theme='dark'] .stats-ratio.is-warn{color:#fbbf24}
 .template-progress{margin:8px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
 
 .file-button:disabled{opacity:.6;cursor:wait}
+
+/* Teaching-plan subject matrix */
+.plan-matrix-panel{margin:14px 0 18px;padding:14px;border:1px solid var(--rule);border-radius:10px;background:var(--panel)}
+.plan-matrix-head{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:flex-start}
+.plan-matrix-head h3{margin:0 0 4px;font:600 16px var(--font-text);color:var(--ink)}
+.plan-matrix-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.plan-matrix-controls label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.plan-matrix-controls input{width:58px;padding:7px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--panel);color:var(--ink)}
+.plan-matrix-controls select{padding:7px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--panel);color:var(--ink)}
+.plan-matrix-total{font-size:12px;color:var(--muted)}
+.plan-matrix-table td{white-space:nowrap}
+.plan-matrix-table td.is-zero{color:var(--muted)}
+.plan-matrix-note{display:block;margin-top:2px;color:var(--muted);font-size:11px;font-weight:400}

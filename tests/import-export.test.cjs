@@ -59,3 +59,16 @@ test('teacher grade lists accept Chinese, English and mixed semicolons', async (
   assert.equal(normalizeGradeList('1;2;2'), '1;2');
   assert.equal(normalizeGradeList('七年级'), '七年级');
 });
+
+test('per-day period settings override the full day', async () => {
+  const { buildImportTemplate, readWorkbookWithMeta } = await loadModule();
+  const workbook = XLSX.read(Buffer.from(buildImportTemplate()), { type: 'buffer' });
+  const sheet = workbook.Sheets['时间段'];
+  sheet.C16 = { t: 's', v: '1;2;3;4;5;8' };
+  sheet.G16 = { t: 's', v: '1；2;3;4' };
+  const bytes = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+  const parsed = readWorkbookWithMeta(bytes);
+  assert.deepEqual(parsed.meta.dayPeriods[3], [1, 2, 3, 4, 5, 8]);
+  assert.deepEqual(parsed.meta.dayPeriods[7], [1, 2, 3, 4]);
+  assert.equal(parsed.rows.filter((row) => row.sheet === '时间段').length, 8);
+});
