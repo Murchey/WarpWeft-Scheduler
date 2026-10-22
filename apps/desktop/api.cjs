@@ -1,4 +1,4 @@
-const http = require('node:http');
+﻿const http = require('node:http');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -1109,7 +1109,7 @@ function startApi({
   function deleteLongJob(id) {
     const job = longJobs.get(id);
     if (!job) throw requestError('长时任务不存在', 404, 'LONG_JOB_NOT_FOUND');
-    if (job.status !== 'completed') throw requestError('只有已完成任务可以删除', 409, 'LONG_JOB_NOT_COMPLETED');
+    if (job.status !== 'completed' && job.status !== 'cancelled') throw requestError('只有已完成或已取消任务可以删除', 409, 'LONG_JOB_NOT_COMPLETED');
     longJobs.delete(id);
     if (job.taskUuid) longJobsByUuid.delete(job.taskUuid);
     try {
@@ -1505,6 +1505,7 @@ function startApi({
 }
 
 module.exports = { startApi, validateData };
+
 
 
 

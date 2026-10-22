@@ -1,13 +1,40 @@
-﻿const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { startApi } = require('./api.cjs');
 
 const rootDir = path.resolve(__dirname, '../..');
 let server;
+let workspaceDir = null;
+
+function workspaceConfigFile() {
+  return path.join(app.getPath('userData'), 'workspace.json');
+}
+
+function defaultDataDir() {
+  return app.isPackaged ? app.getPath('userData') : path.join(rootDir, 'data');
+}
+
+function readWorkspaceDir() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(workspaceConfigFile(), 'utf8'));
+    if (typeof raw?.path === 'string' && raw.path.trim()) {
+      const candidate = path.resolve(raw.path);
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) return candidate;
+    }
+  } catch {
+    // no saved workspace yet
+  }
+  return defaultDataDir();
+}
+
+function currentDataDir() {
+  if (!workspaceDir) workspaceDir = readWorkspaceDir();
+  return workspaceDir;
+}
 
 function startLocalApi() {
-  const dataDir = app.isPackaged ? app.getPath('userData') : path.join(rootDir, 'data');
+  const dataDir = currentDataDir();
   const instance = startApi({
     rootDir,
     dataDir,
@@ -21,6 +48,33 @@ function startLocalApi() {
   instance.on('error', (error) => console.error('Local API error:', error));
   return instance;
 }
+
+ipcMain.handle('warpweft:get-workspace', async () => ({
+  path: currentDataDir(),
+  customizable: true,
+}));
+
+ipcMain.handle('warpweft:choose-workspace', async (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  const options = {
+    title: '选择工作区存放位置',
+    defaultPath: currentDataDir(),
+    properties: ['openDirectory', 'createDirectory'],
+  };
+  const chosen = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+  if (chosen.canceled || !chosen.filePaths?.[0]) return { canceled: true };
+  const selected = path.resolve(chosen.filePaths[0]);
+  try {
+    if (!fs.existsSync(selected) || !fs.statSync(selected).isDirectory()) {
+      return { status: 'failed', error: '所选位置不是文件夹' };
+    }
+    fs.mkdirSync(app.getPath('userData'), { recursive: true });
+    fs.writeFileSync(workspaceConfigFile(), JSON.stringify({ path: selected }, null, 2), 'utf8');
+    return { status: 'saved', path: selected, restartRequired: true };
+  } catch (error) {
+    return { status: 'failed', error: error.message };
+  }
+});
 
 ipcMain.handle('warpweft:save-export', async (event, payload) => {
   const rawName = String(payload?.filename || 'warpweft-export');

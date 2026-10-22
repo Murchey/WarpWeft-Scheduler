@@ -152,6 +152,20 @@ function toSolverInput(
   };
 }
 
+function planShortageText(data: SchoolData, output: SolverOutput): string {
+  const lines: string[] = [];
+  for (const plan of data.coursePlans) {
+    const placed = output.entries.filter((entry) => entry.coursePlanId === plan.id).length;
+    const missing = Number(plan.weeklyPeriods || 0) - placed;
+    if (missing <= 0) continue;
+    const klass = data.classes.find((item) => item.id === plan.classId)?.name ?? plan.classId;
+    const subject = data.subjects.find((item) => item.id === plan.subjectId)?.name ?? plan.subjectId;
+    const teacher = plan.teacherId ? data.teachers.find((item) => item.id === plan.teacherId)?.name : '未指定教师';
+    lines.push(klass + ' ' + subject + '（' + (teacher || '未指定教师') + '）计划 ' + plan.weeklyPeriods + '，已排 ' + placed + '，缺 ' + missing);
+  }
+  if (lines.length === 0) return '';
+  return '未排计划：\n' + lines.slice(0, 8).join('\n') + (lines.length > 8 ? '\n…还有 ' + (lines.length - 8) + ' 条' : '');
+}
 function preflight(data: SchoolData): string[] {
   const issues = validateInput(toSolverInput(data, 30, [])).map((issue) => issue.message);
   if (data.classes.length === 0) issues.push('至少需要一个班级');
@@ -762,8 +776,10 @@ function App() {
         setNotice('排课完成：共 ' + output.entries.length + ' 条课表');
       } else {
         setTab('排课任务');
-        setProgress({ phase: 'failed', message: output.explanation || '未找到可行课表', startedAt: Date.now() });
-        setError(output.explanation || '未找到可行课表');
+        const shortage = planShortageText(data, output);
+        const failure = [output.explanation || '未找到可行课表', shortage].filter(Boolean).join('\n');
+        setProgress({ phase: 'failed', message: failure, startedAt: Date.now() });
+        setError(failure);
       }
     } catch (cause) {
       setResult(null);
@@ -1290,6 +1306,14 @@ function App() {
         {tab === '服务端' && runMode === 'lan-server' ? <ServerPage apiOnline={apiOnline} /> : null}
         {tab === '设置' ? <SettingsPage runMode={runMode} theme={theme} onThemeChange={setTheme} onEditMode={() => setModeSettingsOpen(true)} apiOnline={apiOnline} data={data} commit={commit} /> : null}
       </main>
+      {running ? (
+        <div className="run-foreground" role="status" aria-live="polite" aria-label="短时排课计算中">
+          <div className="run-foreground-panel">
+            <RunProgressView progress={progress} />
+            <p className="panel-note">短时排课正在计算，请勿关闭页面或重复提交；计算完成后会自动显示候选课表。</p>
+          </div>
+        </div>
+      ) : null}
       {exportOpen && data && (result ?? data.published) ? (
         <TimetableExportDialog
           data={data}
@@ -1304,6 +1328,65 @@ function App() {
       ) : null}
       {modeSettingsOpen ? <RuntimeModeDialog current={runMode} onSave={saveRunMode} onClose={() => setModeSettingsOpen(false)} /> : null}
     </div>
+  );
+}
+
+function WorkspaceLocationCard() {
+  const bridge = useMemo(() => (window as unknown as {
+    warpweft?: {
+      getWorkspace?: () => Promise<{ path?: string; customizable?: boolean }>;
+      chooseWorkspace?: () => Promise<{ status?: string; path?: string; error?: string; canceled?: boolean; restartRequired?: boolean }>;
+    };
+  }).warpweft, []);
+  const [path, setPath] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    if (!bridge?.getWorkspace) {
+      setMessage('浏览器模式：工作区由服务端数据目录管理，桌面版可在此选择存放位置。');
+      return;
+    }
+    void bridge.getWorkspace().then((info) => {
+      if (info?.path) setPath(info.path);
+    }).catch((cause) => setMessage(cause instanceof Error ? cause.message : String(cause)));
+  }, [bridge]);
+
+  const choose = async () => {
+    if (!bridge?.chooseWorkspace || busy) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      const result = await bridge.chooseWorkspace();
+      if (result.canceled) return;
+      if (result.status === 'failed') {
+        setMessage(result.error || '切换工作区失败');
+        return;
+      }
+      if (result.path) setPath(result.path);
+      setMessage(result.restartRequired ? '工作区位置已保存，重启应用后生效。' : '工作区位置已更新。');
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="section-panel workspace-location-card">
+      <div className="panel-head">
+        <SectionHeading english="WORKSPACE STORAGE" title="工作区位置" />
+        <button type="button" className="ghost-button" onClick={() => void choose()} disabled={busy || !bridge?.chooseWorkspace}>
+          {busy ? '正在选择…' : '选择文件夹'}
+        </button>
+      </div>
+      <p className="panel-note">数据库、长时任务检查点和缓存文件会保存在这个文件夹；切换后重启应用生效。</p>
+      <div className="workspace-location-path">
+        <span>当前路径</span>
+        <code>{path || '读取中…'}</code>
+      </div>
+      {message ? <p className="panel-note">{message}</p> : null}
+    </section>
   );
 }
 
@@ -1376,6 +1459,7 @@ function Dashboard({
           </div>
         ))}
       </section>
+      <WorkspaceLocationCard />
       <TodayPanel data={data} now={new Date()} onAdjust={onAdjust} onTimetable={onTimetable} />
       <section className="dashboard-grid">
         <article className="section-panel progress-panel">
@@ -2674,6 +2758,9 @@ function TimetablePage({
 }
 
 createRoot(document.getElementById('root')!).render(<HeroUIProvider><App /></HeroUIProvider>);
+
+
+
 
 
 

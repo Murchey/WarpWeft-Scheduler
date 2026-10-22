@@ -1,4 +1,4 @@
-const test = require('node:test');
+﻿const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -181,6 +181,24 @@ test('a completed long job can be deleted, and its files disappear', async () =>
     const after = await fetch(ctx.base + '/api/solve/jobs/' + encodeURIComponent(id), { headers });
     assert.equal(after.status, 404);
     assert.equal(fs.existsSync(path.join(dataDir, 'solve-jobs', id + '.json')), false);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('a cancelled long job can also be deleted', async () => {
+  const dataDir = tempDir();
+  const ctx = await start(dataDir);
+  try {
+    const created = await post(ctx, payload({ taskUuid: 'task-del-cancel', snapshotId: 'snap-cancel', fakeTotal: 20, fakeStepMs: 100 }));
+    assert.equal(created.status, 202);
+    const id = created.body.job.id;
+    const cancelled = await fetch(ctx.base + '/api/solve/jobs/' + encodeURIComponent(id) + '/cancel', { method: 'POST', headers });
+    assert.equal(cancelled.status, 200);
+    const removed = await fetch(ctx.base + '/api/solve/jobs/' + encodeURIComponent(id), { method: 'DELETE', headers });
+    assert.equal(removed.status, 200);
+    const gone = await fetch(ctx.base + '/api/solve/jobs/' + encodeURIComponent(id), { headers });
+    assert.equal(gone.status, 404);
   } finally {
     await ctx.close();
   }

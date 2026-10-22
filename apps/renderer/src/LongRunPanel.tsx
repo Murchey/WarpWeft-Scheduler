@@ -190,6 +190,31 @@ export function LongRunPanel({
       }
     });
 
+  const restartWithCurrentData = () =>
+    withBusy('restart', async () => {
+      if (!window.confirm('将按当前工作区数据重新开始长时排课。当前任务（如果还在运行）会被取消，旧检查点不会作为新任务的输入。继续吗？')) return;
+      try {
+        if (job && ['queued', 'running', 'paused'].includes(job.status)) {
+          await cancelLongJob(job.id);
+        }
+        const inp = inputFactory(seconds);
+        const taskUuid = newTaskUuid();
+        const snapshotId = snapshotIdOf(inp);
+        const created = await startLongJob(inp, taskUuid, snapshotId);
+        rememberTask(window.localStorage, {
+          taskUuid,
+          jobId: created.job.id,
+          snapshotId,
+          endpoint: getApiBase(),
+          submittedAt: new Date().toISOString(),
+        });
+        await refreshList();
+        await loadJob(created.job.id);
+        onNotice('已按当前数据启动新的长时任务：' + created.job.id);
+      } catch (cause) {
+        onError('按当前数据重排失败：' + (cause instanceof Error ? cause.message : String(cause)));
+      }
+    });
   const pause = (id: string) =>
     withBusy('pause', async () => {
       try {
@@ -204,7 +229,15 @@ export function LongRunPanel({
 
   const resume = (id: string) =>
     withBusy('resume', async () => {
+      const target = job?.id === id ? job : jobs.find((item) => item.id === id);
       try {
+        const current = inputFactory(target?.timeLimitSeconds || 3600);
+        if (target?.snapshotId && target.snapshotId !== snapshotIdOf(current)) {
+          const proceed = window.confirm(
+            '工作区的班级、教师、时间段或教学计划已经变化。继续该任务会从旧快照继续，不会自动读取你刚调整的课时。\n\n建议取消后重新开始长时任务。仍要继续旧任务吗？',
+          );
+          if (!proceed) return;
+        }
         await resumeLongJob(id);
         await loadJob(id);
         await refreshList();
@@ -229,11 +262,11 @@ export function LongRunPanel({
 
   const removeCompleted = (target: LongJob) =>
     withBusy('delete', async () => {
-      if (target.status !== 'completed') {
+      if (target.status !== 'completed' && target.status !== 'cancelled') {
         onError('只有已完成任务可以删除');
         return;
       }
-      if (!window.confirm('删除已完成任务 ' + target.id + '？任务文件和检查点会被删除，此操作不可撤销。')) return;
+      if (!window.confirm('删除' + statusLabel(target.status) + '任务 ' + target.id + '？任务文件和检查点会被删除，此操作不可撤销。')) return;
       try {
         await deleteLongJob(target.id);
         if (target.taskUuid) forgetTask(window.localStorage, target.taskUuid);
@@ -247,24 +280,18 @@ export function LongRunPanel({
 
   const activeStatus = job?.status ?? '';
   const isRunning = activeStatus === 'running';
-  const completedJobs = jobs.filter((item) => item.status === 'completed');
+  const removableJobs = jobs.filter((item) => item.status === 'completed' || item.status === 'cancelled');
 
   const applyBest = () => {
     if (!job) return;
     let changed = false;
     try {
       const current = inputFactory(job.timeLimitSeconds || 3600);
-      const summary = job.inputSummary;
-      changed =
-        summary.plans !== (current.coursePlans?.length ?? 0) ||
-        summary.timeSlots !== (current.timeSlots?.length ?? 0) ||
-        summary.classes !== (current.classes?.length ?? 0) ||
-        summary.teachers !== (current.teachers?.length ?? 0) ||
-        summary.rooms !== (current.rooms?.length ?? 0);
+      changed = job.snapshotId ? job.snapshotId !== snapshotIdOf(current) : job.inputSummary.plans !== (current.coursePlans?.length ?? 0);
     } catch {
       changed = false;
     }
-    if (changed && !window.confirm('该长时任务基于较早的工作区数据（班级/教师/计划数量已变化）。仍要载入它的最佳课表吗？')) return;
+    if (changed && !window.confirm('该长时任务基于较早的工作区数据（课时、班级、教师或计划已变化）。载入旧最佳课表不会反映你刚做的调整，建议重新开始长时任务。仍要载入吗？')) return;
     onApplyResult(job);
   };
 
@@ -296,6 +323,9 @@ export function LongRunPanel({
         </button>
         <button className="ghost-button" onClick={() => void refreshList().then((list) => list[0] && loadJob(list[0].id))} disabled={Boolean(busy)}>
           刷新状态
+        </button>
+        <button className="ghost-button" onClick={() => void restartWithCurrentData()} disabled={disabled || !job || Boolean(busy)} title="用当前工作区的班级、教师、教学计划重新开始一个长时任务，不沿用旧检查点">
+          {busy === 'restart' ? '正在按新数据启动…' : '加载新数据重排'}
         </button>
         {jobs.length > 0 ? <span className="long-count">服务端已保存 {jobs.length} 个长时任务</span> : null}
       </div>
@@ -359,7 +389,7 @@ export function LongRunPanel({
                 {busy === 'cancel' ? '取消中…' : '取消任务'}
               </button>
             ) : null}
-            {job.status === 'completed' ? (
+            {job.status === 'completed' || job.status === 'cancelled' ? (
               <button className="ghost-button long-delete" onClick={() => void removeCompleted(job)} disabled={Boolean(busy)}>
                 {busy === 'delete' ? '删除中…' : '删除任务'}
               </button>
@@ -369,14 +399,14 @@ export function LongRunPanel({
       ) : (
         <p className="panel-note">还没有长时任务。长时任务适合 120+ 班级或资源很紧、需要跑很久的数据。</p>
       )}
-      {completedJobs.filter((item) => item.id !== job?.id).length > 0 ? (
+      {removableJobs.filter((item) => item.id !== job?.id).length > 0 ? (
         <div className="long-completed-list">
-          <h4>已完成任务</h4>
-          {completedJobs.filter((item) => item.id !== job?.id).map((item) => (
+          <h4>已完成 / 已取消任务</h4>
+          {removableJobs.filter((item) => item.id !== job?.id).map((item) => (
             <div className="long-completed-row" key={item.id}>
               <div>
                 <b>{item.id}</b>
-                <small>{new Date(item.createdAt).toLocaleString('zh-CN')} · {item.placed}/{item.total} 课时</small>
+                <small>{statusLabel(item.status)} · {new Date(item.createdAt).toLocaleString('zh-CN')} · {item.placed}/{item.total} 课时</small>
               </div>
               <button type="button" className="ghost-button" onClick={() => void removeCompleted(item)} disabled={Boolean(busy)}>
                 {busy === 'delete' ? '删除中…' : '删除'}
@@ -388,6 +418,10 @@ export function LongRunPanel({
     </section>
   );
 }
+
+
+
+
 
 
 

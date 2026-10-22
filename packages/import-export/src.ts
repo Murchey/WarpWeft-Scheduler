@@ -1,4 +1,6 @@
 ﻿import * as XLSX from 'xlsx';
+import { IMPORTANCE_LABELS, RULE_DEFINITIONS } from '../constraints/src.ts';
+import type { RuleInstance } from '../constraints/src.ts';
 
 export interface ImportRow { sheet: string; row: number; values: Record<string, unknown>; }
 export interface ImportIssue { sheet: string; row: number; field?: string; message: string; }
@@ -242,6 +244,11 @@ const INSTRUCTIONS: (string | number)[][] = [
   ['教学计划', 'H2', '选填', '固定时间，如“周一 第1节”；留空由系统排。', ''],
   ['教学计划', '第2行', '示例', '完整示例按 A→H 顺序填写：', ''],
   ['教学计划示例', '', '', '七年级1班 / 语文 / 李老师 / 5 / 每周 / 常规 / 普通教室 / 空', ''],
+  ['排课规则', '整表', '选填', '只导入基础资料时可留空；填写后会整体替换当前自定义规则。', ''],
+  ['排课规则', 'A2：规则类型；B2：作用对象类型；C2：作用对象；D2：适用时间；E2：重要程度；F2：参数；G2：备注', 'A/B 必填，C 按对象类型，D/E 选填', '规则类型可填：教师每日上限 / 教师连续上限 / 教师半天无课 / 学科每日上限 / 学科时间偏好 / 避开首末节 / 学科分散 / 连堂双节。作用对象填对应名称；年级可直接填年级。', '教师每日上限'],
+  ['排课规则', 'D2 适用时间', '选填', '全周 / 周一至周五 / 第1-4节 / 周一至周五 第1-4节；留空按全周。', '周一至周五 第1-4节'],
+  ['排课规则', 'E2 重要程度', '选填', '必须 / 尽量 / 避免；留空按该规则默认值。', '尽量'],
+  ['排课规则', 'F2 参数', '选填', 'key=value 形式，多项用分号：maxPerDay=8；preference=morning；avoid=first；periods=2。', 'maxPerDay=8'],
   ['重复导入', '—', '—', '基础资料按名称复用已有记录；教学计划工作表会整体替换原计划。', ''],
   ['空行', '—', '—', '完全空白的行会被忽略。', ''],
 ];
@@ -254,6 +261,7 @@ export interface TemplateSource {
   subjects?: { id: string; name: string }[];
   rooms?: { id: string; name: string; type?: string; capacity?: number }[];
   timeSlots?: { id: string; day: number; period: number; start?: string; duration?: number; label?: string }[];
+  rules?: RuleInstance[];
   coursePlans?: {
     classId: string;
     subjectId: string;
@@ -319,6 +327,31 @@ export function buildImportTemplate(source?: TemplateSource): ArrayBuffer {
   const subjectById = new Map((source?.subjects ?? []).map((item) => [item.id, item]));
   const teacherById = new Map((source?.teachers ?? []).map((item) => [item.id, item]));
   const slotById = new Map((source?.timeSlots ?? []).map((item) => [item.id, item]));
+  const ruleRows: (string | number)[][] = (source?.rules ?? []).map((rule) => {
+    const definition = RULE_DEFINITIONS.find((item) => item.kind === rule.kind);
+    const scope = rule.scope;
+    const scopeType = scope.type === 'all' ? '全校' : scope.type === 'grade' ? '年级' : scope.type === 'teacher' ? '教师' : scope.type === 'class' ? '班级' : scope.type === 'subject' ? '学科' : '教室';
+    const scopeName = scope.type === 'all' ? ''
+      : scope.type === 'grade' ? scope.grade
+      : scope.type === 'teacher' ? (teacherById.get(scope.teacherId)?.name ?? '')
+      : scope.type === 'class' ? (classById.get(scope.classId)?.name ?? '')
+      : scope.type === 'subject' ? (subjectById.get(scope.subjectId)?.name ?? '')
+      : (source?.rooms ?? []).find((room) => room.id === scope.roomId)?.name ?? '';
+    const days = rule.time.type === 'weekday' ? rule.time.days : rule.time.type === 'periodRange' ? (rule.time.days ?? []) : [];
+    const time = rule.time.type === 'all' ? '全周'
+      : rule.time.type === 'weekday' ? weekdayText(days)
+      : (days.length ? weekdayText(days) + ' ' : '') + '第' + rule.time.from + '-' + rule.time.to + '节';
+    const params = Object.entries(rule.params).map(([key, value]) => key + '=' + value).join('; ');
+    return [
+      definition?.label ?? rule.kind,
+      scopeType,
+      scopeName,
+      time,
+      IMPORTANCE_LABELS[rule.importance],
+      params,
+      rule.note ?? '',
+    ];
+  });
   const timeSlots = templateTimeSlotRows(source);
   const sheets: AoaSheet[] = [
     {
@@ -401,6 +434,14 @@ export function buildImportTemplate(source?: TemplateSource): ArrayBuffer {
       ],
       widths: [22, 16, 16, 12, 14, 16, 18, 20],
     },
+    {
+      name: '排课规则',
+      rows: [
+        ['规则类型', '作用对象类型', '作用对象', '适用时间', '重要程度', '参数', '备注'],
+        ...ruleRows,
+      ],
+      widths: [22, 16, 20, 24, 12, 34, 30],
+    },
   ];
   for (const sheet of sheets) {
     const worksheet = XLSX.utils.aoa_to_sheet(sheet.rows);
@@ -409,6 +450,11 @@ export function buildImportTemplate(source?: TemplateSource): ArrayBuffer {
   }
   return XLSX.write(workbook, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
 }
+
+
+
+
+
 
 
 

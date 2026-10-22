@@ -108,3 +108,33 @@ test('current workspace data can be exported back into the template', async () =
 });
 
 
+
+test('custom scheduling rules are exported as a documented template sheet', async () => {
+  const { buildImportTemplate } = await loadModule();
+  const source = {
+    teachers: [{ id: 't1', name: '王老师' }],
+    rules: [{
+      id: 'r1',
+      kind: 'TEACHER_MAX_DAILY',
+      scope: { type: 'teacher', teacherId: 't1' },
+      time: { type: 'weekday', days: [1, 2] },
+      importance: 'prefer',
+      params: { maxPerDay: 8 },
+      enabled: true,
+      note: '下午教研',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      source: 'manual',
+    }],
+  };
+  const workbook = XLSX.read(Buffer.from(buildImportTemplate(source)), { type: 'buffer' });
+  const rows = XLSX.utils.sheet_to_json(workbook.Sheets['排课规则'], { header: 1 });
+  assert.deepEqual(rows[0], ['规则类型', '作用对象类型', '作用对象', '适用时间', '重要程度', '参数', '备注']);
+  assert.equal(rows[1][0], '教师每日上限');
+  assert.equal(rows[1][2], '王老师');
+  assert.equal(rows[1][3], '周一至周二');
+  assert.equal(rows[1][4], '尽量');
+  assert.equal(rows[1][5], 'maxPerDay=8');
+  const notes = XLSX.utils.sheet_to_json(workbook.Sheets['说明'], { header: 1 });
+  assert.ok(notes.some((row) => row[0] === '排课规则' && String(row[1]).includes('规则类型')));
+});
+

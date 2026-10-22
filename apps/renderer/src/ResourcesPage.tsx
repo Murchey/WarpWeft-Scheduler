@@ -7,6 +7,8 @@ import { ResourceWorkspace } from './ResourceWorkspace';
 import { download, exportMessage } from './download';
 import { messageOf, uid } from './utils';
 import { isValidSemester, parseDateInput } from '../../../packages/semester/src';
+import { IMPORTANCE_LABELS, RULE_DEFINITIONS } from '../../../packages/constraints/src';
+import type { RuleImportance, RuleInstance, RuleKind, RuleScope, RuleTime } from '../../../packages/constraints/src';
 
 const SLOT_KIND_MAP: Record<string, SlotKind> = {
   早读: 'morning', morning: 'morning',
@@ -21,6 +23,51 @@ const SLOT_KIND_OPTIONS = [
   { value: 'makeup', label: '补课' },
 ];
 
+const RULE_DAY_NAMES: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 7, 天: 7 };
+const RULE_IMPORTANCE: Record<string, RuleImportance> = { 必须: 'must', 尽量: 'prefer', 避免: 'avoid', must: 'must', prefer: 'prefer', avoid: 'avoid' };
+
+function parseRuleTime(value: string): RuleTime {
+  const raw = value.trim();
+  if (!raw || raw === '全周') return { type: 'all' };
+  const days = Array.from(raw.matchAll(/(?:周|星期)([一二三四五六日天])/g))
+    .map((match) => RULE_DAY_NAMES[match[1]])
+    .filter((day): day is number => Boolean(day));
+  const range = raw.match(/第\s*(\d+)\s*(?:-|~|至)\s*(\d+)\s*节/);
+  if (range) {
+    return {
+      type: 'periodRange',
+      ...(days.length ? { days: Array.from(new Set(days)).sort((a, b) => a - b) } : {}),
+      from: Number(range[1]),
+      to: Number(range[2]),
+    };
+  }
+  if (days.length) return { type: 'weekday', days: Array.from(new Set(days)).sort((a, b) => a - b) };
+  return { type: 'all' };
+}
+
+function parseRuleParams(value: string, kind: RuleKind): Record<string, string | number> {
+  const definition = RULE_DEFINITIONS.find((item) => item.kind === kind);
+  const params: Record<string, string | number> = {};
+  for (const field of definition?.paramFields ?? []) {
+    params[field.key] = field.type === 'number' ? (field.min ?? 1) : (field.options?.[0]?.value ?? '');
+  }
+  const raw = value.trim();
+  if (!raw) return params;
+  const pairs = raw.split(/[;；,，]/).map((pair) => pair.trim()).filter(Boolean);
+  for (const pair of pairs) {
+    const separator = pair.indexOf('=');
+    const key = (separator >= 0 ? pair.slice(0, separator) : pair).trim();
+    const val = (separator >= 0 ? pair.slice(separator + 1) : '').trim();
+    const field = definition?.paramFields.find((item) => item.key === key || item.label === key);
+    if (field) {
+      params[field.key] = field.type === 'number' ? Number(val) : val;
+    } else if (separator < 0 && definition?.paramFields.length === 1) {
+      const only = definition.paramFields[0];
+      params[only.key] = only.type === 'number' ? Number(val || key) : (val || key);
+    }
+  }
+  return params;
+}
 function ResourcesPage({
   data,
   commit,
@@ -214,8 +261,10 @@ function ResourcesPage({
       const roomRows = takeRows(['教室', 'room']);
       const slotRows = takeRows(['时间段', 'slot']);
       const planRows = takeRows(['教学计划', 'plan']);
+      const ruleRows = takeRows(['排课规则', 'rules']);
       const planSheetFound = [...grouped.keys()].some((sheet) => sheet.includes('教学计划') || sheet.includes('plan'));
-      if (![...schoolRows, ...semesterRows, ...classRows, ...teacherRows, ...subjectRows, ...roomRows, ...slotRows, ...planRows].length) {
+      const ruleSheetFound = [...grouped.keys()].some((sheet) => sheet.includes('排课规则') || sheet.includes('rules'));
+      if (![...schoolRows, ...semesterRows, ...classRows, ...teacherRows, ...subjectRows, ...roomRows, ...slotRows, ...planRows, ...ruleRows].length) {
         const emptyMessage = '未识别到可导入的工作表。请使用模板中的“班级/教师/学科/教室/时间段/教学计划”表头。';
         setImportFeedback({ tone: 'error', text: emptyMessage });
         setError(emptyMessage);
@@ -469,8 +518,97 @@ function ResourcesPage({
       const classByName = new Map(next.classes.map((item) => [item.name.trim().toLowerCase(), item]));
       const subjectByName = new Map(next.subjects.map((item) => [item.name.trim().toLowerCase(), item]));
       const teacherByName = new Map(next.teachers.map((item) => [item.name.trim().toLowerCase(), item]));
+      const roomByName = new Map(next.rooms.map((item) => [item.name.trim().toLowerCase(), item]));
       const slotByLabel = new Map(next.timeSlots.map((item) => [item.label.trim(), item]));
       const slotById = new Map(next.timeSlots.map((item) => [item.id, item]));
+      if (ruleSheetFound) {
+        const rules: RuleInstance[] = [];
+        const ruleByLabel = new Map<string, RuleKind>();
+        for (const definition of RULE_DEFINITIONS) {
+          ruleByLabel.set(definition.label, definition.kind);
+          ruleByLabel.set(definition.kind, definition.kind);
+        }
+        for (const row of ruleRows) {
+          const v = row.values;
+          if (!Object.values(v).some((value) => text(value) !== '')) continue;
+          const kindText = text(v['规则类型'] ?? v['规则'] ?? v['type']);
+          const kind = ruleByLabel.get(kindText);
+          if (!kind) {
+            issues.push('排课规则 第' + row.row + '行规则类型无法识别：' + kindText);
+            continue;
+          }
+          const definition = RULE_DEFINITIONS.find((item) => item.kind === kind)!;
+          const scopeTypeText = text(v['作用对象类型'] ?? v['对象类型'] ?? v['scopeType']);
+          const scopeValue = text(v['作用对象'] ?? v['对象'] ?? v['scope']);
+          let scope: RuleScope;
+          if (!scopeTypeText || /全校|全部|all/i.test(scopeTypeText)) {
+            scope = { type: 'all' };
+          } else if (/年级|grade/i.test(scopeTypeText)) {
+            if (!scopeValue) {
+              issues.push('排课规则 第' + row.row + '行缺少年级');
+              continue;
+            }
+            scope = { type: 'grade', grade: scopeValue };
+          } else if (/教师|teacher/i.test(scopeTypeText)) {
+            const teacher = teacherByName.get(scopeValue.toLowerCase());
+            if (!teacher) {
+              issues.push('排课规则 第' + row.row + '行引用了不存在的教师：' + scopeValue);
+              continue;
+            }
+            scope = { type: 'teacher', teacherId: teacher.id };
+          } else if (/学科|subject/i.test(scopeTypeText)) {
+            const subject = subjectByName.get(scopeValue.toLowerCase());
+            if (!subject) {
+              issues.push('排课规则 第' + row.row + '行引用了不存在的学科：' + scopeValue);
+              continue;
+            }
+            scope = { type: 'subject', subjectId: subject.id };
+          } else if (/班级|class/i.test(scopeTypeText)) {
+            const klass = classByName.get(scopeValue.toLowerCase());
+            if (!klass) {
+              issues.push('排课规则 第' + row.row + '行引用了不存在的班级：' + scopeValue);
+              continue;
+            }
+            scope = { type: 'class', classId: klass.id };
+          } else if (/教室|room/i.test(scopeTypeText)) {
+            const room = roomByName.get(scopeValue.toLowerCase());
+            if (!room) {
+              issues.push('排课规则 第' + row.row + '行引用了不存在的教室：' + scopeValue);
+              continue;
+            }
+            scope = { type: 'room', roomId: room.id };
+          } else if (definition.scopeType === 'teacher') {
+            const teacher = teacherByName.get(scopeValue.toLowerCase());
+            if (!teacher) {
+              issues.push('排课规则 第' + row.row + '行引用了不存在的教师：' + scopeValue);
+              continue;
+            }
+            scope = { type: 'teacher', teacherId: teacher.id };
+          } else {
+            const subject = subjectByName.get(scopeValue.toLowerCase());
+            if (!subject) {
+              issues.push('排课规则 第' + row.row + '行引用了不存在的学科：' + scopeValue);
+              continue;
+            }
+            scope = { type: 'subject', subjectId: subject.id };
+          }
+          const importanceText = text(v['重要程度'] ?? v['importance']);
+          const importance = RULE_IMPORTANCE[importanceText] ?? definition.defaultImportance;
+          rules.push({
+            id: uid('rule'),
+            kind,
+            scope,
+            time: parseRuleTime(text(v['适用时间'] ?? v['时间'] ?? v['time'])),
+            importance,
+            params: parseRuleParams(text(v['参数'] ?? v['params']), kind),
+            enabled: true,
+            note: text(v['备注'] ?? v['note']),
+            createdAt: new Date().toISOString(),
+            source: 'import',
+          });
+        }
+        next.rules = rules;
+      }
       if (planSheetFound) {
         const plans: CoursePlan[] = [];
         const planKeys = new Set<string>();
@@ -639,7 +777,7 @@ function ResourcesPage({
             <input type="checkbox" checked={replaceOnImport} onChange={(event) => setReplaceOnImport(event.target.checked)} />
             <span>导入前清空当前工作区</span>
           </label>
-          <p className="panel-note">仅支持 Excel（.xlsx/.xls）；模板包含“说明、学校、学期、班级、教师、学科、教室、时间段、教学计划”工作表；教师表的年级/学科为选填元数据，教室表可整表留空。测试完整数据集时建议勾选上方清空选项。</p>
+          <p className="panel-note">仅支持 Excel（.xlsx/.xls）；模板包含“说明、学校、学期、班级、教师、学科、教室、时间段、教学计划、排课规则”工作表；教师表的年级/学科为选填元数据，教室表可整表留空。测试完整数据集时建议勾选上方清空选项。</p>
         </section>
       </div>
     );
@@ -883,6 +1021,10 @@ function ResourcesPage({
 }
 
 export { ResourcesPage };
+
+
+
+
 
 
 
