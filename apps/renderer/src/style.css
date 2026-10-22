@@ -1211,3 +1211,8 @@ html[data-theme='dark'] .stats-ratio.is-warn{color:#fbbf24}
 .workspace-location-path{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--rule);border-radius:8px;background:var(--paper);flex-wrap:wrap}
 .workspace-location-path span{font:10px var(--font-ui);letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
 .workspace-location-path code{font:12px ui-monospace,Consolas,monospace;color:var(--ink);overflow-wrap:anywhere}
+
+.grade-picker-list{max-height:130px}
+.grade-matrix-table th,.grade-matrix-table td{text-align:center;white-space:nowrap}
+.grade-matrix-table th:first-child,.grade-matrix-table td:first-child{text-align:left}
+.grade-matrix-input{width:64px!important;min-width:0!important;text-align:center}

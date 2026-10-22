@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+﻿import React, { useMemo, useState } from 'react';
 import type { Commit, CoursePlan, SchoolData } from './types';
 import { SectionHeading } from './components';
 import type { Column } from './components';
@@ -373,13 +373,14 @@ function PlansPage({
         />
       ) : null}
       {composerOpen ? <PlanComposer data={data} commit={commit} setError={setError} onClose={() => setComposerOpen(false)} /> : null}
-      {gradeComposerOpen ? <GradePlanComposer data={data} commit={commit} setError={setError} setNotice={setNotice} onClose={() => setGradeComposerOpen(false)} /> : null}
+      {gradeComposerOpen ? <GradePlanComposer data={data} commit={commit} setError={setError} onClose={() => setGradeComposerOpen(false)} /> : null}
     </section>
   );
 }
 
 
 export { PlansPage };
+
 
 
 

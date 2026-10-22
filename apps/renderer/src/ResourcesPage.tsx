@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { buildImportTemplate, normalizeGradeList, readWorkbookWithMeta } from '../../../packages/import-export/src';
 import type { ClassRoom, Commit, CoursePlan, Room, SchoolData, SlotKind, Subject, Teacher, TimeSlot } from './types';
 import { DAYS, EditableTable, SectionHeading } from './components';
@@ -102,6 +102,31 @@ function ResourcesPage({
     const invalidate = collection === 'timeSlots' && (key === 'day' || key === 'period' || key === 'kind');
     commit({ ...data, [collection]: rows } as unknown as SchoolData, { invalidate });
   };
+  const pruneDeletedReferences = (
+    next: SchoolData,
+    collection: 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots',
+    deleted: Set<string>,
+  ) => {
+    const touches = (value?: string | null) => Boolean(value && deleted.has(value));
+    next.unavailableSlots = (next.unavailableSlots ?? []).filter(
+      (item) => !(collection === 'teachers' && deleted.has(item.teacherId)) && !(collection === 'timeSlots' && deleted.has(item.slotId)),
+    );
+    next.adjustments = (next.adjustments ?? []).filter((item) => {
+      if (collection === 'classes' && deleted.has(item.classId)) return false;
+      if (collection === 'teachers' && touches(item.substituteTeacherId)) return false;
+      if (collection === 'rooms' && touches(item.roomId)) return false;
+      if (collection === 'timeSlots' && (deleted.has(item.slotId) || touches(item.targetSlotId))) return false;
+      return true;
+    });
+    next.lessonLogs = (next.lessonLogs ?? []).filter((item) => {
+      if (collection === 'classes' && deleted.has(item.classId)) return false;
+      if (collection === 'subjects' && deleted.has(item.subjectId)) return false;
+      if (collection === 'teachers' && (deleted.has(item.teacherId) || deleted.has(item.originalTeacherId))) return false;
+      if (collection === 'timeSlots' && deleted.has(item.slotId)) return false;
+      return true;
+    });
+    return next;
+  };
   const remove = (
     collection: 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots',
     id: string,
@@ -122,9 +147,14 @@ function ResourcesPage({
       setError('至少需要保留一间教室');
       return;
     }
+    if (collection === 'timeSlots' && data.coursePlans.some((plan) => plan.fixedSlotId === id)) {
+      setError('该时间段仍被教学计划设为固定时间，请先调整相关计划');
+      return;
+    }
     if (!window.confirm('确定删除这条记录？')) return;
     const rows = (data[collection] as Array<{ id: string }>).filter((row) => row.id !== id);
-    commit({ ...data, [collection]: rows } as unknown as SchoolData, { invalidate: true });
+    const next = pruneDeletedReferences({ ...data, [collection]: rows } as unknown as SchoolData, collection, new Set([id]));
+    commit(next, { invalidate: true });
   };
   const add = (collection: 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots') => {
     let row: Record<string, unknown>;
@@ -168,7 +198,8 @@ function ResourcesPage({
       return;
     }
     const rows = (data[collection] as Array<{ id: string }>).filter((row) => !selected.has(row.id));
-    commit({ ...data, [collection]: rows } as unknown as SchoolData, { invalidate: true, immediate: true });
+    const next = pruneDeletedReferences({ ...data, [collection]: rows } as unknown as SchoolData, collection, selected);
+    commit(next, { invalidate: true, immediate: true });
     setNotice('已删除 ' + ids.length + ' 条记录');
   };
 
@@ -305,6 +336,8 @@ function ResourcesPage({
         next.rooms = [];
         next.timeSlots = [];
         next.coursePlans = [];
+        next.adjustments = [];
+        next.lessonLogs = [];
       }
       const classNames = new Set<string>();
       for (const row of classRows) {
@@ -1021,6 +1054,9 @@ function ResourcesPage({
 }
 
 export { ResourcesPage };
+
+
+
 
 
 

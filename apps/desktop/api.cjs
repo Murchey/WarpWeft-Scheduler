@@ -62,6 +62,45 @@ function readBody(req) {
   });
 }
 
+/**
+ * Drop date-level records whose referenced resource was removed. This keeps
+ * deleting a time slot / class / teacher / room from turning every later save
+ * into a hard validation error about a stale adjustment.
+ */
+function sanitizeOrphanReferences(data) {
+  if (!data || typeof data !== 'object') return data;
+  const classIds = new Set(Array.isArray(data.classes) ? data.classes.map((item) => item.id) : []);
+  const teacherIds = new Set(Array.isArray(data.teachers) ? data.teachers.map((item) => item.id) : []);
+  const subjectIds = new Set(Array.isArray(data.subjects) ? data.subjects.map((item) => item.id) : []);
+  const roomIds = new Set(Array.isArray(data.rooms) ? data.rooms.map((item) => item.id) : []);
+  const slotIds = new Set(Array.isArray(data.timeSlots) ? data.timeSlots.map((item) => item.id) : []);
+  if (Array.isArray(data.adjustments)) {
+    data.adjustments = data.adjustments.filter((item) =>
+      item &&
+      classIds.has(item.classId) &&
+      slotIds.has(item.slotId) &&
+      (!item.targetSlotId || slotIds.has(item.targetSlotId)) &&
+      (!item.substituteTeacherId || teacherIds.has(item.substituteTeacherId)) &&
+      (!item.roomId || roomIds.has(item.roomId)),
+    );
+  }
+  if (Array.isArray(data.lessonLogs)) {
+    data.lessonLogs = data.lessonLogs.filter((item) =>
+      item &&
+      classIds.has(item.classId) &&
+      slotIds.has(item.slotId) &&
+      teacherIds.has(item.teacherId) &&
+      teacherIds.has(item.originalTeacherId) &&
+      subjectIds.has(item.subjectId),
+    );
+  }
+  if (Array.isArray(data.unavailableSlots)) {
+    data.unavailableSlots = data.unavailableSlots.filter((item) =>
+      item && teacherIds.has(item.teacherId) && slotIds.has(item.slotId),
+    );
+  }
+  return data;
+}
 function validateData(data) {
   if (!data || typeof data !== 'object') return '数据格式无效';
   for (const key of ['classes', 'teachers', 'subjects', 'rooms', 'timeSlots', 'coursePlans']) {
@@ -1355,6 +1394,7 @@ function startApi({
         } catch {
           return send(res, 400, { error: '请求不是有效 JSON', code: 'INVALID_BODY' });
         }
+        sanitizeOrphanReferences(body);
         const error = validateData(body);
         if (error) return send(res, 400, { error, code: 'INVALID_DATA' });
         return send(res, 200, store.write(body));
@@ -1504,7 +1544,10 @@ function startApi({
   return server;
 }
 
-module.exports = { startApi, validateData };
+module.exports = { startApi, validateData, sanitizeOrphanReferences };
+
+
+
 
 
 

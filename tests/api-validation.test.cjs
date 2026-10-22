@@ -1,6 +1,6 @@
 ﻿const test = require('node:test');
 const assert = require('node:assert/strict');
-const { validateData } = require('../apps/desktop/api.cjs');
+const { validateData, sanitizeOrphanReferences } = require('../apps/desktop/api.cjs');
 
 test('API rejects invalid timetable references before persistence', () => {
   const data = {
@@ -104,4 +104,20 @@ test('API allows a teaching plan without a fixed teacher', () => {
     candidate: { entries: [{ id: 'e1', classId: 'c1', teacherId: '', roomId: 'r1', slotId: 'slot-1' }] },
   };
   assert.equal(validateData(data), null);
+});
+
+test('orphaned adjustment and lesson-log references are pruned before save', () => {
+  const data = {
+    classes: [{ id: 'c1' }], teachers: [{ id: 't1' }], subjects: [{ id: 's1' }],
+    rooms: [{ id: 'r1', capacity: 30 }], timeSlots: [{ id: 'slot-1', day: 1, period: 1 }],
+    coursePlans: [],
+    adjustments: [
+      { id: 'a1', classId: 'c1', slotId: 'missing', status: 'active' },
+      { id: 'a2', classId: 'c1', slotId: 'slot-1', status: 'active' },
+    ],
+    lessonLogs: [{ id: 'l1', classId: 'c1', slotId: 'missing', teacherId: 't1', originalTeacherId: 't1', subjectId: 's1' }],
+  };
+  sanitizeOrphanReferences(data);
+  assert.deepEqual(data.adjustments.map((item) => item.id), ['a2']);
+  assert.equal(data.lessonLogs.length, 0);
 });
