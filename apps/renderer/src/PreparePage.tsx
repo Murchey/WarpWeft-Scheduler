@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import type { Commit, RuleInstance, SchoolData } from './types';
 import { AvailabilityEditor } from './AvailabilityEditor';
 import { PlansPage } from './PlansPage';
@@ -93,7 +93,7 @@ function PreparePage({
         {section === 'semester' ? (
           <SemesterPage data={data} commit={commit} />
         ) : section === 'plans' ? (
-          <PlansPage data={data} commit={commit} setError={setError} />
+          <PlansPage data={data} commit={commit} setError={setError} setNotice={setNotice} />
         ) : section === 'electives' ? (
           <ElectivePage data={data} commit={commit} setError={setError} />
         ) : section === 'availability' ? (

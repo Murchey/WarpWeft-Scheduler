@@ -1,4 +1,4 @@
-const test = require('node:test');
+﻿const test = require('node:test');
 const assert = require('node:assert/strict');
 const { validateData } = require('../apps/desktop/api.cjs');
 
@@ -94,4 +94,14 @@ test('API validates date adjustments before persistence', () => {
   data.adjustments[0].type = 'move';
   data.adjustments[0].targetSlotId = 'missing-slot';
   assert.match(validateData(data), /调课目标无效/);
+});
+
+test('API allows a teaching plan without a fixed teacher', () => {
+  const data = {
+    classes: [{ id: 'c1' }], teachers: [{ id: 't1' }], subjects: [{ id: 's1' }],
+    rooms: [{ id: 'r1', capacity: 30 }], timeSlots: [{ id: 'slot-1', day: 1, period: 1 }],
+    coursePlans: [{ id: 'p1', classId: 'c1', teacherId: '', subjectId: 's1', weeklyPeriods: 1 }],
+    candidate: { entries: [{ id: 'e1', classId: 'c1', teacherId: '', roomId: 'r1', slotId: 'slot-1' }] },
+  };
+  assert.equal(validateData(data), null);
 });

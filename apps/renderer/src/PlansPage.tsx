@@ -1,9 +1,10 @@
-﻿import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { Commit, CoursePlan, SchoolData } from './types';
 import { SectionHeading } from './components';
 import type { Column } from './components';
 import { ResourceWorkspace } from './ResourceWorkspace';
 import { PlanComposer } from './PlanComposer';
+import { GradePlanComposer } from './GradePlanComposer';
 import { uid } from './utils';
 
 const PLAN_PREVIEW = 8;
@@ -24,13 +25,16 @@ function PlansPage({
   data,
   commit,
   setError,
+  setNotice,
 }: {
   data: SchoolData;
   commit: Commit;
   setError: (value: string) => void;
+  setNotice: (value: string) => void;
 }) {
   const roomTypes = Array.from(new Set(data.rooms.map((room) => room.type).filter(Boolean)));
   const [composerOpen, setComposerOpen] = useState(false);
+  const [gradeComposerOpen, setGradeComposerOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const total = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
   const [matrixMode, setMatrixMode] = useState<'class' | 'grade'>('class');
@@ -93,11 +97,11 @@ function PlansPage({
   const planColumns: Column<CoursePlan>[] = [
     { key: 'classId', label: '班级', type: 'select', options: data.classes.map((item) => ({ value: item.id, label: item.name })) },
     { key: 'subjectId', label: '学科', type: 'select', options: data.subjects.map((item) => ({ value: item.id, label: item.name })) },
-    { key: 'teacherId', label: '教师', type: 'select', options: data.teachers.map((item) => ({ value: item.id, label: item.name })) },
+    { key: 'teacherId', label: '教师（选填）', type: 'select', options: [{ value: '', label: '未指定' }, ...data.teachers.map((item) => ({ value: item.id, label: item.name }))] },
     { key: 'weeklyPeriods', label: '每周课时', type: 'number', width: '10%' },
     {
       key: 'weeks',
-      label: '周次',
+      label: '周次（选填）',
       type: 'select',
       width: '10%',
       defaultValue: 'all',
@@ -109,7 +113,7 @@ function PlansPage({
     },
     {
       key: 'kind',
-      label: '时段类型',
+      label: '课程类型（选填）',
       type: 'select',
       width: '12%',
       defaultValue: 'regular',
@@ -120,10 +124,10 @@ function PlansPage({
         { value: 'makeup', label: '补课' },
       ],
     },
-    { key: 'roomType', label: '教室类型', width: '12%' },
+    { key: 'roomType', label: '教室类型（选填）', width: '12%' },
     {
       key: 'fixedSlotId',
-      label: '固定时间',
+      label: '固定时间（选填）',
       type: 'select',
       width: '14%',
       defaultValue: '',
@@ -143,6 +147,9 @@ function PlansPage({
         <div className="panel-head-actions">
           <button className="ghost-button" onClick={() => setWorkspaceOpen(true)}>
             查看全部（{data.coursePlans.length}）
+          </button>
+          <button className="mini-button" onClick={() => { if (!data.classes.length) { setError('请先添加至少一个班级'); return; } setError(''); setGradeComposerOpen(true); }}>
+            按年级批量设置
           </button>
           <button className="mini-button" onClick={() => { if (!data.classes.length) { setError('请先添加至少一个班级'); return; } setError(''); setComposerOpen(true); }}>
             + 批量新增
@@ -228,12 +235,12 @@ function PlansPage({
             <tr>
               <th>班级</th>
               <th>学科</th>
-              <th>教师</th>
+              <th>教师（选填）</th>
               <th>每周课时</th>
-              <th>周次</th>
-              <th>时段类型</th>
-              <th>教室类型</th>
-              <th>固定时间</th>
+              <th>周次（选填）</th>
+              <th>课程类型（选填）</th>
+              <th>教室类型（选填）</th>
+              <th>固定时间（选填）</th>
               <th className="action-column">操作</th>
             </tr>
           </thead>
@@ -266,7 +273,8 @@ function PlansPage({
                     </select>
                   </td>
                   <td>
-                    <select value={plan.teacherId} onChange={(event) => update(plan.id, { teacherId: event.target.value })}>
+                    <select value={plan.teacherId ?? ''} onChange={(event) => update(plan.id, { teacherId: event.target.value })}>
+                      <option value="">未指定</option>
                       {data.teachers.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.name}
@@ -332,11 +340,11 @@ function PlansPage({
           rows={data.coursePlans}
           columns={planColumns}
           batchFields={[
-            { key: 'teacherId', label: '教师', type: 'select', options: data.teachers.map((item) => ({ value: item.id, label: item.name })) },
+            { key: 'teacherId', label: '教师（选填）', type: 'select', options: [{ value: '', label: '未指定' }, ...data.teachers.map((item) => ({ value: item.id, label: item.name }))] },
             { key: 'weeklyPeriods', label: '每周课时', type: 'number', placeholder: '如 3' },
             {
               key: 'weeks',
-              label: '周次',
+              label: '周次（选填）',
               type: 'select',
               options: [
                 { value: 'all', label: '每周' },
@@ -346,7 +354,7 @@ function PlansPage({
             },
             {
               key: 'kind',
-              label: '时段类型',
+              label: '课程类型（选填）',
               type: 'select',
               options: [
                 { value: 'regular', label: '常规' },
@@ -365,12 +373,14 @@ function PlansPage({
         />
       ) : null}
       {composerOpen ? <PlanComposer data={data} commit={commit} setError={setError} onClose={() => setComposerOpen(false)} /> : null}
+      {gradeComposerOpen ? <GradePlanComposer data={data} commit={commit} setError={setError} setNotice={setNotice} onClose={() => setGradeComposerOpen(false)} /> : null}
     </section>
   );
 }
 
 
 export { PlansPage };
+
 
 
 

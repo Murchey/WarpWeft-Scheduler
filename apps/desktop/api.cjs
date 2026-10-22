@@ -1,4 +1,4 @@
-﻿const http = require('node:http');
+const http = require('node:http');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -123,7 +123,7 @@ function validateData(data) {
   }
   for (const plan of data.coursePlans) {
     if (!classIds.has(plan.classId)) return '教学计划 ' + plan.id + ' 引用了不存在的班级';
-    if (!teacherIds.has(plan.teacherId)) return '教学计划 ' + plan.id + ' 引用了不存在的教师';
+    if (plan.teacherId && !teacherIds.has(plan.teacherId)) return '教学计划 ' + plan.id + ' 引用了不存在的教师';
     if (!subjectIds.has(plan.subjectId)) return '教学计划 ' + plan.id + ' 引用了不存在的学科';
     if (plan.fixedSlotId && !slotIds.has(plan.fixedSlotId)) return '教学计划 ' + plan.id + ' 引用了不存在的固定时间';
     if (plan.weeks !== undefined && plan.weeks !== null && !['all', 'odd', 'even'].includes(plan.weeks)) {
@@ -141,7 +141,7 @@ function validateData(data) {
   for (const collection of [data.candidate, data.published]) {
     if (!collection || !Array.isArray(collection.entries)) continue;
     for (const entry of collection.entries) {
-      if (!classIds.has(entry.classId) || !teacherIds.has(entry.teacherId) || !roomIds.has(entry.roomId) || !slotIds.has(entry.slotId)) return '课表条目 ' + entry.id + ' 引用了不存在的资源';
+      if (!classIds.has(entry.classId) || (entry.teacherId && !teacherIds.has(entry.teacherId)) || !roomIds.has(entry.roomId) || !slotIds.has(entry.slotId)) return '课表条目 ' + entry.id + ' 引用了不存在的资源';
     }
   }
   if (data.adjustments !== undefined) {

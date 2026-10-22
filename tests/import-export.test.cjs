@@ -12,7 +12,7 @@ test('import template uses the new headers and required position notes', async (
   const workbook = XLSX.read(Buffer.from(bytes), { type: 'buffer' });
 
   const planHeader = XLSX.utils.sheet_to_json(workbook.Sheets['教学计划'], { header: 1 })[0];
-  assert.deepEqual(planHeader, ['班级', '学科', '教师', '每周课时', '周次（选填）', '课程类型（选填）', '教室类型（选填）', '固定时间（选填）']);
+  assert.deepEqual(planHeader, ['班级', '学科', '教师（选填）', '每周课时', '周次（选填）', '课程类型（选填）', '教室类型（选填）', '固定时间（选填）']);
 
   const teacherHeader = XLSX.utils.sheet_to_json(workbook.Sheets['教师'], { header: 1 })[0];
   assert.deepEqual(teacherHeader, ['姓名', '负责年级（选填）', '主要学科（选填）', '其他学科（选填）']);
@@ -72,3 +72,4 @@ test('per-day period settings override the full day', async () => {
   assert.deepEqual(parsed.meta.dayPeriods[7], [1, 2, 3, 4]);
   assert.equal(parsed.rows.filter((row) => row.sheet === '时间段').length, 8);
 });
+

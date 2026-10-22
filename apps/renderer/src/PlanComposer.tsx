@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import type { CoursePlan, SchoolData } from './types';
 import { uid } from './utils';
 
@@ -18,7 +18,7 @@ function PlanComposer({
   const roomTypes = Array.from(new Set(data.rooms.map((room) => room.type).filter(Boolean)));
   const [classIds, setClassIds] = useState<string[]>(data.classes[0] ? [data.classes[0].id] : []);
   const [subjectId, setSubjectId] = useState(data.subjects[0]?.id ?? '');
-  const [teacherId, setTeacherId] = useState(data.teachers[0]?.id ?? '');
+  const [teacherId, setTeacherId] = useState('');
   const [customSubject, setCustomSubject] = useState('');
   const [customTeacher, setCustomTeacher] = useState('');
   const [weeklyPeriods, setWeeklyPeriods] = useState(1);
@@ -66,11 +66,7 @@ function PlanComposer({
       setError('请选择学科，或填写一个新学科');
       return;
     }
-    if (!nextTeacherId || !nextTeachers.some((item) => item.id === nextTeacherId)) {
-      setError('请选择教师，或填写一位新教师');
-      return;
-    }
-    const duplicate = data.coursePlans.find((plan) => classIds.includes(plan.classId) && plan.subjectId === nextSubjectId && plan.teacherId === nextTeacherId && (plan.weeks ?? 'all') === weeks && (plan.kind ?? 'regular') === planKind);
+    const duplicate = data.coursePlans.find((plan) => classIds.includes(plan.classId) && plan.subjectId === nextSubjectId && (plan.teacherId ?? '') === nextTeacherId && (plan.weeks ?? 'all') === weeks && (plan.kind ?? 'regular') === planKind);
     if (duplicate) {
       setError('所选班级中已存在同学科、同教师、同周次的教学计划，请调整后再添加');
       return;
@@ -97,7 +93,7 @@ function PlanComposer({
     <div className="composer-overlay" role="dialog" aria-modal="true">
       <div className="composer-dialog">
         <div className="composer-head">
-          <div><span className="kicker">// BATCH COURSE PLAN</span><h2>批量新增教学计划</h2><p>一次为多个班级创建同一门课；学科和教师也可以直接填写新的名称。</p></div>
+          <div><span className="kicker">// BATCH COURSE PLAN</span><h2>批量新增教学计划</h2><p>一次为多个班级创建同一门课；教师可不指定，学科是硬条件。</p></div>
           <button type="button" className="banner-close" onClick={onClose} aria-label="关闭">×</button>
         </div>
         <div className="composer-body">
@@ -106,25 +102,30 @@ function PlanComposer({
             <div className="composer-options">
               <button type="button" className="composer-mini" onClick={() => setClassIds(data.classes.map((item) => item.id))}>全选</button>
               <button type="button" className="composer-mini" onClick={() => setClassIds([])}>清空</button>
+              <span className="composer-selected-count">已选 {classIds.length} / {data.classes.length}</span>
+            </div>
+            <div className="composer-class-list">
               {data.classes.map((item) => (
-                <button type="button" key={item.id} className={classIds.includes(item.id) ? 'composer-choice active' : 'composer-choice'} onClick={() => toggleClass(item.id)}>
-                  {item.name}
-                </button>
+                <label key={item.id} className={classIds.includes(item.id) ? 'composer-class-item is-checked' : 'composer-class-item'}>
+                  <input type="checkbox" checked={classIds.includes(item.id)} onChange={() => toggleClass(item.id)} />
+                  <span>{item.name}</span>
+                  <small>{item.grade || '未填年级'} · {item.size} 人</small>
+                </label>
               ))}
             </div>
           </div>
           <div className="composer-fields">
             <label>已有学科<select value={subjectId} onChange={(event) => setSubjectId(event.target.value)}><option value="">选择学科</option>{data.subjects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
             <label>新建学科<input value={customSubject} onChange={(event) => setCustomSubject(event.target.value)} placeholder="留空则使用左侧学科" /></label>
-            <label>已有教师<select value={teacherId} onChange={(event) => setTeacherId(event.target.value)}><option value="">选择教师</option>{data.teachers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label>教师（选填）<select value={teacherId} onChange={(event) => setTeacherId(event.target.value)}><option value="">不指定</option>{data.teachers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
             <label>新建教师<input value={customTeacher} onChange={(event) => setCustomTeacher(event.target.value)} placeholder="留空则使用左侧教师" /></label>
           </div>
           <div className="composer-fields">
             <label>周课时<input type="number" min={1} value={weeklyPeriods} onChange={(event) => setWeeklyPeriods(Number(event.target.value))} /></label>
-            <label>周次<select value={weeks} onChange={(event) => setWeeks(event.target.value as 'all' | 'odd' | 'even')}><option value="all">每周</option><option value="odd">单周</option><option value="even">双周</option></select></label>
-            <label>时段类型<select value={planKind} onChange={(event) => setPlanKind(event.target.value as 'morning' | 'regular' | 'evening' | 'makeup')}><option value="regular">常规</option><option value="morning">早读</option><option value="evening">晚自习</option><option value="makeup">补课</option></select></label>
-            <label>教室类型<input list="composer-room-types" value={roomType} onChange={(event) => setRoomType(event.target.value)} placeholder="不限 / 普通教室" /><datalist id="composer-room-types">{roomTypes.map((type) => <option key={type} value={type} />)}</datalist></label>
-            <label>固定时间<select value={fixedSlotId} onChange={(event) => setFixedSlotId(event.target.value)}><option value="">不固定</option>{data.timeSlots.map((slot) => <option key={slot.id} value={slot.id}>{slot.label}</option>)}</select></label>
+            <label>周次（选填）<select value={weeks} onChange={(event) => setWeeks(event.target.value as 'all' | 'odd' | 'even')}><option value="all">每周</option><option value="odd">单周</option><option value="even">双周</option></select></label>
+            <label>课程类型（选填）<select value={planKind} onChange={(event) => setPlanKind(event.target.value as 'morning' | 'regular' | 'evening' | 'makeup')}><option value="regular">常规</option><option value="morning">早读</option><option value="evening">晚自习</option><option value="makeup">补课</option></select></label>
+            <label>教室类型（选填）<input list="composer-room-types" value={roomType} onChange={(event) => setRoomType(event.target.value)} placeholder="不限 / 普通教室" /><datalist id="composer-room-types">{roomTypes.map((type) => <option key={type} value={type} />)}</datalist></label>
+            <label>固定时间（选填）<select value={fixedSlotId} onChange={(event) => setFixedSlotId(event.target.value)}><option value="">不固定</option>{data.timeSlots.map((slot) => <option key={slot.id} value={slot.id}>{slot.label}</option>)}</select></label>
           </div>
         </div>
         <div className="composer-actions">

@@ -97,11 +97,31 @@ function fmtTime(value?: string): string {
 }
 
 
+const UNASSIGNED_TEACHER_PREFIX = '__unassigned__:';
+
+function solverTeacherId(plan: CoursePlan): string {
+  return plan.teacherId?.trim() ? plan.teacherId : UNASSIGNED_TEACHER_PREFIX + plan.id;
+}
+
+function restoreUnassignedTeachers(output: SolverOutput): SolverOutput {
+  return {
+    ...output,
+    entries: output.entries.map((entry) =>
+      entry.teacherId?.startsWith(UNASSIGNED_TEACHER_PREFIX) ? { ...entry, teacherId: '' } : entry,
+    ),
+  };
+}
+
 function toSolverInput(
   data: SchoolData,
   timeLimit: number,
   locked: ScheduleEntry[],
 ): SolverInput {
+  const planById = new Map(data.coursePlans.map((plan) => [plan.id, plan]));
+  const lockedEntries = locked.map((entry) => {
+    const plan = planById.get(entry.coursePlanId);
+    return plan && !plan.teacherId?.trim() ? { ...entry, teacherId: solverTeacherId(plan) } : entry;
+  });
   return {
     protocolVersion: '1.0',
     dataSnapshotVersion: 'local-' + Date.now(),
@@ -110,9 +130,9 @@ function toSolverInput(
     teachers: data.teachers,
     subjects: data.subjects,
     rooms: data.rooms,
-    coursePlans: data.coursePlans,
+    coursePlans: data.coursePlans.map((plan) => ({ ...plan, teacherId: solverTeacherId(plan) })),
     unavailableSlots: data.unavailableSlots ?? [],
-    lockedEntries: locked,
+    lockedEntries,
     electiveGroups: data.electiveGroups ?? [],
     hardConstraints: ['NO_CLASS_CONFLICT', 'NO_TEACHER_CONFLICT', 'ROOM_CAPACITY'],
     rules: data.rules ?? [],
@@ -198,11 +218,12 @@ function conflictIds(entries: ScheduleEntry[], plans: CoursePlan[] = []): Set<st
   const weeksOf = (entry: ScheduleEntry) => entry.weeks ?? weeksOfPlan.get(entry.coursePlanId) ?? 'all';
   const groups = new Map<string, ScheduleEntry[]>();
   for (const entry of entries) {
-    for (const key of [
+    const keys = [
       'class:' + entry.classId + ':' + entry.slotId,
-      'teacher:' + entry.teacherId + ':' + entry.slotId,
       'room:' + entry.roomId + ':' + entry.slotId,
-    ]) {
+    ];
+    if (entry.teacherId) keys.push('teacher:' + entry.teacherId + ':' + entry.slotId);
+    for (const key of keys) {
       const list = groups.get(key) ?? [];
       list.push(entry);
       groups.set(key, list);
@@ -718,7 +739,7 @@ function App() {
     setNotice('');
     try {
       setProgress({ phase: 'solving', message: 'Solver 正在计算可行课表', startedAt: Date.now() });
-      const output = await solveSchedule(toSolverInput(data, timeLimit, locked));
+      const output = restoreUnassignedTeachers(await solveSchedule(toSolverInput(data, timeLimit, locked)));
       setProgress({ phase: 'finalizing', message: '正在保存候选课表并整理结果', startedAt: Date.now() });
       setResult(output);
       const updated = { ...data, candidate: output };
@@ -754,7 +775,7 @@ function App() {
     const temp = { ...data, rules: (data.rules ?? []).map((item) => item.id === rule.id ? { ...item, enabled: false } : item) };
     const locked = data.candidate?.entries.filter((entry) => entry.locked) ?? [];
     try {
-      const output = await solveSchedule(toSolverInput(temp, 30, locked));
+      const output = restoreUnassignedTeachers(await solveSchedule(toSolverInput(temp, 30, locked)));
       const total = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
       const before = data.candidate?.entries.length ?? 0;
       return { entries: output.entries.length, total, before, feasible: output.hasFeasibleSolution, elapsedMs: output.elapsedMs };
@@ -775,7 +796,7 @@ function App() {
     setError('');
     setProgress({ phase: 'solving', message: '正在局部重排所选范围', startedAt: Date.now() });
     try {
-      const output = await solveSchedule(toSolverInput(data, timeLimit, locked));
+      const output = restoreUnassignedTeachers(await solveSchedule(toSolverInput(data, timeLimit, locked)));
       const repaired = {
         ...output,
         entries: output.entries.map((entry) => ({
@@ -2648,6 +2669,7 @@ function TimetablePage({
 }
 
 createRoot(document.getElementById('root')!).render(<HeroUIProvider><App /></HeroUIProvider>);
+
 
 
 

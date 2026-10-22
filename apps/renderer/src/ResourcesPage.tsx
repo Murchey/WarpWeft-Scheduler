@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { buildImportTemplate, normalizeGradeList, readWorkbookWithMeta } from '../../../packages/import-export/src';
 import type { ClassRoom, Commit, CoursePlan, Room, SchoolData, SlotKind, Subject, Teacher, TimeSlot } from './types';
 import { DAYS, EditableTable, SectionHeading } from './components';
@@ -482,8 +482,8 @@ function ResourcesPage({
           const teacherName = text(v['教师'] ?? v['教师姓名'] ?? v['teacher']);
           const classItem = classByName.get(className.toLowerCase());
           const subjectItem = subjectByName.get(subjectName.toLowerCase());
-          const teacherItem = teacherByName.get(teacherName.toLowerCase());
-          if (!classItem || !subjectItem || !teacherItem) {
+          const teacherItem = teacherName ? teacherByName.get(teacherName.toLowerCase()) : undefined;
+          if (!classItem || !subjectItem || (teacherName && !teacherItem)) {
             issues.push('教学计划 第' + row.row + '行引用了不存在的班级、学科或教师');
             continue;
           }
@@ -524,13 +524,13 @@ function ResourcesPage({
             issues.push('教学计划 第' + row.row + '行时段类型无法识别：' + kindText + '（可填 早读/常规/晚自习/补课）');
             continue;
           }
-          const key = classItem.id + '|' + subjectItem.id + '|' + teacherItem.id + '|' + weeks;
+          const key = classItem.id + '|' + subjectItem.id + '|' + (teacherItem?.id ?? '') + '|' + weeks;
           if (planKeys.has(key)) {
             issues.push('教学计划 第' + row.row + '行重复：' + className + ' / ' + subjectName);
             continue;
           }
           planKeys.add(key);
-          plans.push({ id: uid('plan'), classId: classItem.id, subjectId: subjectItem.id, teacherId: teacherItem.id, weeklyPeriods, roomType, fixedSlotId, weeks, kind: planKind });
+          plans.push({ id: uid('plan'), classId: classItem.id, subjectId: subjectItem.id, teacherId: teacherItem?.id ?? '', weeklyPeriods, roomType, fixedSlotId, weeks, kind: planKind });
         }
         next.coursePlans = plans;
       }
