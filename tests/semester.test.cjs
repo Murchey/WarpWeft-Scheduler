@@ -52,3 +52,17 @@ test('invalid or inverted dates produce no weeks', async () => {
   assert.equal(isValidSemester({ startDate: '2026-09-01', endDate: '2026-09-01' }), true);
 });
 
+
+test('Excel-style date strings and serial numbers are normalized', async () => {
+  const { parseDateInput } = await loadSemester();
+  assert.equal(parseDateInput('2026-09-01'), '2026-09-01');
+  assert.equal(parseDateInput('2026/9/1'), '2026-09-01');
+  assert.equal(parseDateInput('2026/09/01'), '2026-09-01');
+  assert.equal(parseDateInput('2026.9.1'), '2026-09-01');
+  assert.equal(parseDateInput('2026年9月1日'), '2026-09-01');
+  assert.equal(parseDateInput('2026-9-1 08:00'), '2026-09-01');
+  assert.equal(parseDateInput('2026/2/30'), null);
+  assert.equal(parseDateInput('not a date'), null);
+  const serial = Date.UTC(2026, 8, 1) / 86400000 + 25569;
+  assert.equal(parseDateInput(serial), '2026-09-01');
+});

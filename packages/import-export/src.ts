@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+﻿import * as XLSX from 'xlsx';
 
 export interface ImportRow { sheet: string; row: number; values: Record<string, unknown>; }
 export interface ImportIssue { sheet: string; row: number; field?: string; message: string; }
@@ -21,6 +21,11 @@ const DAY_INDEX: Record<string, number> = {
 
 function cellText(value: unknown): string {
   return value === null || value === undefined ? '' : String(value).trim();
+}
+
+/** Headers may carry （选填）/（可选） markers; the importer still reads the base field. */
+function normalizeHeader(value: unknown): string {
+  return cellText(value).replace(/[（(][^）)]*(?:选填|可选)[^）)]*[）)]\s*$/, '').trim();
 }
 
 function parseWeekdays(value: string): number[] | undefined {
@@ -75,7 +80,7 @@ export function readWorkbookWithMeta(buffer: ArrayBuffer): ReadWorkbookResult {
         }
       }
     }
-    const headers = (aoa[headerRow] ?? []).map((cell) => cellText(cell));
+    const headers = (aoa[headerRow] ?? []).map((cell) => normalizeHeader(cell));
     if (!headers.some(Boolean)) continue;
     for (let index = headerRow + 1; index < aoa.length; index += 1) {
       const cells = aoa[index] ?? [];
@@ -98,6 +103,22 @@ export function readWorkbook(buffer: ArrayBuffer): ImportRow[] {
   return readWorkbookWithMeta(buffer).rows;
 }
 
+
+/**
+ * Normalize a teacher's grade list. Semicolons may be Chinese, English or
+ * mixed: 1;2;3 / 1；2；3 / 1;2；3 all become 1;2;3. Non-numeric legacy values
+ * (for example 七年级) are preserved as-is.
+ */
+export function normalizeGradeList(value: unknown): string {
+  const raw = cellText(value);
+  if (!raw) return '';
+  const parts = raw.split(/[;；]/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length > 0 && parts.every((part) => /^\d+$/.test(part))) {
+    const grades = Array.from(new Set(parts.map(Number))).sort((a, b) => a - b);
+    return grades.join(';');
+  }
+  return raw;
+}
 export function validateRequired(rows: ImportRow[], fields: string[]): ImportIssue[] {
   const issues: ImportIssue[] = [];
   for (const row of rows) for (const field of fields) if (row.values[field] === undefined || row.values[field] === '') issues.push({ sheet: row.sheet, row: row.row, field, message: `缺少必填字段：${field}` });
@@ -142,17 +163,17 @@ const INSTRUCTIONS: (string | number)[][] = [
   ['工作表', '填写位置', '是否必填', '填写说明', '示例'],
   ['总则', '—', '—', '每个工作表第 1 行是表头，一行填一条记录；不要修改、合并或移动表头。', ''],
   ['总则', '—', '—', '“填写位置”按 Excel 单元格写法：A2 表示第 2 行第 1 列，B2 表示第 2 行第 2 列。', ''],
-  ['总则', '—', '—', '标“选填”的列可以整列留空；“教室”整张表也可以留空。', ''],
+  ['总则', '—', '—', '表头带“（选填）”的列可以整列留空；“教室”整张表也可以留空。', ''],
   ['总则', '—', '—', '名称必须与前面工作表中的写法完全一致（前后空格会被忽略）。', ''],
   ['', '', '', '', ''],
   ['学校', 'A2', '选填', '学校全称；留空则保留当前学校名称。', '实验中学'],
-  ['学期', 'A2', '选填', '学期开始日期，格式 YYYY-MM-DD。', '2026-09-01'],
-  ['学期', 'B2', '选填', '学期结束日期，格式 YYYY-MM-DD，不能早于开始日期。', '2026-12-31'],
+  ['学期', 'A2', '选填', '学期开始日期。可写 2026-09-01、2026/9/1 或 2026年9月1日，Excel 自动改格式也能识别。', '2026-09-01'],
+  ['学期', 'B2', '选填', '学期结束日期，格式同上，不能早于开始日期。', '2026-12-31'],
   ['班级', 'A2', '必填', '班级名称，一行一个班。', '七年级1班'],
   ['班级', 'B2', '选填', '年级。', '七年级'],
   ['班级', 'C2', '选填', '班级人数；留空默认 40。', '40'],
   ['教师', 'A2', '必填', '教师姓名。', '王老师'],
-  ['教师', 'B2', '选填', '负责年级。', '七年级'],
+  ['教师', 'B2', '选填', '负责年级。多个年级用分号分隔，如 1;2;3；中英文分号均可混用。', '1;2;3'],
   ['教师', 'C2', '选填', '主要学科。', '数学'],
   ['教师', 'D2', '选填', '其他学科，可写多个，用“、”分隔。', '物理、化学'],
   ['学科', 'A2', '至少一行', '只填第 1 列：本校实际开设的学科名称，不要加其他列。', '语文'],
@@ -162,7 +183,7 @@ const INSTRUCTIONS: (string | number)[][] = [
   ['教室', '整表', '整表选填', '整张表留空时，系统按“每个班一间普通教室”自动生成。', ''],
   ['时间段', 'B1', '必填', '每天最多节数，例如 8。', '8'],
   ['时间段', 'B2', '选填', '上课星期；可写“周一至周五”或“1-5”，默认周一至周五。', '周一至周五'],
-  ['时间段', 'A4', '表头', '第 4 行是表头：节次 / 开始时间 / 时长（分钟）。', ''],
+  ['时间段', 'A4', '表头', '第 4 行是表头：节次（必填）/ 开始时间（选填）/ 时长（选填）。', ''],
   ['时间段', 'A5', '至少一行', '从第 5 行开始写节次（1、2、3…）。', '1'],
   ['时间段', 'B5', '选填', '该节开始时间，格式 HH:MM。', '08:00'],
   ['时间段', 'C5', '选填', '该节时长（分钟）。', '45'],
@@ -180,6 +201,7 @@ const INSTRUCTIONS: (string | number)[][] = [
   ['重复导入', '—', '—', '基础资料按名称复用已有记录；教学计划工作表会整体替换原计划。', ''],
   ['空行', '—', '—', '完全空白的行会被忽略。', ''],
 ];
+
 export function buildImportTemplate(): ArrayBuffer {
   const workbook = XLSX.utils.book_new();
   const sheets: AoaSheet[] = [
@@ -188,27 +210,27 @@ export function buildImportTemplate(): ArrayBuffer {
       rows: INSTRUCTIONS,
       widths: [12, 14, 20, 55, 30],
     },
-    { name: '学校', rows: [['名称']], widths: [30] },
-    { name: '学期', rows: [['开始日期', '结束日期']], widths: [16, 16] },
-    { name: '班级', rows: [['名称', '年级', '人数（可选）']], widths: [24, 16, 16] },
-    { name: '教师', rows: [['姓名', '负责年级', '主要学科', '其他学科（可选）']], widths: [16, 16, 18, 24] },
+    { name: '学校', rows: [['名称（选填）']], widths: [30] },
+    { name: '学期', rows: [['开始日期（选填）', '结束日期（选填）']], widths: [20, 20] },
+    { name: '班级', rows: [['名称', '年级（选填）', '人数（选填）']], widths: [24, 18, 18] },
+    { name: '教师', rows: [['姓名', '负责年级（选填）', '主要学科（选填）', '其他学科（选填）']], widths: [16, 20, 20, 24] },
     { name: '学科', rows: [['学科']], widths: [24] },
-    { name: '教室', rows: [['教室名称', '类型', '容量']], widths: [24, 18, 12] },
+    { name: '教室', rows: [['教室名称（选填）', '类型（选填）', '容量（选填）']], widths: [26, 20, 16] },
     {
       name: '时间段',
       rows: [
         ['每天最多节数', 8, '', ''],
         ['上课星期', '周一至周五', '', ''],
         ['', '', '', ''],
-        ['节次', '开始时间', '时长（分钟）'],
+        ['节次', '开始时间（选填）', '时长（分钟，选填）'],
         ...Array.from({ length: 8 }, (_, index) => [index + 1, '', '']),
       ],
-      widths: [14, 16, 14, 20],
+      widths: [14, 22, 20, 20],
     },
     {
       name: '教学计划',
-      rows: [['班级', '学科', '教师', '每周课时', '周次', '课程类型', '教室类型', '固定时间']],
-      widths: [22, 16, 16, 12, 12, 14, 16, 20],
+      rows: [['班级', '学科', '教师', '每周课时', '周次（选填）', '课程类型（选填）', '教室类型（选填）', '固定时间（选填）']],
+      widths: [22, 16, 16, 12, 14, 16, 18, 20],
     },
   ];
   for (const sheet of sheets) {

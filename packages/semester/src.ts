@@ -1,4 +1,4 @@
-export interface Semester {
+﻿export interface Semester {
   startDate: string;
   endDate: string;
 }
@@ -30,6 +30,32 @@ export function formatIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
+
+/**
+ * Accept the date shapes Excel and users actually produce: 2026-09-01,
+ * 2026/9/1, 2026.9.1, 2026年9月1日, optional time suffix, Date objects and
+ * Excel serial numbers. Returns a padded YYYY-MM-DD or null.
+ */
+export function parseDateInput(value: unknown): string | null {
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return parseIsoDate(year + '-' + month + '-' + day) ? year + '-' + month + '-' + day : null;
+  }
+  const raw = value === null || value === undefined ? '' : String(value).trim();
+  if (!raw) return null;
+  const match = raw.match(/^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?(?:$|[T\s])/);
+  if (match) {
+    const candidate = match[1] + '-' + match[2].padStart(2, '0') + '-' + match[3].padStart(2, '0');
+    return parseIsoDate(candidate) ? candidate : null;
+  }
+  const serial = Number(raw);
+  if (Number.isFinite(serial) && serial > 20000 && serial < 80000) {
+    return formatIsoDate(new Date(Date.UTC(1899, 11, 30) + Math.floor(serial) * DAY_MS));
+  }
+  return null;
+}
 export function isValidSemester(value: Semester | null | undefined): boolean {
   if (!value) return false;
   const start = parseIsoDate(value.startDate);
@@ -89,3 +115,4 @@ export function weekOfDate(semester: Semester | null | undefined, date: string):
 export function weekByIndex(semester: Semester | null | undefined, index: number): SemesterWeek | null {
   return semesterWeeks(semester).find((week) => week.index === index) ?? null;
 }
+

@@ -1,12 +1,12 @@
 ﻿import React, { useState } from 'react';
-import { buildImportTemplate, readWorkbookWithMeta } from '../../../packages/import-export/src';
+import { buildImportTemplate, normalizeGradeList, readWorkbookWithMeta } from '../../../packages/import-export/src';
 import type { ClassRoom, Commit, CoursePlan, Room, SchoolData, SlotKind, Subject, Teacher, TimeSlot } from './types';
 import { DAYS, EditableTable, SectionHeading } from './components';
 import type { Column } from './components';
 import { ResourceWorkspace } from './ResourceWorkspace';
 import { download, exportMessage } from './download';
 import { messageOf, uid } from './utils';
-import { isValidSemester } from '../../../packages/semester/src';
+import { isValidSemester, parseDateInput } from '../../../packages/semester/src';
 
 const SLOT_KIND_MAP: Record<string, SlotKind> = {
   早读: 'morning', morning: 'morning',
@@ -48,6 +48,7 @@ function ResourcesPage({
     key: string,
     value: string | number,
   ) => {
+    if (collection === 'teachers' && key === 'grade') value = normalizeGradeList(value);
     const rows = (data[collection] as unknown as Array<Record<string, unknown> & { id: string }>).map((row) =>
       row.id === id ? { ...row, [key]: value } : row,
     );
@@ -179,15 +180,7 @@ function ResourcesPage({
         const parsed = Number(value);
         return Number.isFinite(parsed) ? parsed : fallback;
       };
-      const isoDateValue = (value: unknown): string => {
-        const raw = text(value);
-        if (/^\\d{4}-\\d{2}-\\d{2}$/.test(raw)) return raw;
-        const serial = Number(value);
-        if (Number.isFinite(serial) && serial > 20000 && serial < 80000) {
-          return new Date(Date.UTC(1899, 11, 30) + serial * 86400000).toISOString().slice(0, 10);
-        }
-        return '';
-      };
+      const isoDateValue = (value: unknown): string => parseDateInput(value) ?? '';
       const dayMap: Record<string, number> = {
         周一: 1, 星期一: 1, 一: 1, '1': 1,
         周二: 2, 星期二: 2, 二: 2, '2': 2,
@@ -305,7 +298,7 @@ function ResourcesPage({
           continue;
         }
         teacherNames.add(key);
-        const grade = text(v['负责年级'] ?? v['年级'] ?? v['grade']);
+        const grade = normalizeGradeList(v['负责年级'] ?? v['年级'] ?? v['grade']);
         const subject = text(v['主要学科'] ?? v['学科'] ?? v['subject']);
         const subject2 = text(v['其他学科（可选）'] ?? v['其他学科'] ?? v['兼任学科'] ?? v['subject2']);
         const existing = next.teachers.find((item) => item.name.trim().toLowerCase() === key);
@@ -887,6 +880,9 @@ function ResourcesPage({
 }
 
 export { ResourcesPage };
+
+
+
 
 
 
