@@ -4,6 +4,8 @@ const path = require('node:path');
 const { startApi } = require('../../server/api/api.cjs');
 
 const rootDir = path.resolve(__dirname, '../..');
+const appIcon = app.isPackaged ? path.join(process.resourcesPath, 'icon.png') : path.join(rootDir, 'assets', 'icon.png');
+app.setAppUserModelId('com.warpweft.scheduler');
 let server;
 let workspaceDir = null;
 
@@ -135,6 +137,7 @@ function createWindow() {
     height: 920,
     minWidth: 980,
     minHeight: 700,
+    icon: appIcon,
     // The app draws its own command rail; the native menu bar only adds a
     // second, redundant toolbar on Windows.
     autoHideMenuBar: true,

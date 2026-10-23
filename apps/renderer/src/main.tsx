@@ -17,6 +17,7 @@ import type { TimetableExportSettings } from './timetableExport';
 import { checkMove, checkSwap } from './dnd';
 import { semesterWeeks, weekOfDate } from '../../../packages/semester/src';
 import { adjustedWeekEntries, semesterPatterns } from './semesterTimetable';
+import brandIcon from '../../../assets/icon.svg?url';
 import { readPreviewPrefs, savePreviewPrefs, weekDatesForHeader } from './timetablePreview';
 import { DATA_SCHEMA_VERSION, MIN_SERVER_SCHEMA } from './schema';
 import { withFixedClassRoomsResult } from './fixedClassrooms';
@@ -1258,7 +1259,9 @@ function App() {
       </div>
       <aside className="command-rail">
         <div className="brand-lockup">
-          <span className="brand-mark">W</span>
+          <span className="brand-mark">
+            <img src={brandIcon} alt="" />
+          </span>
           <div>
             <span className="brand-name">WARPWEFT</span>
             <span className="brand-sub">SCHEDULER / LOCAL</span>

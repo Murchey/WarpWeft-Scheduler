@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="WarpWeft Scheduler timetable icon">
+  <title>WarpWeft Scheduler</title>
+  <rect x="10" y="10" width="492" height="492" rx="108" fill="#171817" stroke="#E8DC18" stroke-width="12"/>
+  <rect x="96" y="88" width="320" height="344" rx="26" fill="#FFFFFF"/>
+  <path d="M122 88h268c14.36 0 26 11.64 26 26v54H96v-54c0-14.36 11.64-26 26-26Z" fill="#E8DC18"/>
+  <rect x="122" y="116" width="64" height="10" rx="5" fill="#171817"/>
+  <rect x="198" y="116" width="30" height="10" rx="5" fill="#171817" opacity=".55"/>
+  <rect x="240" y="116" width="30" height="10" rx="5" fill="#171817" opacity=".3"/>
+  <path d="M202.67 168v264M309.33 168v264M96 256.67h320M96 344.33h320M96 432h320" stroke="#171817" stroke-width="10"/>
+  <rect x="211" y="265" width="90" height="71" rx="7" fill="#E8DC18"/>
+  <rect x="226" y="282" width="44" height="8" rx="4" fill="#171817"/>
+  <rect x="226" y="298" width="30" height="8" rx="4" fill="#171817" opacity=".65"/>
+</svg>
