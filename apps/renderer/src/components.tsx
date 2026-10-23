@@ -32,6 +32,7 @@ function EditableTable<T extends { id: string }>({
   note,
   previewCount,
   onOpenAll,
+  onEditClasses,
 }: {
   title: string;
   english: string;
@@ -45,6 +46,7 @@ function EditableTable<T extends { id: string }>({
   /** Show only this many rows in the outer panel; the rest live in the workspace. */
   previewCount?: number;
   onOpenAll?: () => void;
+  onEditClasses?: (id: string) => void;
 }) {
   const visibleRows = previewCount === undefined ? rows : rows.slice(0, Math.max(0, previewCount));
   return (
@@ -87,27 +89,17 @@ function EditableTable<T extends { id: string }>({
                   {columns.map((column) => (
                     <td key={column.key}>
                       {column.type === 'classes' ? (
-                        <select
-                          multiple
-                          className="classes-select"
-                          value={String(row[column.key] ?? column.defaultValue ?? '')
-                            .split(/[,，;；、]+/)
-                            .map((item) => item.trim())
-                            .filter(Boolean)}
-                          onChange={(event) =>
-                            onChange(
-                              row.id,
-                              column.key,
-                              Array.from(event.target.selectedOptions).map((option) => option.value).join('、'),
-                            )
-                          }
+                        <button
+                          type="button"
+                          className="classes-trigger"
+                          onClick={() => onEditClasses?.(row.id)}
+                          title="点击选择负责班级"
                         >
-                          {column.options?.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
+                          <span>
+                            {String(row[column.key] ?? column.defaultValue ?? '').trim() || '全部班级（不限）'}
+                          </span>
+                          <em>编辑</em>
+                        </button>
                       ) : column.type === 'select' ? (
                         <select
                           value={String(row[column.key] ?? column.defaultValue ?? '')}

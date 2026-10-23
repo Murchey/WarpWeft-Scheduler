@@ -20,6 +20,7 @@ interface ResourceWorkspaceProps<T extends { id: string }> {
   onBatchEdit: (ids: string[], key: string, value: string | number) => void;
   onRemoveMany: (ids: string[]) => void;
   onClose: () => void;
+  onEditClasses?: (id: string) => void;
   note?: string;
 }
 
@@ -36,6 +37,7 @@ function ResourceWorkspace<T extends { id: string }>({
   onBatchEdit,
   onRemoveMany,
   onClose,
+  onEditClasses,
   note,
 }: ResourceWorkspaceProps<T>) {
   const [query, setQuery] = useState('');
@@ -215,25 +217,15 @@ function ResourceWorkspace<T extends { id: string }>({
                     {columns.map((column) => (
                       <td key={column.key}>
                         {column.type === 'classes' ? (
-                          <select
-                            multiple
-                            className="classes-select"
-                            value={String(row[column.key] ?? column.defaultValue ?? '')
-                              .split(/[,，;；、]+/)
-                              .map((item) => item.trim())
-                              .filter(Boolean)}
-                            onChange={(event) =>
-                              onChange(
-                                row.id,
-                                column.key,
-                                Array.from(event.target.selectedOptions).map((option) => option.value).join('、'),
-                              )
-                            }
+                          <button
+                            type="button"
+                            className="classes-trigger"
+                            onClick={() => onEditClasses?.(row.id)}
+                            title="点击选择负责班级"
                           >
-                            {column.options?.map((option) => (
-                              <option key={option.value} value={option.value}>{option.label}</option>
-                            ))}
-                          </select>
+                            <span>{String(row[column.key] ?? column.defaultValue ?? '').trim() || '全部班级（不限）'}</span>
+                            <em>编辑</em>
+                          </button>
                         ) : column.type === 'select' ? (
                           <select
                             value={String(row[column.key] ?? column.defaultValue ?? '')}

@@ -60,7 +60,22 @@ html[data-theme='dark'] body{background:var(--paper)}html[data-theme='dark'] .co
 .data-table input:focus,.data-table select:focus{outline:0;border-color:var(--ink);background:var(--panel)}
 .data-table input[type=number]{font-family:var(--font-ui)}
 .data-table select{cursor:pointer}
-.data-table select.classes-select,.resource-workspace-data select.classes-select{height:auto;min-height:30px;padding:2px 4px}
+.classes-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:30px;padding:3px 6px;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--ink);font:12px var(--font-ui);text-align:left;cursor:pointer}
+.classes-trigger:hover,.classes-trigger:focus-visible{border-color:var(--ink);background:var(--panel);outline:none}
+.classes-trigger span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.classes-trigger em{flex:0 0 auto;font-style:normal;font-size:10px;color:var(--muted);letter-spacing:.08em}
+.classes-dialog-backdrop{position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.45)}
+.classes-dialog{width:min(520px,94vw);max-height:80vh;display:flex;flex-direction:column;border:1px solid var(--rule);border-radius:14px;background:var(--panel);box-shadow:0 24px 70px rgba(0,0,0,.28);overflow:hidden}
+.classes-dialog-head{padding:16px 18px 10px;border-bottom:1px solid var(--rule)}
+.classes-dialog-head h3{margin:4px 0 5px;font-size:18px}
+.classes-dialog-head p{margin:0;color:var(--muted);font-size:12px;line-height:1.55}
+.classes-dialog-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 12px;padding:12px 18px;overflow:auto}
+.classes-dialog-option{display:flex;align-items:center;gap:7px;padding:6px 4px;border-radius:5px;font-size:13px;cursor:pointer}
+.classes-dialog-option:hover{background:var(--chip)}
+.classes-dialog-option input{width:14px;height:14px;margin:0;accent-color:var(--signal)}
+.classes-dialog-option small{margin-left:auto;color:var(--muted);font-size:10px}
+.classes-dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--rule)}
+@media(max-width:520px){.classes-dialog-list{grid-template-columns:1fr}}
 .plan-table{min-width:880px}
 .resource-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
 .resource-panel{min-width:0}

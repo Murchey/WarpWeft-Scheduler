@@ -89,6 +89,7 @@ function ResourcesPage({
   const [batchFrom, setBatchFrom] = useState(1);
   const [batchTo, setBatchTo] = useState(2);
   const [workspace, setWorkspace] = useState<null | 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots'>(null);
+  const [classPicker, setClassPicker] = useState<{ id: string; selected: string[] } | null>(null);
   const [templateStage, setTemplateStage] = useState<'idle' | 'generating' | 'saving'>('idle');
   const update = (
     collection: 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots',
@@ -1029,6 +1030,12 @@ function ResourcesPage({
           onChange={(id, key, value) => update('teachers', id, key, value)}
           onAdd={() => add('teachers')}
           onRemove={(id) => remove('teachers', id)}
+          onEditClasses={(id) =>
+            setClassPicker({
+              id,
+              selected: splitClassNames(data.teachers.find((teacher) => teacher.id === id)?.classes),
+            })
+          }
           addLabel="新增教师"
           note="教师不能在同一时间上两门课；负责班级可多选，留空表示不限制；被教学计划引用的教师不能删除。"
           previewCount={6}
@@ -1045,9 +1052,88 @@ function ResourcesPage({
             onChange={(id, key, value) => update('teachers', id, key, value)}
             onBatchEdit={(ids, key, value) => batchEdit('teachers', ids, key, value)}
             onRemoveMany={(ids) => removeMany('teachers', ids)}
+            onEditClasses={(id) =>
+              setClassPicker({
+                id,
+                selected: splitClassNames(data.teachers.find((teacher) => teacher.id === id)?.classes),
+              })
+            }
             onClose={() => setWorkspace(null)}
             note="负责班级留空表示不限制；被教学计划引用的教师不能删除；教师当前仅支持批量删除，改名请逐条编辑。"
           />
+        ) : null}
+        {classPicker ? (
+          <div className="classes-dialog-backdrop" onClick={() => setClassPicker(null)}>
+            <div
+              className="classes-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-label="选择负责班级"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="classes-dialog-head">
+                <span className="kicker">// CLASS BINDING</span>
+                <h3>{data.teachers.find((teacher) => teacher.id === classPicker.id)?.name ?? '教师'} · 负责班级</h3>
+                <p>不勾选表示不限制；可多选。排课和自动分配教师只使用这里选中的班级。</p>
+              </div>
+              <div className="classes-dialog-list">
+                {data.classes.length === 0 ? (
+                  <p className="panel-note">还没有班级，请先新增班级。</p>
+                ) : (
+                  data.classes.map((klass) => {
+                    const checked = classPicker.selected.some(
+                      (name) => name.toLowerCase() === klass.name.toLowerCase(),
+                    );
+                    return (
+                      <label className="classes-dialog-option" key={klass.id}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() =>
+                            setClassPicker({
+                              ...classPicker,
+                              selected: checked
+                                ? classPicker.selected.filter((name) => name.toLowerCase() !== klass.name.toLowerCase())
+                                : [...classPicker.selected, klass.name],
+                            })
+                          }
+                        />
+                        <span>{klass.name}</span>
+                        {klass.grade ? <small>{klass.grade}</small> : null}
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+              <div className="classes-dialog-actions">
+                <button
+                  type="button"
+                  className="tt-btn tt-btn-quiet"
+                  onClick={() => setClassPicker({ ...classPicker, selected: [] })}
+                >
+                  不限制
+                </button>
+                <button type="button" className="tt-btn tt-btn-quiet" onClick={() => setClassPicker(null)}>
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="tt-btn tt-btn-primary"
+                  onClick={() => {
+                    const selected = data.classes
+                      .filter((klass) =>
+                        classPicker.selected.some((name) => name.toLowerCase() === klass.name.toLowerCase()),
+                      )
+                      .map((klass) => klass.name);
+                    update('teachers', classPicker.id, 'classes', selected.join('、'));
+                    setClassPicker(null);
+                  }}
+                >
+                  保存
+                </button>
+              </div>
+            </div>
+          </div>
         ) : null}
       </div>
     );
