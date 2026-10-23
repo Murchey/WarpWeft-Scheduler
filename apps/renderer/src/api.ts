@@ -1,4 +1,5 @@
 import type { SchoolData, SolverInput, SolverOutput } from './types';
+import { withFixedClassRooms } from './fixedClassrooms';
 
 export const DEFAULT_API_BASE = 'http://127.0.0.1:4317';
 
@@ -108,7 +109,7 @@ export async function loadData(): Promise<SchoolData> {
   const response = await request(`${getApiBase()}/api/data`, { cache: 'no-store' }, 15000);
   const text = await response.text();
   if (!response.ok) throw failure(response, text);
-  return JSON.parse(text) as SchoolData;
+  return withFixedClassRooms(JSON.parse(text) as SchoolData);
 }
 
 export async function saveData(data: SchoolData): Promise<SchoolData> {
@@ -123,7 +124,7 @@ export async function saveData(data: SchoolData): Promise<SchoolData> {
   );
   const text = await response.text();
   if (!response.ok) throw failure(response, text);
-  return JSON.parse(text) as SchoolData;
+  return withFixedClassRooms(JSON.parse(text) as SchoolData);
 }
 
 export interface ServerAddress {

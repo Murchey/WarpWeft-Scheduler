@@ -18,6 +18,7 @@ import { checkMove, checkSwap } from './dnd';
 import { semesterWeeks, weekOfDate } from '../../../packages/semester/src';
 import { adjustedWeekEntries, semesterPatterns } from './semesterTimetable';
 import { readPreviewPrefs, savePreviewPrefs, weekDatesForHeader } from './timetablePreview';
+import { withFixedClassRoomsResult } from './fixedClassrooms';
 import type { PreviewWeekFilter, PreviewView } from './timetablePreview';
 import { assignMissingTeachers } from './teacherAssignment';
 import { messageOf, todayLocal, uid } from './utils';
@@ -499,9 +500,10 @@ function App() {
   };
 
   const applyResult = (next: SolverOutput) => {
-    setResult(next);
+    const fixed = data ? withFixedClassRoomsResult(data, next) : next;
+    setResult(fixed);
     if (!data) return;
-    const updated = { ...data, candidate: next };
+    const updated = { ...data, candidate: fixed };
     setData(updated);
     pending.current = updated;
     if (apiOnline) {
@@ -781,7 +783,10 @@ function App() {
     setNotice('');
     try {
       setProgress({ phase: 'solving', message: 'Solver 正在计算可行课表', startedAt: Date.now() });
-      const output = restoreUnassignedTeachers(await solveSchedule(toSolverInput(data, timeLimit, locked)));
+      const output = withFixedClassRoomsResult(
+        data,
+        restoreUnassignedTeachers(await solveSchedule(toSolverInput(data, timeLimit, locked))),
+      );
       setProgress({ phase: 'finalizing', message: '正在保存候选课表并整理结果', startedAt: Date.now() });
       setResult(output);
       setShortRuns((current) => [{
@@ -849,14 +854,14 @@ function App() {
     setProgress({ phase: 'solving', message: '正在局部重排所选范围', startedAt: Date.now() });
     try {
       const output = restoreUnassignedTeachers(await solveSchedule(toSolverInput(data, timeLimit, locked)));
-      const repaired = {
+      const repaired = withFixedClassRoomsResult(data, {
         ...output,
         entries: output.entries.map((entry) => ({
           ...entry,
           locked: originalLocked.has(entry.id),
           source: originalSources.get(entry.id) ?? entry.source,
         })),
-      };
+      });
       setResult(repaired);
       setShortRuns((current) => [{
         id: 'short-' + Date.now(),
