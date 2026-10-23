@@ -28,6 +28,9 @@ export interface Adjustment {
   reason?: string;
   createdBy?: string;
   createdAt: string;
+  /** Set when an existing adjustment is retargeted in place. */
+  updatedAt?: string;
+  updatedBy?: string;
   status: 'active' | 'revoked';
   revokedAt?: string;
   revokedBy?: string;
@@ -83,6 +86,35 @@ export function activeAdjustments(adjustments: Adjustment[] | undefined, date: s
   return (adjustments ?? []).filter((item) => item.status === 'active' && item.date === date);
 }
 
+/** The single active adjustment of one lesson on one date. */
+export function activeAdjustmentOf(
+  adjustments: Adjustment[] | undefined,
+  date: string,
+  originalEntryId: string,
+): Adjustment | undefined {
+  return (adjustments ?? []).find(
+    (item) => item.status === 'active' && item.date === date && item.originalEntryId === originalEntryId,
+  );
+}
+
+/**
+ * A move whose target is its own original slot. It changes nothing, so it must
+ * never count as a change: old data may still contain such records, and the UI
+ * keeps them visible only for cleanup.
+ */
+export function isNoopMove(adjustment: Adjustment): boolean {
+  return adjustment.type === 'move' && (!adjustment.targetSlotId || adjustment.targetSlotId === adjustment.slotId);
+}
+
+/**
+ * Active adjustments that actually change the day. Use this for counts, badges
+ * and the effective timetable; keep activeAdjustments raw for the
+ * one-adjustment-per-lesson rule.
+ */
+export function effectiveAdjustments(adjustments: Adjustment[] | undefined, date: string): Adjustment[] {
+  return activeAdjustments(adjustments, date).filter((item) => !isNoopMove(item));
+}
+
 function slotDay(slots: AdjustmentData['timeSlots'], slotId: string): number {
   return slots.find((slot) => slot.id === slotId)?.day ?? 0;
 }
@@ -110,7 +142,7 @@ export function effectiveEntries(
 ): AdjustmentEntry[] {
   const weekday = weekdayOf(date);
   if (weekday === 0) return [];
-  const active = activeAdjustments(adjustments, date)
+  const active = effectiveAdjustments(adjustments, date)
     .slice()
     .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
   const result = new Map<string, AdjustmentEntry>();
@@ -136,19 +168,87 @@ export function effectiveEntries(
   return Array.from(result.values());
 }
 
-function occupancyConflicts(
+/** Machine-readable reason why a target slot is unavailable. */
+export type MoveBlockerCode =
+  | 'no-target'
+  | 'invalid-date'
+  | 'other-day'
+  | 'missing-entry'
+  | 'existing-adjustment'
+  | 'class-busy'
+  | 'teacher-busy'
+  | 'teacher-unavailable'
+  | 'room-busy';
+
+export interface MoveBlocker {
+  code: MoveBlockerCode;
+  text: string;
+}
+
+interface OccupancyBlocker {
+  code: 'class-busy' | 'teacher-busy' | 'room-busy';
+  text: string;
+}
+
+function occupancyBlockers(
   entries: AdjustmentEntry[],
   data: AdjustmentData,
   candidate: { classId: string; teacherId: string; roomId: string; slotId: string },
-): string[] {
-  const errors: string[] = [];
+): OccupancyBlocker[] {
+  const blockers: OccupancyBlocker[] = [];
+  const seen = new Set<string>();
+  const add = (blocker: OccupancyBlocker) => {
+    const key = blocker.code + '|' + blocker.text;
+    if (seen.has(key)) return;
+    seen.add(key);
+    blockers.push(blocker);
+  };
   for (const entry of entries) {
     if (entry.slotId !== candidate.slotId) continue;
-    if (entry.classId === candidate.classId) errors.push(classNameOf(data, entry.classId) + ' 在该时段已有课程');
-    if (entry.teacherId === candidate.teacherId) errors.push(teacherNameOf(data, entry.teacherId) + ' 在该时段已有课程');
-    if (candidate.roomId && entry.roomId === candidate.roomId) errors.push('教室在该时段已被占用');
+    if (entry.classId === candidate.classId) {
+      add({ code: 'class-busy', text: classNameOf(data, entry.classId) + ' 在该时段已有课程' });
+    }
+    if (entry.teacherId === candidate.teacherId) {
+      add({ code: 'teacher-busy', text: teacherNameOf(data, entry.teacherId) + ' 在该时段已有课程' });
+    }
+    if (candidate.roomId && entry.roomId === candidate.roomId) {
+      add({ code: 'room-busy', text: '教室在该时段已被占用' });
+    }
   }
-  return Array.from(new Set(errors));
+  return blockers;
+}
+
+function moveBlockers(
+  data: AdjustmentData,
+  weekday: number,
+  base: AdjustmentEntry,
+  effective: AdjustmentEntry[],
+  targetSlotId: string,
+  roomId: string,
+): MoveBlocker[] {
+  if (!targetSlotId) return [{ code: 'no-target', text: '请选择调课后的时间' }];
+  if (slotDay(data.timeSlots, targetSlotId) !== weekday) {
+    return [{ code: 'other-day', text: '调课目标必须与调整日期同一天' }];
+  }
+  const blockers: MoveBlocker[] = occupancyBlockers(
+    effective.filter((entry) => entry.id !== base.id),
+    data,
+    { classId: base.classId, teacherId: base.teacherId, roomId, slotId: targetSlotId },
+  );
+  if ((data.unavailableSlots ?? []).some((item) => item.teacherId === base.teacherId && item.slotId === targetSlotId)) {
+    blockers.push({ code: 'teacher-unavailable', text: teacherNameOf(data, base.teacherId) + ' 在目标时间不可用' });
+  }
+  return blockers;
+}
+
+export type MovePlanKind = 'noop' | 'restore' | 'apply' | 'blocked';
+
+export interface MovePlan {
+  kind: MovePlanKind;
+  targetSlotId: string;
+  /** restore: the active move being reverted; apply: the active move being retargeted. */
+  adjustment?: Adjustment;
+  blockers: MoveBlocker[];
 }
 
 /**
@@ -191,17 +291,11 @@ export function validateAdjustment(
     const targetSlotId = draft.targetSlotId;
     if (!targetSlotId) {
       errors.push('请选择调课后的时间');
-    } else if (slotDay(data.timeSlots, targetSlotId) !== weekday) {
-      errors.push('调课目标必须与调整日期同一天');
+    } else if (targetSlotId === base.slotId) {
+      // A -> A changes nothing; it must never become an adjustment record.
+      errors.push('目标时间与原时间相同，无需调课');
     } else {
-      errors.push(...occupancyConflicts(
-        effective.filter((entry) => entry.id !== base.id),
-        data,
-        { classId: base.classId, teacherId: base.teacherId, roomId, slotId: targetSlotId },
-      ));
-      if ((data.unavailableSlots ?? []).some((item) => item.teacherId === base.teacherId && item.slotId === targetSlotId)) {
-        errors.push(teacherNameOf(data, base.teacherId) + ' 在目标时间不可用');
-      }
+      errors.push(...moveBlockers(data, weekday, base, effective, targetSlotId, roomId).map((blocker) => blocker.text));
     }
   }
 
@@ -215,15 +309,88 @@ export function validateAdjustment(
       if ((data.unavailableSlots ?? []).some((item) => item.teacherId === teacherId && item.slotId === base.slotId)) {
         errors.push(teacherNameOf(data, teacherId) + ' 在该时段不可用');
       }
-      errors.push(...occupancyConflicts(
+      errors.push(...occupancyBlockers(
         effective.filter((entry) => entry.id !== base.id),
         data,
         { classId: base.classId, teacherId, roomId, slotId: base.slotId },
-      ));
+      ).map((blocker) => blocker.text));
     }
   }
 
   return { ok: errors.length === 0, errors: Array.from(new Set(errors)) };
+}
+
+/**
+ * Decide what dropping one lesson onto a slot means today:
+ * - noop: it is already there (including legacy self-moves) -> write nothing;
+ * - restore: the lesson was moved and the target is its original slot;
+ * - apply: a free target (retargets the existing move when there is one);
+ * - blocked: the target cannot take the lesson, with structured reasons.
+ */
+export function planMove(
+  data: AdjustmentData & { entries: AdjustmentEntry[] },
+  input: {
+    date: string;
+    originalEntryId: string;
+    targetSlotId: string;
+    adjustments?: Adjustment[];
+  },
+): MovePlan {
+  const adjustments = input.adjustments ?? data.adjustments ?? [];
+  const targetSlotId = input.targetSlotId;
+  const base = data.entries.find((entry) => entry.id === input.originalEntryId);
+  if (!base) {
+    return {
+      kind: 'blocked',
+      targetSlotId,
+      blockers: [{ code: 'missing-entry', text: '找不到这节课程，可能课表已更新' }],
+    };
+  }
+  const weekday = weekdayOf(input.date);
+  if (weekday === 0) {
+    return {
+      kind: 'blocked',
+      targetSlotId,
+      blockers: [{ code: 'invalid-date', text: '日期格式无效（应为 YYYY-MM-DD）' }],
+    };
+  }
+  const active = activeAdjustmentOf(adjustments, input.date, base.id);
+  if (active && active.type !== 'move') {
+    return {
+      kind: 'blocked',
+      targetSlotId,
+      adjustment: active,
+      blockers: [
+        {
+          code: 'existing-adjustment',
+          text: '这节课程当天已有' + ADJUSTMENT_LABELS[active.type] + '，请先撤销原调整',
+        },
+      ],
+    };
+  }
+  const activeMove = active && active.type === 'move' ? active : undefined;
+  const currentSlotId = activeMove?.targetSlotId ?? base.slotId;
+  if (targetSlotId === currentSlotId) {
+    return { kind: 'noop', targetSlotId, adjustment: activeMove, blockers: [] };
+  }
+  const withoutActive = activeMove
+    ? adjustments.filter((item) => item.id !== activeMove.id)
+    : adjustments;
+  const effective = effectiveEntries({ ...data, adjustments: withoutActive }, input.date, withoutActive);
+  if (targetSlotId === base.slotId) {
+    if (!activeMove) return { kind: 'noop', targetSlotId, blockers: [] };
+    // Another lesson may have moved into the original slot after this move.
+    // Restoring is only legal when the original slot can take the lesson back.
+    const restoreBlockers = moveBlockers(data, weekday, base, effective, targetSlotId, base.roomId);
+    return restoreBlockers.length > 0
+      ? { kind: 'blocked', targetSlotId, adjustment: activeMove, blockers: restoreBlockers }
+      : { kind: 'restore', targetSlotId, adjustment: activeMove, blockers: [] };
+  }
+  const blockers = moveBlockers(data, weekday, base, effective, targetSlotId, base.roomId);
+  if (blockers.length > 0) {
+    return { kind: 'blocked', targetSlotId, adjustment: activeMove, blockers };
+  }
+  return { kind: 'apply', targetSlotId, adjustment: activeMove, blockers: [] };
 }
 
 /** Free teachers for a substitute pickup at a given slot on a date. */
@@ -232,15 +399,17 @@ export function substituteCandidates(
   date: string,
   originalEntryId: string,
   adjustments: Adjustment[] = data.adjustments ?? [],
-): { id: string; name: string; unavailable: boolean }[] {
+): { id: string; name: string; unavailable: boolean; reason?: string }[] {
   const base = data.entries.find((entry) => entry.id === originalEntryId);
   if (!base) return [];
   const effective = effectiveEntries({ ...data, adjustments }, date, adjustments)
     .filter((entry) => entry.id !== base.id);
   return data.teachers.map((teacher) => {
+    const same = teacher.id === base.teacherId;
     const busy = effective.some((entry) => entry.slotId === base.slotId && entry.teacherId === teacher.id);
     const unavailable = (data.unavailableSlots ?? []).some((item) => item.teacherId === teacher.id && item.slotId === base.slotId);
-    return { id: teacher.id, name: teacher.name, unavailable: busy || unavailable || teacher.id === base.teacherId };
+    const reason = same ? '原任课教师' : busy ? '该时段已有课' : unavailable ? '不可用时间' : '';
+    return { id: teacher.id, name: teacher.name, unavailable: Boolean(reason), reason: reason || undefined };
   });
 }
 
@@ -250,16 +419,22 @@ export interface AdjustmentSummary {
   substitute: number;
   cancel: number;
   revoked: number;
+  /** Active moves whose target is the original slot; they change nothing. */
+  noop: number;
   /** Substitute lessons per teacher (counts only active adjustments). */
   substituteByTeacher: Record<string, number>;
 }
 
 export function summarizeAdjustments(adjustments: Adjustment[] | undefined): AdjustmentSummary {
-  const summary: AdjustmentSummary = { total: 0, move: 0, substitute: 0, cancel: 0, revoked: 0, substituteByTeacher: {} };
+  const summary: AdjustmentSummary = { total: 0, move: 0, substitute: 0, cancel: 0, revoked: 0, noop: 0, substituteByTeacher: {} };
   for (const adjustment of adjustments ?? []) {
     summary.total += 1;
     if (adjustment.status === 'revoked') {
       summary.revoked += 1;
+      continue;
+    }
+    if (isNoopMove(adjustment)) {
+      summary.noop += 1;
       continue;
     }
     summary[adjustment.type] += 1;
@@ -384,7 +559,7 @@ export function buildDayLogs(
 ): LessonLog[] {
   const weekday = weekdayOf(date);
   if (weekday === 0) return [];
-  const active = activeAdjustments(data.adjustments, date);
+  const active = effectiveAdjustments(data.adjustments, date);
   const planById = new Map(data.coursePlans.map((plan) => [plan.id, plan]));
   const slotOrder = new Map(data.timeSlots.map((slot) => [slot.id, slot.day * 1000 + slot.period]));
   const logs: LessonLog[] = [];

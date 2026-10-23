@@ -13,6 +13,7 @@ function baseData() {
     timeSlots: [
       { id: 'wed-1', day: 3, period: 1, label: '周三 第1节' },
       { id: 'wed-2', day: 3, period: 2, label: '周三 第2节' },
+      { id: 'wed-3', day: 3, period: 3, label: '周三 第3节' },
       { id: 'thu-1', day: 4, period: 1, label: '周四 第1节' },
     ],
     classes: [
@@ -267,5 +268,121 @@ test('summary counts substitute workload per teacher', async () => {
   assert.equal(summary.substitute, 2);
   assert.equal(summary.revoked, 1);
   assert.equal(summary.substituteByTeacher.t2, 2);
+});
+
+test('self-moves are no-ops, not changes', async () => {
+  const { isNoopMove, effectiveAdjustments, effectiveEntries, summarizeAdjustments, buildDayLogs } = await loadAdjustments();
+  const data = baseData();
+  data.adjustments = [adjustment({ id: 'a-self', type: 'move', originalEntryId: 'e1', targetSlotId: 'wed-1' })];
+
+  assert.equal(isNoopMove(data.adjustments[0]), true);
+  assert.equal(effectiveAdjustments(data.adjustments, DATE).length, 0);
+  assert.equal(isNoopMove(adjustment({ type: 'move', targetSlotId: 'wed-2' })), false);
+  // A move without a target is invalid data and must not change anything either.
+  assert.equal(isNoopMove(adjustment({ type: 'move' })), true);
+
+  const effective = effectiveEntries(data, DATE);
+  assert.equal(effective.length, 3);
+  assert.equal(effective.find((entry) => entry.id === 'e1').slotId, 'wed-1');
+
+  const logs = buildDayLogs(data, DATE);
+  const moved = logs.find((log) => log.entryId === 'e1');
+  assert.equal(moved.status, 'normal');
+  assert.equal(moved.adjustmentId, undefined);
+
+  const summary = summarizeAdjustments(data.adjustments);
+  assert.equal(summary.move, 0);
+  assert.equal(summary.noop, 1);
+});
+
+test('planMove distinguishes no-op, restore, retarget and blocked targets', async () => {
+  const { planMove } = await loadAdjustments();
+  const data = baseData();
+
+  const sameSlot = planMove(data, { date: DATE, originalEntryId: 'e1', targetSlotId: 'wed-1' });
+  assert.equal(sameSlot.kind, 'noop');
+  assert.deepEqual(sameSlot.blockers, []);
+
+  data.adjustments = [adjustment({ id: 'a-move', type: 'move', originalEntryId: 'e1', targetSlotId: 'wed-2' })];
+  const restore = planMove(data, { date: DATE, originalEntryId: 'e1', targetSlotId: 'wed-1' });
+  assert.equal(restore.kind, 'restore');
+  assert.equal(restore.adjustment.id, 'a-move');
+
+  const retarget = planMove(data, { date: DATE, originalEntryId: 'e1', targetSlotId: 'wed-3' });
+  assert.equal(retarget.kind, 'apply');
+  assert.equal(retarget.adjustment.id, 'a-move');
+
+  const plain = baseData();
+  const blocked = planMove(plain, { date: DATE, originalEntryId: 'e1', targetSlotId: 'wed-2' });
+  assert.equal(blocked.kind, 'blocked');
+  assert.ok(blocked.blockers.some((blocker) => blocker.code === 'class-busy'));
+  assert.ok(blocked.blockers.some((blocker) => blocker.code === 'teacher-busy'));
+
+  const missing = planMove(data, { date: DATE, originalEntryId: 'nope', targetSlotId: 'wed-3' });
+  assert.equal(missing.kind, 'blocked');
+  assert.equal(missing.blockers[0].code, 'missing-entry');
+});
+
+test('planMove reports teacher availability and existing substitute/cancel records', async () => {
+  const { planMove } = await loadAdjustments();
+  const data = baseData();
+  data.unavailableSlots.push({ teacherId: 't1', slotId: 'wed-3' });
+  const unavailable = planMove(data, { date: DATE, originalEntryId: 'e1', targetSlotId: 'wed-3' });
+  assert.equal(unavailable.kind, 'blocked');
+  assert.ok(unavailable.blockers.some((blocker) => blocker.code === 'teacher-unavailable'));
+  assert.ok(unavailable.blockers.some((blocker) => blocker.text.includes('甲老师')));
+
+  data.adjustments = [adjustment({ id: 'a-sub', type: 'substitute', originalEntryId: 'e1', substituteTeacherId: 't2' })];
+  const blocked = planMove(data, { date: DATE, originalEntryId: 'e1', targetSlotId: 'wed-3' });
+  assert.equal(blocked.kind, 'blocked');
+  assert.equal(blocked.blockers[0].code, 'existing-adjustment');
+});
+
+test('a legacy self-move can be retargeted in place', async () => {
+  const { planMove } = await loadAdjustments();
+  const data = baseData();
+  data.adjustments = [adjustment({ id: 'a-self', type: 'move', originalEntryId: 'e1', targetSlotId: 'wed-1' })];
+  const plan = planMove(data, { date: DATE, originalEntryId: 'e1', targetSlotId: 'wed-3' });
+  assert.equal(plan.kind, 'apply');
+  assert.equal(plan.adjustment.id, 'a-self');
+});
+
+test('restore is blocked when another lesson now occupies the original slot', async () => {
+  const { planMove } = await loadAdjustments();
+  const data = baseData();
+  data.entries.push({
+    id: 'e5',
+    coursePlanId: 'p5',
+    classId: 'c1',
+    teacherId: 't3',
+    roomId: 'r2',
+    slotId: 'wed-3',
+    source: 'AUTO',
+    locked: false,
+  });
+  data.adjustments = [
+    adjustment({ id: 'a-move-e1', type: 'move', originalEntryId: 'e1', targetSlotId: 'wed-2' }),
+    adjustment({ id: 'a-move-e5', type: 'move', originalEntryId: 'e5', slotId: 'wed-3', targetSlotId: 'wed-1' }),
+  ];
+  const plan = planMove(data, { date: DATE, originalEntryId: 'e1', targetSlotId: 'wed-1' });
+  assert.equal(plan.kind, 'blocked');
+  assert.ok(plan.blockers.some((blocker) => blocker.code === 'class-busy'));
+});
+
+test('validateAdjustment refuses a same-slot move', async () => {
+  const { validateAdjustment } = await loadAdjustments();
+  const data = baseData();
+  const result = validateAdjustment(data, { date: DATE, type: 'move', originalEntryId: 'e1', targetSlotId: 'wed-1' });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.includes('目标时间与原时间相同')));
+});
+
+test('substitute candidates explain why a teacher is unavailable', async () => {
+  const { substituteCandidates } = await loadAdjustments();
+  const data = baseData();
+  const candidates = substituteCandidates(data, DATE, 'e2');
+  assert.equal(candidates.find((item) => item.id === 't1').reason, '该时段已有课');
+  assert.equal(candidates.find((item) => item.id === 't2').reason, '原任课教师');
+  assert.equal(candidates.find((item) => item.id === 't3').reason, '不可用时间');
 });
 

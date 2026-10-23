@@ -38,6 +38,16 @@ coverage/
 *.log
 reports/
 
+# Local visual-verification screenshots and temporary test output
+shots/
+screenshots/
+tmp-shots/
+test-results/
+playwright-report/
+blob-report/
+.nyc_output/
+.shoot-tmp-*/
+
 # Local configuration and editor files
 .env
 .env.*

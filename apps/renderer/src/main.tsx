@@ -17,6 +17,8 @@ import type { TimetableExportSettings } from './timetableExport';
 import { checkMove, checkSwap } from './dnd';
 import { semesterWeeks, weekOfDate } from '../../../packages/semester/src';
 import { adjustedWeekEntries, semesterPatterns } from './semesterTimetable';
+import { readPreviewPrefs, savePreviewPrefs, weekDatesForHeader } from './timetablePreview';
+import type { PreviewWeekFilter, PreviewView } from './timetablePreview';
 import { assignMissingTeachers } from './teacherAssignment';
 import { messageOf, todayLocal, uid } from './utils';
 import { activeRules, describeRule, matchedPlans, unscheduledHints } from './rules';
@@ -33,7 +35,7 @@ import { AdjustmentsPage } from './AdjustmentsPage';
 import { TodayPanel } from './TodayPanel';
 import { buildStats, classRowsForExport, subjectRowsForExport, teacherRowsForExport } from '../../../packages/statistics/src';
 import type { StatsReport } from '../../../packages/statistics/src';
-import { ADJUSTMENT_LABELS, LESSON_STATUS_LABELS, activeAdjustments, buildActualStats, effectiveEntries, weekdayOf } from '../../../packages/adjustments/src';
+import { ADJUSTMENT_LABELS, LESSON_STATUS_LABELS, effectiveAdjustments, buildActualStats, effectiveEntries, isNoopMove, weekdayOf } from '../../../packages/adjustments/src';
 import type { ActualStats } from '../../../packages/adjustments/src';
 import type { ServerClient, ServerConfig, ServerConfigResult, ServerEffective, ServerJob, ServerLog, ServerStats } from './api';
 import type { LongJobDetail } from './api';
@@ -69,7 +71,7 @@ const EN: Record<Tab, string> = {
   设置: 'SETTINGS',
 };
 type SaveState = 'idle' | 'saving' | 'saved' | 'offline' | 'error';
-type View = 'class' | 'teacher' | 'room';
+type View = PreviewView;
 
 
 
@@ -364,9 +366,13 @@ function App() {
   const [shortRuns, setShortRuns] = useState<ShortRunRecord[]>([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [previewPrefs] = useState(() => readPreviewPrefs(window.localStorage));
   const [selectedClassId, setSelectedClassId] = useState('');
-  const [view, setView] = useState<View>('class');
-  const [entityId, setEntityId] = useState('');
+  const [view, setView] = useState<View>(previewPrefs.view);
+  const [entityId, setEntityId] = useState(previewPrefs.entityId);
+  const [weekFilter, setWeekFilter] = useState<PreviewWeekFilter>(previewPrefs.weekFilter);
+  const [weekNo, setWeekNo] = useState<number | null>(previewPrefs.weekNo);
+  const [overlayDate, setOverlayDate] = useState(() => params.get('adjustDate') || previewPrefs.overlayDate);
   const [selectedEntryId, setSelectedEntryId] = useState('');
   const [exportOpen, setExportOpen] = useState<null | 'export' | 'publish'>(null);
   const [exportWeek, setExportWeek] = useState<number | null>(null);
@@ -379,6 +385,12 @@ function App() {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem('warpweft-theme', theme);
   }, [theme]);
+
+  // The preview toolbar is a working context, so remember it across tabs and
+  // restarts. Transient modes (fullscreen, swapping, drag) stay local.
+  useEffect(() => {
+    savePreviewPrefs(window.localStorage, { view, entityId, weekFilter, weekNo, overlayDate });
+  }, [view, entityId, weekFilter, weekNo, overlayDate]);
 
   useEffect(() => {
     if (!runMode) return;
@@ -427,6 +439,13 @@ function App() {
       setEntityId(entities[0]?.id ?? '');
     }
   }, [data, view, entityId]);
+
+  useEffect(() => {
+    if (!data || weekNo === null) return;
+    if (semesterWeeks(data.semester).some((week) => week.index === weekNo)) return;
+    setWeekNo(null);
+    setWeekFilter('all');
+  }, [data, weekNo]);
 
   useEffect(() => {
     if (tab === '服务端' && runMode !== 'lan-server') setTab('工作台');
@@ -495,7 +514,7 @@ function App() {
     if (!data) return [];
     const map = new Map<string, Record<string, number>>();
     for (const item of data.adjustments ?? []) {
-      if (item.status !== 'active') continue;
+      if (item.status !== 'active' || isNoopMove(item)) continue;
       const counts = map.get(item.date) ?? {};
       counts[item.type] = (counts[item.type] ?? 0) + 1;
       map.set(item.date, counts);
@@ -523,6 +542,9 @@ function App() {
     const teacherId = refs.teacherIds?.[0];
     const roomId = refs.roomIds?.[0];
     const classId = refs.classIds?.[0];
+    // The located lesson must be visible; a remembered week filter would hide it.
+    setWeekNo(null);
+    setWeekFilter('all');
     if (teacherId) {
       setView('teacher');
       setEntityId(teacherId);
@@ -1062,11 +1084,17 @@ function App() {
   };
 
   const viewAdjustedDate = (date: string) => {
-    try {
-      window.localStorage.setItem('warpweft-adjust-date', date);
-    } catch {
-      // ignore
+    setOverlayDate(date);
+    const week = data ? weekOfDate(data.semester, date) : null;
+    if (week !== null) {
+      setWeekNo(week);
+      setWeekFilter(week % 2 === 1 ? 'odd' : 'even');
+    } else {
+      // A date outside the term has no school week; do not keep a stale filter.
+      setWeekNo(null);
+      setWeekFilter('all');
     }
+    setSelectedEntryId('');
     setTab('课表预览');
   };
 
@@ -1273,6 +1301,12 @@ function App() {
             setEntityId={setEntityId}
             selectedEntryId={selectedEntryId}
             setSelectedEntryId={setSelectedEntryId}
+            weekFilter={weekFilter}
+            setWeekFilter={setWeekFilter}
+            weekNo={weekNo}
+            setWeekNo={setWeekNo}
+            overlayDate={overlayDate}
+            setOverlayDate={setOverlayDate}
             onSwap={swapEntry}
             onToggleLock={toggleLock}
             onUndo={undo}
@@ -2075,6 +2109,12 @@ function TimetablePage({
   setEntityId,
   selectedEntryId,
   setSelectedEntryId,
+  weekFilter,
+  setWeekFilter,
+  weekNo,
+  setWeekNo,
+  overlayDate,
+  setOverlayDate,
   onSwap,
   onToggleLock,
   onUndo,
@@ -2095,6 +2135,12 @@ function TimetablePage({
   setEntityId: (value: string) => void;
   selectedEntryId: string;
   setSelectedEntryId: (value: string) => void;
+  weekFilter: PreviewWeekFilter;
+  setWeekFilter: (value: PreviewWeekFilter) => void;
+  weekNo: number | null;
+  setWeekNo: (value: number | null) => void;
+  overlayDate: string;
+  setOverlayDate: (value: string) => void;
   onSwap: (entryId: string, slotId: string) => void;
   onToggleLock: (entryId: string) => void;
   onUndo: () => void;
@@ -2111,11 +2157,6 @@ function TimetablePage({
   const [focus, setFocus] = useState(false);
   const [immersive, setImmersive] = useState(false);
   const [swapMode, setSwapMode] = useState(false);
-  const [weekFilter, setWeekFilter] = useState<'all' | 'odd' | 'even'>('all');
-  const [weekNo, setWeekNo] = useState<number | null>(null);
-  const [overlayDate, setOverlayDate] = useState(
-    () => new URLSearchParams(window.location.search).get('adjustDate') || window.localStorage.getItem('warpweft-adjust-date') || '',
-  );
   const overlay = focus || immersive;
 
   useEffect(() => {
@@ -2141,6 +2182,7 @@ function TimetablePage({
   }, [view, entityId, setSelectedEntryId]);
 
   const days = Array.from(new Set(data.timeSlots.map((slot) => slot.day))).sort((a, b) => a - b);
+  const headerDates = weekDatesForHeader(data.semester, { weekNo, overlayDate, today: todayLocal() });
   const periods = Array.from(new Set(data.timeSlots.map((slot) => slot.period))).sort((a, b) => a - b);
   const kindOfSlot = (slotId: string) => data.timeSlots.find((slot) => slot.id === slotId)?.kind ?? 'regular';
   const kindOfPeriod = (period: number) => data.timeSlots.find((slot) => slot.period === period)?.kind ?? 'regular';
@@ -2152,7 +2194,7 @@ function TimetablePage({
       ? (effectiveEntries({ ...data, entries: result.entries }, overlayDate, data.adjustments ?? []) as unknown as ScheduleEntry[])
       : result.entries
     : [];
-  const overlayCount = overlayDate ? (data.adjustments ?? []).filter((item) => item.status === 'active' && item.date === overlayDate).length : 0;
+  const overlayCount = overlayDate ? effectiveAdjustments(data.adjustments, overlayDate).length : 0;
   const conflicts = report && !overlayDate ? new Set(report.summary.conflictEntryIds) : conflictIds(baseEntries, data.coursePlans);
   const selected = baseEntries.find((entry) => entry.id === selectedEntryId);
   const selectedPlan = selected ? planOf(data, selected) : undefined;
@@ -2197,7 +2239,7 @@ function TimetablePage({
       : null;
   const overlayCancelled =
     overlayDate && result
-      ? activeAdjustments(data.adjustments, overlayDate).filter((item) => {
+      ? effectiveAdjustments(data.adjustments, overlayDate).filter((item) => {
           if (item.type !== 'cancel') return false;
           const base = result.entries.find((entry) => entry.id === item.originalEntryId);
           return base ? belongsHere(base) : false;
@@ -2378,11 +2420,6 @@ function TimetablePage({
             onChange={(event) => {
               const next = event.target.checked ? overlayDate || todayLocal() : '';
               setOverlayDate(next);
-              try {
-                window.localStorage.setItem('warpweft-adjust-date', next);
-              } catch {
-                // ignore
-              }
               setSelectedEntryId('');
               setSwapMode(false);
             }}
@@ -2396,11 +2433,6 @@ function TimetablePage({
             value={overlayDate}
             onChange={(event) => {
               setOverlayDate(event.target.value);
-              try {
-                window.localStorage.setItem('warpweft-adjust-date', event.target.value);
-              } catch {
-                // ignore
-              }
               setSelectedEntryId('');
             }}
           />
@@ -2525,12 +2557,18 @@ function TimetablePage({
                   <span>节次</span>
                   <small>PERIOD</small>
                 </th>
-                {days.map((day) => (
-                  <th key={day} className="tt-day-head">
-                    <span>{DAYS[day] ?? '第' + day + '天'}</span>
-                    <small>DAY {String(day).padStart(2, '0')}</small>
-                  </th>
-                ))}
+                {days.map((day) => {
+                  const date = headerDates[day];
+                  return (
+                    <th key={day} className="tt-day-head" title={date ? date + ' ' + (DAYS[day] ?? '') : undefined}>
+                      <span>
+                        {DAYS[day] ?? '第' + day + '天'}
+                        {date ? <em className="tt-day-date">{date.slice(5)}</em> : null}
+                      </span>
+                      <small>DAY {String(day).padStart(2, '0')}</small>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>

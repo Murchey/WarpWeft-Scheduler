@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import {
-  activeAdjustments,
   currentSlot,
+  effectiveAdjustments,
   effectiveEntries,
   formatClock,
   minutesOfDay,
@@ -39,7 +39,7 @@ export function TodayPanel({
   const entries: AdjustmentEntry[] = candidate
     ? effectiveEntries({ ...data, entries: candidate.entries as AdjustmentEntry[] }, date, data.adjustments ?? [])
     : [];
-  const dayAdjustments = activeAdjustments(data.adjustments, date);
+  const dayAdjustments = effectiveAdjustments(data.adjustments, date);
   const timeline = useMemo(
     () =>
       slots
