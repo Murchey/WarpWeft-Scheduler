@@ -52,6 +52,8 @@ export interface AdjustmentData {
   timeSlots: { id: string; day: number; period: number; label: string }[];
   classes: { id: string; name: string }[];
   teachers: { id: string; name: string }[];
+  /** Optional; used to name the room in conflict messages. */
+  rooms?: { id: string; name: string }[];
   unavailableSlots?: { teacherId: string; slotId: string }[];
   adjustments?: Adjustment[];
 }
@@ -212,7 +214,14 @@ function occupancyBlockers(
       add({ code: 'teacher-busy', text: teacherNameOf(data, entry.teacherId) + ' 在该时段已有课程' });
     }
     if (candidate.roomId && entry.roomId === candidate.roomId) {
-      add({ code: 'room-busy', text: '教室在该时段已被占用' });
+      const room = data.rooms?.find((item) => item.id === candidate.roomId)?.name;
+      const occupant =
+        classNameOf(data, entry.classId) +
+        (entry.teacherId ? '（' + teacherNameOf(data, entry.teacherId) + '）' : '');
+      add({
+        code: 'room-busy',
+        text: (room ? '教室「' + room + '」' : '教室') + '在该时段已被 ' + occupant + ' 占用',
+      });
     }
   }
   return blockers;

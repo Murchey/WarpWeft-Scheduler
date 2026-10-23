@@ -25,6 +25,10 @@ function baseData() {
       { id: 't2', name: '乙老师' },
       { id: 't3', name: '丙老师' },
     ],
+    rooms: [
+      { id: 'r1', name: '一号教室' },
+      { id: 'r2', name: '二号教室' },
+    ],
     unavailableSlots: [{ teacherId: 't3', slotId: 'wed-2' }],
     coursePlans: [
       { id: 'p1', classId: 'c1', subjectId: 's1', teacherId: 't1' },
@@ -321,6 +325,28 @@ test('planMove distinguishes no-op, restore, retarget and blocked targets', asyn
   const missing = planMove(data, { date: DATE, originalEntryId: 'nope', targetSlotId: 'wed-3' });
   assert.equal(missing.kind, 'blocked');
   assert.equal(missing.blockers[0].code, 'missing-entry');
+});
+
+test('room conflicts name the room and the occupying class', async () => {
+  const { planMove } = await loadAdjustments();
+  const data = baseData();
+  data.entries.push({
+    id: 'e5',
+    coursePlanId: 'p5',
+    classId: 'c2',
+    teacherId: 't3',
+    roomId: 'r1',
+    slotId: 'wed-3',
+    source: 'AUTO',
+    locked: false,
+  });
+  const plan = planMove(data, { date: DATE, originalEntryId: 'e1', targetSlotId: 'wed-3' });
+  assert.equal(plan.kind, 'blocked');
+  const room = plan.blockers.find((blocker) => blocker.code === 'room-busy');
+  assert.ok(room);
+  assert.ok(room.text.includes('一号教室'));
+  assert.ok(room.text.includes('二班'));
+  assert.ok(room.text.includes('丙老师'));
 });
 
 test('planMove reports teacher availability and existing substitute/cancel records', async () => {
