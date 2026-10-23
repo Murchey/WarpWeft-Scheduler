@@ -20,6 +20,12 @@ npm run dev:api   # node scripts/dev-api.cjs -> server/api/api.cjs
 npm run dev       # Vite 渲染层
 ```
 
+## 数据版本与能力
+
+- `data-schema.json` 是数据/能力版本的单一来源；当前 version 2，包含 homeroom/roomModes 能力。
+- `GET /api/health` 返回 `schemaVersion`、`appVersion`、`solverProtocol`、`capabilities`；渲染层启动时比较，服务端版本过旧会阻断保存/排课并提示升级。
+- `server/api` 的 `validateData` 校验班主任、教师负责班级、roomMode 和课表引用；Java `SolverProtocol` 再校验班主任本班课和教师负责班级。
+
 ## FullSolver 的判定语义
 
 见 `server/fullsolver/README.md`：启发式失败/超时只能报告“近似冲突集”，报告固定 `"proof": false`；状态为 `unknown` 时不给冲突集。不要把该模块描述为“精确最小冲突集”或 HTTP 服务。

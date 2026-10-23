@@ -23,6 +23,32 @@ test('demo data produces a feasible schedule', () => {
   assert.equal(out.entries.length, 21);
 });
 
+test('the solver protocol requires a homeroom teacher to teach the class', () => {
+  const input = JSON.parse(fs.readFileSync('database/seeds/demo.json', 'utf8'));
+  Object.assign(input, {
+    protocolVersion: '1.0',
+    dataSnapshotVersion: 'test',
+    hardConstraints: [],
+    softConstraints: [],
+    unavailableSlots: [],
+    lockedEntries: [],
+    timeLimitSeconds: 30,
+    randomSeed: 1,
+  });
+  const plan = input.coursePlans.find((item) => item.teacherId);
+  assert.ok(plan);
+  const klass = input.classes.find((item) => item.id === plan.classId);
+  assert.ok(klass);
+  const teacher = { id: 'teacher-homeroom-test', name: '班主任测试' };
+  input.teachers.push(teacher);
+  klass.homeroomTeacherId = teacher.id;
+  const process = solve(input);
+  assert.equal(process.status, 0, process.stderr || 'Java solver process failed');
+  const out = JSON.parse(process.stdout);
+  assert.equal(out.status, 'FAILED');
+  assert.ok(out.hardConstraintViolations.some((message) => message.includes('必须在本班')));
+});
+
 test('the solver protocol rejects a plan whose teacher is bound to another class', () => {
   const input = JSON.parse(fs.readFileSync('database/seeds/demo.json', 'utf8'));
   Object.assign(input, {

@@ -34,6 +34,7 @@ function currentDataDir() {
 }
 
 function startLocalApi() {
+  if (process.env.WARPVEFT_SKIP_LOCAL_API === '1') return null;
   const dataDir = currentDataDir();
   const instance = startApi({
     rootDir,

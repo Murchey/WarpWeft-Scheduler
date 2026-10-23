@@ -113,6 +113,25 @@ test('API rejects a teacher assigned outside their bound classes', () => {
   assert.match(validateData(data), /负责班级不存在/);
 });
 
+test('API enforces the homeroom teacher class lesson and subject exemption', () => {
+  const data = {
+    classes: [{ id: 'c1', name: '一班', homeroomTeacherId: 't1' }],
+    teachers: [
+      { id: 't1', name: '王老师', classes: '一班', subject: '数学' },
+      { id: 't2', name: '李老师' },
+    ],
+    subjects: [{ id: 's1', name: '数学' }, { id: 's2', name: '英语' }],
+    rooms: [{ id: 'r1', capacity: 30 }],
+    timeSlots: [{ id: 'slot-1', day: 1, period: 1 }],
+    coursePlans: [{ id: 'p1', classId: 'c1', teacherId: 't2', subjectId: 's1', weeklyPeriods: 1 }],
+  };
+  assert.match(validateData(data), /必须在本班/);
+  data.coursePlans[0].subjectId = 's2';
+  assert.equal(validateData(data), null);
+  data.coursePlans[0].teacherId = 't1';
+  assert.equal(validateData(data), null);
+});
+
 test('API allows a teaching plan without a fixed teacher', () => {
   const data = {
     classes: [{ id: 'c1' }], teachers: [{ id: 't1' }], subjects: [{ id: 's1' }],

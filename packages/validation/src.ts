@@ -10,7 +10,9 @@ export function validateInput(input: SolverInput): ValidationIssue[] {
   ids(input.classes,'班级'); ids(input.teachers,'教师'); ids(input.rooms,'教室'); ids(input.timeSlots,'时间段'); ids(input.coursePlans,'课程计划');
   const teacherIds = new Set(input.teachers.map(x=>x.id)); const classIds = new Set(input.classes.map(x=>x.id));
   const teacherById = new Map(input.teachers.map(x=>[x.id,x]));
+  const classById = new Map(input.classes.map(x=>[x.id,x]));
   const classNameById = new Map(input.classes.map(x=>[x.id,x.name]));
+  const subjectNameById = new Map(input.subjects.map(x=>[x.id,x.name]));
   for (const teacher of input.teachers) {
     for (const classId of teacher.classIds ?? []) {
       if (!classIds.has(classId)) issues.push({code:'MISSING_REFERENCE',message:`教师 ${teacher.name} 的负责班级引用了不存在的班级`,entity:teacher.id,field:'classIds'});
@@ -29,6 +31,40 @@ export function validateInput(input: SolverInput): ValidationIssue[] {
       });
     }
     if (p.weeklyPeriods <= 0) issues.push({code:'INVALID_VALUE',message:`课程计划 ${p.id} 的周课时必须大于 0`,entity:p.id,field:'weeklyPeriods'});
+  }
+  const homeroomTeachers = new Map<string, string[]>();
+  for (const klass of input.classes) {
+    if (!klass.homeroomTeacherId) continue;
+    const teacher = teacherById.get(klass.homeroomTeacherId);
+    if (!teacher) {
+      issues.push({code:'MISSING_REFERENCE',message:`班级 ${klass.name} 的班主任不存在`,entity:klass.id,field:'homeroomTeacherId'});
+      continue;
+    }
+    const assignedClasses = homeroomTeachers.get(teacher.id) ?? [];
+    assignedClasses.push(klass.name);
+    homeroomTeachers.set(teacher.id, assignedClasses);
+    if (teacher.classIds?.length && !teacher.classIds.includes(klass.id)) {
+      issues.push({code:'TEACHER_CLASS_BINDING',message:`班主任 ${teacher.name} 不负责班级 ${klass.name}`,entity:klass.id,field:'homeroomTeacherId'});
+    }
+    const classPlans = input.coursePlans.filter((plan) => plan.classId === klass.id);
+    const teacherSubjects = teacher.subjectIds ?? [];
+    const qualified = teacherSubjects.length === 0
+      ? classPlans
+      : classPlans.filter((plan) => teacherSubjects.includes(plan.subjectId));
+    if (qualified.length > 0 && !classPlans.some((plan) => plan.teacherId === teacher.id)) {
+      issues.push({
+        code:'HOMEROOM_TEACHER_NO_LESSON',
+        message:`班主任 ${teacher.name} 必须在本班 ${klass.name} 承担至少一节课`,
+        entity:klass.id,
+        field:'homeroomTeacherId',
+      });
+    }
+  }
+  for (const [teacherId, classNames] of homeroomTeachers) {
+    if (classNames.length > 1) {
+      const teacher = teacherById.get(teacherId);
+      issues.push({code:'HOMEROOM_TEACHER_DUPLICATE',message:`教师 ${teacher?.name ?? teacherId} 同时担任多个班的班主任：${classNames.join('、')}`,entity:teacherId});
+    }
   }
   return issues;
 }

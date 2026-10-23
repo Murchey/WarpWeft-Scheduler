@@ -215,6 +215,7 @@ const INSTRUCTIONS: (string | number)[][] = [
   ['班级', 'A2', '必填', '班级名称，一行一个班。', '七年级1班'],
   ['班级', 'B2', '选填', '年级。', '七年级'],
   ['班级', 'C2', '选填', '班级人数；留空默认 40。', '40'],
+  ['班级', 'D2', '选填', '班主任姓名；须与“教师”工作表一致。', '王老师'],
   ['教师', 'A2', '必填', '教师姓名。', '王老师'],
   ['教师', 'B2', '选填', '负责年级。多个年级用分号分隔，如 1;2;3；中英文分号均可混用。', '1;2;3'],
   ['教师', 'C2', '选填', '主要学科。', '数学'],
@@ -257,7 +258,7 @@ const INSTRUCTIONS: (string | number)[][] = [
 export interface TemplateSource {
   schoolName?: string;
   semester?: { startDate: string; endDate: string } | null;
-  classes?: { id: string; name: string; grade?: string; size?: number }[];
+  classes?: { id: string; name: string; grade?: string; size?: number; homeroomTeacherId?: string }[];
   teachers?: { id: string; name: string; grade?: string; subject?: string; subject2?: string; classes?: string }[];
   subjects?: { id: string; name: string }[];
   rooms?: { id: string; name: string; type?: string; capacity?: number }[];
@@ -322,7 +323,12 @@ function templateTimeSlotRows(source?: TemplateSource): { rows: (string | number
   return { rows, widths: [14, 18, 18, 18, 18, 18, 18] };
 }
 
-export function buildImportTemplate(source?: TemplateSource): ArrayBuffer {
+export interface ImportTemplateOptions {
+  /** Simplified schools do not need a room sheet or per-plan room type. */
+  simplified?: boolean;
+}
+
+export function buildImportTemplate(source?: TemplateSource, options: ImportTemplateOptions = {}): ArrayBuffer {
   const workbook = XLSX.utils.book_new();
   const classById = new Map((source?.classes ?? []).map((item) => [item.id, item]));
   const subjectById = new Map((source?.subjects ?? []).map((item) => [item.id, item]));
@@ -354,10 +360,23 @@ export function buildImportTemplate(source?: TemplateSource): ArrayBuffer {
     ];
   });
   const timeSlots = templateTimeSlotRows(source);
+  const simplified = Boolean(options.simplified);
+  const instructions = simplified
+    ? INSTRUCTIONS.filter((row) => {
+        if (row[0] === '教室') return false;
+        if (row[0] === '教学计划' && row[1] === 'G2') return false;
+        return true;
+      }).map((row) => {
+        if (row[0] === '教学计划' && row[1] === 'H2') return ['教学计划', 'G2', ...row.slice(2)];
+        if (row[0] === '教学计划' && row[1] === '第2行') return ['教学计划', '第2行', '示例', '简化模式按 A→G 顺序填写：', ''];
+        if (row[0] === '教学计划示例') return ['教学计划示例', '', '', '七年级1班 / 语文 / 李老师 / 5 / 每周 / 常规 / 空', ''];
+        return row;
+      })
+    : INSTRUCTIONS;
   const sheets: AoaSheet[] = [
     {
       name: '说明',
-      rows: INSTRUCTIONS,
+      rows: instructions,
       widths: [12, 14, 20, 55, 30],
     },
     {
@@ -376,10 +395,15 @@ export function buildImportTemplate(source?: TemplateSource): ArrayBuffer {
     {
       name: '班级',
       rows: [
-        ['名称', '年级（选填）', '人数（选填）'],
-        ...(source?.classes ?? []).map((klass) => [klass.name, klass.grade ?? '', klass.size ?? '']),
+        ['名称', '年级（选填）', '人数（选填）', '班主任（选填）'],
+        ...(source?.classes ?? []).map((klass) => [
+          klass.name,
+          klass.grade ?? '',
+          klass.size ?? '',
+          teacherById.get(klass.homeroomTeacherId ?? '')?.name ?? '',
+        ]),
       ],
-      widths: [24, 18, 18],
+      widths: [24, 18, 18, 24],
     },
     {
       name: '教师',
@@ -400,14 +424,16 @@ export function buildImportTemplate(source?: TemplateSource): ArrayBuffer {
       rows: [['学科'], ...(source?.subjects ?? []).map((subject) => [subject.name])],
       widths: [24],
     },
-    {
-      name: '教室',
-      rows: [
-        ['教室名称（选填）', '类型（选填）', '容量（选填）'],
-        ...(source?.rooms ?? []).map((room) => [room.name, room.type ?? '', room.capacity ?? '']),
-      ],
-      widths: [26, 20, 16],
-    },
+    ...(simplified
+      ? []
+      : [{
+          name: '教室',
+          rows: [
+            ['教室名称（选填）', '类型（选填）', '容量（选填）'],
+            ...(source?.rooms ?? []).map((room) => [room.name, room.type ?? '', room.capacity ?? '']),
+          ],
+          widths: [26, 20, 16],
+        }]),
     {
       name: '时间段',
       rows: timeSlots.rows,
@@ -416,25 +442,26 @@ export function buildImportTemplate(source?: TemplateSource): ArrayBuffer {
     {
       name: '教学计划',
       rows: [
-        ['班级', '学科', '教师（选填）', '每周课时', '周次（选填）', '课程类型（选填）', '教室类型（选填）', '固定时间（选填）'],
+        simplified
+          ? ['班级', '学科', '教师（选填）', '每周课时', '周次（选填）', '课程类型（选填）', '固定时间（选填）']
+          : ['班级', '学科', '教师（选填）', '每周课时', '周次（选填）', '课程类型（选填）', '教室类型（选填）', '固定时间（选填）'],
         ...(source?.coursePlans ?? []).map((plan) => {
           const klass = classById.get(plan.classId);
           const subject = subjectById.get(plan.subjectId);
           const teacher = plan.teacherId ? teacherById.get(plan.teacherId) : undefined;
           const fixed = plan.fixedSlotId ? slotById.get(plan.fixedSlotId) : undefined;
-          return [
+          const base = [
             klass?.name ?? '',
             subject?.name ?? '',
             teacher?.name ?? '',
             plan.weeklyPeriods,
             WEEK_LABELS[plan.weeks ?? 'all'] ?? '每周',
             KIND_LABELS[plan.kind ?? 'regular'] ?? '常规',
-            plan.roomType ?? '',
-            fixed?.label ?? '',
           ];
+          return simplified ? [...base, fixed?.label ?? ''] : [...base, plan.roomType ?? '', fixed?.label ?? ''];
         }),
       ],
-      widths: [22, 16, 16, 12, 14, 16, 18, 20],
+      widths: simplified ? [22, 16, 16, 12, 14, 16, 20] : [22, 16, 16, 12, 14, 16, 18, 20],
     },
     {
       name: '排课规则',

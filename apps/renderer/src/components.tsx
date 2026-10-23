@@ -14,7 +14,7 @@ function SectionHeading({ english, title }: { english: string; title: string }) 
 type Column<T> = {
   key: keyof T & string;
   label: string;
-  type?: 'text' | 'number' | 'select';
+  type?: 'text' | 'number' | 'select' | 'classes';
   options?: { value: string; label: string }[];
   width?: string;
   defaultValue?: string | number;
@@ -86,7 +86,29 @@ function EditableTable<T extends { id: string }>({
                 <tr key={row.id}>
                   {columns.map((column) => (
                     <td key={column.key}>
-                      {column.type === 'select' ? (
+                      {column.type === 'classes' ? (
+                        <select
+                          multiple
+                          className="classes-select"
+                          value={String(row[column.key] ?? column.defaultValue ?? '')
+                            .split(/[,，;；、]+/)
+                            .map((item) => item.trim())
+                            .filter(Boolean)}
+                          onChange={(event) =>
+                            onChange(
+                              row.id,
+                              column.key,
+                              Array.from(event.target.selectedOptions).map((option) => option.value).join('、'),
+                            )
+                          }
+                        >
+                          {column.options?.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : column.type === 'select' ? (
                         <select
                           value={String(row[column.key] ?? column.defaultValue ?? '')}
                           onChange={(event) => onChange(row.id, column.key, event.target.value)}

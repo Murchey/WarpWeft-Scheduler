@@ -97,10 +97,32 @@ function ResourcesPage({
     value: string | number,
   ) => {
     if (collection === 'teachers' && key === 'grade') value = normalizeGradeList(value);
+    if (collection === 'classes' && key === 'homeroomTeacherId' && value) {
+      const conflict = data.classes.find((klass) => klass.id !== id && klass.homeroomTeacherId === value);
+      if (conflict) {
+        setError('该教师已经是「' + conflict.name + '」的班主任，一个教师只能带一个班');
+        return;
+      }
+    }
     const rows = (data[collection] as unknown as Array<Record<string, unknown> & { id: string }>).map((row) =>
       row.id === id ? { ...row, [key]: value } : row,
     );
     let next = { ...data, [collection]: rows } as unknown as SchoolData;
+    if (collection === 'classes' && key === 'homeroomTeacherId' && value) {
+      const klass = data.classes.find((item) => item.id === id);
+      const teacher = data.teachers.find((item) => item.id === value);
+      if (klass && teacher) {
+        const names = splitClassNames(teacher.classes);
+        if (!names.some((name) => name.toLowerCase() === klass.name.toLowerCase())) {
+          next = {
+            ...next,
+            teachers: data.teachers.map((item) =>
+              item.id === teacher.id ? { ...item, classes: [...names, klass.name].join('、') } : item,
+            ),
+          };
+        }
+      }
+    }
     if (collection === 'classes' && key === 'name') {
       const previous = data.classes.find((klass) => klass.id === id)?.name;
       const nextName = String(value).trim();
@@ -144,6 +166,13 @@ function ResourcesPage({
       if (collection === 'timeSlots' && deleted.has(item.slotId)) return false;
       return true;
     });
+    if (collection === 'teachers') {
+      next.classes = next.classes.map((klass) =>
+        klass.homeroomTeacherId && deleted.has(klass.homeroomTeacherId)
+          ? { ...klass, homeroomTeacherId: undefined }
+          : klass,
+      );
+    }
     if (collection === 'classes') {
       const removedNames = new Set(
         data.classes.filter((klass) => deleted.has(klass.id)).map((klass) => klass.name.trim().toLowerCase()),
@@ -370,6 +399,7 @@ function ResourcesPage({
         next.lessonLogs = [];
       }
       const classNames = new Set<string>();
+      const homeroomDrafts: { classId: string; teacherName: string }[] = [];
       for (const row of classRows) {
         const v = row.values;
         const name = text(v['名称'] ?? v['班级名称'] ?? v['name']);
@@ -396,6 +426,9 @@ function ResourcesPage({
         } else {
           next.classes.push({ id: uid('class'), name, grade, size });
         }
+        const homeroomTeacherName = text(v['班主任'] ?? v['班主任教师'] ?? v['homeroomTeacher'] ?? '');
+        const klass = next.classes.find((item) => item.name.trim().toLowerCase() === key);
+        if (homeroomTeacherName && klass) homeroomDrafts.push({ classId: klass.id, teacherName: homeroomTeacherName });
       }
       const teacherNames = new Set<string>();
       for (const row of teacherRows) {
@@ -442,6 +475,36 @@ function ResourcesPage({
           });
         }
       }
+      const homeroomByTeacher = new Map<string, string[]>();
+      for (const draft of homeroomDrafts) {
+        const teacher = next.teachers.find((item) => item.name.trim().toLowerCase() === draft.teacherName.toLowerCase());
+        const klass = next.classes.find((item) => item.id === draft.classId);
+        if (!teacher) {
+          issues.push('班级 ' + (klass?.name ?? draft.classId) + ' 的班主任不存在：' + draft.teacherName);
+          continue;
+        }
+        if (!klass) continue;
+        klass.homeroomTeacherId = teacher.id;
+        const bound = splitClassNames(teacher.classes);
+        if (!bound.some((name) => name.toLowerCase() === klass.name.toLowerCase())) {
+          teacher.classes = [...bound, klass.name].join('、');
+        }
+        const list = homeroomByTeacher.get(teacher.id) ?? [];
+        list.push(klass.name);
+        homeroomByTeacher.set(teacher.id, list);
+      }
+      for (const klass of next.classes) {
+        if (!klass.homeroomTeacherId) continue;
+        const list = homeroomByTeacher.get(klass.homeroomTeacherId) ?? [];
+        if (!list.includes(klass.name)) list.push(klass.name);
+        homeroomByTeacher.set(klass.homeroomTeacherId, list);
+      }
+      for (const [teacherId, classNames] of homeroomByTeacher) {
+        if (classNames.length > 1) {
+          const teacher = next.teachers.find((item) => item.id === teacherId);
+          issues.push('教师 ' + (teacher?.name ?? teacherId) + ' 被多个班设为班主任：' + classNames.join('、'));
+        }
+      }
       const subjectNames = new Set<string>();
       for (const row of subjectRows) {
         const v = row.values;
@@ -462,6 +525,7 @@ function ResourcesPage({
       }
       const roomNames = new Set<string>();
       for (const row of roomRows) {
+        if ((next.roomMode ?? 'simplified') !== 'full') continue;
         const v = row.values;
         const name = text(v['名称'] ?? v['教室名称'] ?? v['name']);
         if (!name) {
@@ -488,7 +552,17 @@ function ResourcesPage({
           next.rooms.push({ id: uid('room'), name, capacity, type });
         }
       }
-      if (next.rooms.length === 0) {
+      if ((next.roomMode ?? 'simplified') !== 'full') {
+        for (const klass of next.classes) {
+          if (next.rooms.some((room) => room.name.trim().toLowerCase() === (klass.name + '教室').toLowerCase())) continue;
+          next.rooms.push({
+            id: uid('room'),
+            name: klass.name + '教室',
+            capacity: Math.max(1, klass.size),
+            type: '普通教室',
+          });
+        }
+      } else if (next.rooms.length === 0) {
         for (const klass of next.classes) {
           next.rooms.push({
             id: uid('room'),
@@ -793,7 +867,9 @@ function ResourcesPage({
     setError('');
     try {
       await new Promise((resolve) => window.setTimeout(resolve, 30));
-      const bytes = buildImportTemplate();
+      const bytes = buildImportTemplate(undefined, {
+        simplified: (data.roomMode ?? 'simplified') !== 'full',
+      });
       setTemplateStage('saving');
       const result = await download(
         bytes,
@@ -859,7 +935,15 @@ function ResourcesPage({
             <input type="checkbox" checked={replaceOnImport} onChange={(event) => setReplaceOnImport(event.target.checked)} />
             <span>导入前清空当前工作区</span>
           </label>
-          <p className="panel-note">仅支持 Excel（.xlsx/.xls）；模板包含“说明、学校、学期、班级、教师、学科、教室、时间段、教学计划、排课规则”工作表；教师表的年级/学科为选填元数据，教室表可整表留空。测试完整数据集时建议勾选上方清空选项。</p>
+          <label className="import-replace">
+            <input
+              type="checkbox"
+              checked={(data.roomMode ?? 'simplified') !== 'full'}
+              onChange={(event) => commit({ ...data, roomMode: event.target.checked ? 'simplified' : 'full' }, { invalidate: true })}
+            />
+            <span>简化模式（每班一间固定教室，不需要教室表）</span>
+          </label>
+          <p className="panel-note">仅支持 Excel（.xlsx/.xls）；简化模式模板不包含“教室”表，教学计划也不需要教室类型；完整模式保留教室表。教师表填写负责班级后，排课和自动分配都只使用这些班级；班级表可填班主任。测试完整数据集时建议勾选上方清空选项。</p>
         </section>
       </div>
     );
@@ -867,9 +951,16 @@ function ResourcesPage({
 
   if (kind === 'classes') {
     const columns: Column<ClassRoom>[] = [
-      { key: 'name', label: '班级名称', width: '38%' },
-      { key: 'grade', label: '年级', width: '30%' },
-      { key: 'size', label: '人数', type: 'number', width: '22%' },
+      { key: 'name', label: '班级名称', width: '28%' },
+      { key: 'grade', label: '年级', width: '18%' },
+      { key: 'size', label: '人数', type: 'number', width: '14%' },
+      {
+        key: 'homeroomTeacherId',
+        label: '班主任',
+        type: 'select',
+        width: '40%',
+        options: [{ value: '', label: '未设置' }, ...data.teachers.map((teacher) => ({ value: teacher.id, label: teacher.name }))],
+      },
     ];
     return (
       <div className="resource-single">
@@ -882,7 +973,7 @@ function ResourcesPage({
           onAdd={() => add('classes')}
           onRemove={(id) => remove('classes', id)}
           addLabel="新增班级"
-          note="班级人数会影响教室容量校验；被教学计划引用的班级不能删除。"
+          note="班级人数会影响教室容量校验；班主任必须在本班有一节自己可教的课（本班没有该老师所教学科时豁免）；被教学计划引用的班级不能删除。"
           previewCount={6}
           onOpenAll={() => setWorkspace('classes')}
         />
@@ -896,7 +987,13 @@ function ResourcesPage({
               { key: 'grade', label: '年级', type: 'text', placeholder: '如 八年级' },
               { key: 'size', label: '人数', type: 'number', placeholder: '如 45' },
             ]}
-            searchText={(row) => row.name + ' ' + (row.grade ?? '')}
+            searchText={(row) =>
+              row.name +
+              ' ' +
+              (row.grade ?? '') +
+              ' ' +
+              (data.teachers.find((teacher) => teacher.id === row.homeroomTeacherId)?.name ?? '')
+            }
             onChange={(id, key, value) => update('classes', id, key, value)}
             onBatchEdit={(ids, key, value) => batchEdit('classes', ids, key, value)}
             onRemoveMany={(ids) => removeMany('classes', ids)}
@@ -914,7 +1011,13 @@ function ResourcesPage({
         { key: 'grade', label: '负责年级', width: '14%' },
         { key: 'subject', label: '主要学科', width: '16%' },
         { key: 'subject2', label: '其他学科', width: '16%' },
-        { key: 'classes', label: '负责班级（用、分隔）', width: '34%' },
+        {
+          key: 'classes',
+          label: '负责班级',
+          type: 'classes',
+          width: '34%',
+          options: data.classes.map((klass) => ({ value: klass.name, label: klass.name })),
+        },
       ];
     return (
       <div className="resource-single">
@@ -927,7 +1030,7 @@ function ResourcesPage({
           onAdd={() => add('teachers')}
           onRemove={(id) => remove('teachers', id)}
           addLabel="新增教师"
-          note="教师不能在同一时间上两门课；负责班级留空表示不限制，多个班级用“、”分隔；被教学计划引用的教师不能删除。"
+          note="教师不能在同一时间上两门课；负责班级可多选，留空表示不限制；被教学计划引用的教师不能删除。"
           previewCount={6}
           onOpenAll={() => setWorkspace('teachers')}
         />

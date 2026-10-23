@@ -34,6 +34,7 @@ export function fixedRoomForClass(
 }
 
 function normalizeEntries(data: SchoolData, entries: ScheduleEntry[]): ScheduleEntry[] {
+  if (!isSimplifiedRooms(data)) return entries;
   const plans = new Map(data.coursePlans.map((plan) => [plan.id, plan]));
   return entries.map((entry) => {
     // Elective groups deliberately share special rooms across classes.
@@ -47,18 +48,41 @@ function normalizeEntries(data: SchoolData, entries: ScheduleEntry[]): ScheduleE
   });
 }
 
+export function isSimplifiedRooms(data: Pick<SchoolData, 'roomMode'>): boolean {
+  return (data.roomMode ?? 'simplified') !== 'full';
+}
+
+/** Simplified workspaces do not need a room sheet; one fixed room per class is enough. */
+export function ensureSimplifiedRooms(data: SchoolData): SchoolData {
+  if (!isSimplifiedRooms(data) || data.rooms.length > 0) return data;
+  return {
+    ...data,
+    rooms: data.classes.map((klass) => ({
+      id: 'room-auto-' + klass.id,
+      name: klass.name + '教室',
+      capacity: Math.max(1, Number(klass.size) || 1),
+      type: '普通教室',
+    })),
+  };
+}
+
 export function withFixedClassRoomsResult(data: SchoolData, output: SolverOutput): SolverOutput {
-  return { ...output, entries: normalizeEntries(data, output.entries) };
+  if (!isSimplifiedRooms(data)) return output;
+  const roomed = ensureSimplifiedRooms(data);
+  return { ...output, entries: normalizeEntries(roomed, output.entries) };
 }
 
 export function withFixedClassRooms(data: SchoolData): SchoolData {
+  if (!isSimplifiedRooms(data)) return data;
+  const roomed = ensureSimplifiedRooms(data);
   return {
-    ...data,
-    candidate: data.candidate ? withFixedClassRoomsResult(data, data.candidate) : data.candidate,
-    published: data.published ? withFixedClassRoomsResult(data, data.published) : data.published,
-    publishedVersions: data.publishedVersions?.map((version) => ({
+    ...roomed,
+    roomMode: roomed.roomMode ?? 'simplified',
+    candidate: roomed.candidate ? withFixedClassRoomsResult(roomed, roomed.candidate) : roomed.candidate,
+    published: roomed.published ? withFixedClassRoomsResult(roomed, roomed.published) : roomed.published,
+    publishedVersions: roomed.publishedVersions?.map((version) => ({
       ...version,
-      result: withFixedClassRoomsResult(data, version.result),
+      result: withFixedClassRoomsResult(roomed, version.result),
     })),
   };
 }

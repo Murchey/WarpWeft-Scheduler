@@ -15,6 +15,9 @@ import {
   validateAdjustment,
   weekdayOf,
 } from '../../../packages/adjustments/src';
+import { weekOfDate } from '../../../packages/semester/src';
+import { buildAdjustmentImpact } from './adjustmentImpact';
+import type { AdjustmentImpact } from './adjustmentImpact';
 import type {
   Adjustment,
   AdjustmentDraft,
@@ -118,11 +121,13 @@ export function AdjustmentsPage({
   commit,
   setError,
   setNotice,
+  onQuickExport,
 }: {
   data: SchoolData;
   commit: Commit;
   setError: (value: string) => void;
   setNotice: (value: string) => void;
+  onQuickExport?: (view: 'class' | 'teacher', entityId: string, weekNo: number | null) => void;
 }) {
   const initialDate = new URLSearchParams(window.location.search).get('date') || todayLocal();
   const [date, setDate] = useState(initialDate);
@@ -142,6 +147,8 @@ export function AdjustmentsPage({
   const [hoverSlotId, setHoverSlotId] = useState('');
   const [failedSlotId, setFailedSlotId] = useState('');
   const [status, setStatus] = useState<PageStatus | null>(null);
+  const [impact, setImpact] = useState<AdjustmentImpact | null>(null);
+  const [impactOpen, setImpactOpen] = useState(false);
   const boardRef = useRef<HTMLElement | null>(null);
   const latestData = useRef(data);
 
@@ -164,6 +171,7 @@ export function AdjustmentsPage({
 
   const result = data.candidate ?? data.published ?? null;
   const adjustments = data.adjustments ?? [];
+  const previousAdjustments = useRef({ date, adjustments });
   const weekday = weekdayOf(date);
   const slotById = useMemo(() => new Map(data.timeSlots.map((slot) => [slot.id, slot])), [data.timeSlots]);
   const daySlots = useMemo(
@@ -171,6 +179,28 @@ export function AdjustmentsPage({
     [data.timeSlots, weekday],
   );
   const baseEntries = useMemo<ScheduleEntry[]>(() => result?.entries ?? [], [result]);
+  useEffect(() => {
+    const previous = previousAdjustments.current;
+    previousAdjustments.current = { date, adjustments };
+    if (previous.date !== date) {
+      setImpact(null);
+      return;
+    }
+    if (previous.adjustments === adjustments) return;
+    if (!result) {
+      setImpact(null);
+      return;
+    }
+    const next = buildAdjustmentImpact(
+      data,
+      date,
+      previous.adjustments,
+      adjustments,
+      baseEntries as AdjustmentEntry[],
+    );
+    setImpact(next);
+    if (!next) setImpactOpen(false);
+  }, [adjustments, baseEntries, data, date, result]);
   const allEffective = useMemo<AdjustmentEntry[]>(
     () =>
       result
@@ -209,6 +239,33 @@ export function AdjustmentsPage({
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b, 'zh-CN', { numeric: true }));
   }, [data.classes]);
   const classNameText = findClass(data, classId)?.name ?? '未选择班级';
+  const impactClassName = impact ? findClass(data, impact.classId)?.name ?? impact.classId : '';
+  const impactTeacherNames = impact
+    ? impact.teacherIds.map((teacherId) => findTeacher(data, teacherId)?.name ?? teacherId).join('、')
+    : '';
+  const impactWeekNo = impact ? weekOfDate(data.semester, impact.date) : null;
+  const impactSlotLabels = impact ? impact.slotIds.map((slotId) => slotLabelOf(slotId)).join('、') : '';
+  const impactEntryText = (entry: AdjustmentEntry, view: 'class' | 'teacher') => {
+    const bits = [subjectOfEntry(entry), findTeacher(data, entry.teacherId)?.name ?? entry.teacherId];
+    if (view === 'teacher') bits.push(findClass(data, entry.classId)?.name ?? entry.classId);
+    return bits.filter(Boolean).join(' · ');
+  };
+  const renderImpactRows = (before: AdjustmentEntry[], after: AdjustmentEntry[], view: 'class' | 'teacher') => (
+    <div className="impact-rows">
+      {daySlots.map((slot) => {
+        const beforeText = before.filter((entry) => entry.slotId === slot.id).map((entry) => impactEntryText(entry, view)).join(' / ');
+        const afterText = after.filter((entry) => entry.slotId === slot.id).map((entry) => impactEntryText(entry, view)).join(' / ');
+        return (
+          <div className={'impact-row' + (beforeText !== afterText ? ' is-changed' : '')} key={slot.id}>
+            <b>第{slot.period}节</b>
+            <span className="impact-before">{beforeText || '空'}</span>
+            <span className="impact-arrow">→</span>
+            <span className="impact-after">{afterText || '空'}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
 
   const baseOf = (entryId: string) => baseEntries.find((entry) => entry.id === entryId);
   const activeOf = (entryId: string) => activeAdjustmentOf(adjustments, date, entryId);
@@ -391,11 +448,15 @@ export function AdjustmentsPage({
 
   const changeDate = (next: string) => {
     setDate(next);
+    setImpact(null);
+    setImpactOpen(false);
     clearSelection();
   };
 
   const changeClass = (next: string) => {
     setClassId(next);
+    setImpact(null);
+    setImpactOpen(false);
     clearSelection();
   };
 
@@ -967,6 +1028,7 @@ export function AdjustmentsPage({
           planClass +
           (hoverSlotId === slot.id && dragEntryId ? ' is-hover' : '') +
           (failedSlotId === slot.id ? ' is-failed' : '') +
+          (impact?.slotIds.includes(slot.id) ? ' is-impact' : '') +
           (cards.length === 0 && shadows.length === 0 ? ' is-empty' : '')
         }
         role={moveMode ? 'button' : undefined}
@@ -1298,6 +1360,64 @@ export function AdjustmentsPage({
           <span className="adjust-status-text">{status.text}</span>
           {status.undo ? <button type="button" className="tt-btn tt-btn-quiet" onClick={status.undo}>撤销</button> : null}
           <button type="button" className="adjust-status-close" aria-label="关闭提示" onClick={() => setStatus(null)}>×</button>
+        </div>
+      ) : null}
+
+      {impact ? (
+        <section className="adjust-impact" aria-label="本次调整影响范围">
+          <div className="adjust-impact-head">
+            <div>
+              <span className="kicker">// IMPACT</span>
+              <b>影响范围</b>
+            </div>
+            <span>{ADJUSTMENT_LABELS[impact.type]} · {impactClassName} · {impact.date}</span>
+          </div>
+          <div className="adjust-impact-chips">
+            <span>教师：{impactTeacherNames || '—'}</span>
+            <span>节次：{impactSlotLabels || '—'}</span>
+            <span>变化：{impact.changes.length} 处</span>
+          </div>
+          <div className="adjust-impact-actions">
+            <button type="button" className="tt-btn tt-btn-quiet" onClick={() => setImpactOpen(true)}>查看影响课表</button>
+            {onQuickExport ? (
+              <button type="button" className="tt-btn tt-btn-quiet" onClick={() => onQuickExport('class', impact.classId, impactWeekNo)}>导出班级课表</button>
+            ) : null}
+            {onQuickExport && impact.teacherIds[0] ? (
+              <button type="button" className="tt-btn tt-btn-quiet" onClick={() => onQuickExport('teacher', impact.teacherIds[0], impactWeekNo)}>导出教师课表</button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
+      {impactOpen && impact ? (
+        <div className="impact-overlay" role="dialog" aria-modal="true" aria-label="影响课表">
+          <div className="impact-dialog">
+            <div className="impact-dialog-head">
+              <div>
+                <span className="kicker">// IMPACT TIMETABLE</span>
+                <h3>影响范围</h3>
+              </div>
+              <button type="button" className="tt-btn tt-btn-quiet" onClick={() => setImpactOpen(false)}>关闭</button>
+            </div>
+            <div className="impact-columns">
+              <section>
+                <h4>班级 · {impactClassName}</h4>
+                {renderImpactRows(impact.classBefore, impact.classAfter, 'class')}
+              </section>
+              <section>
+                <h4>教师 · {impactTeacherNames || '—'}</h4>
+                {renderImpactRows(impact.teacherBefore, impact.teacherAfter, 'teacher')}
+              </section>
+            </div>
+            <div className="impact-actions">
+              {onQuickExport ? (
+                <button type="button" className="tt-btn tt-btn-primary" onClick={() => onQuickExport('class', impact.classId, impactWeekNo)}>导出班级课表</button>
+              ) : null}
+              {onQuickExport && impact.teacherIds[0] ? (
+                <button type="button" className="tt-btn tt-btn-quiet" onClick={() => onQuickExport('teacher', impact.teacherIds[0], impactWeekNo)}>导出教师课表</button>
+              ) : null}
+            </div>
+          </div>
         </div>
       ) : null}
 

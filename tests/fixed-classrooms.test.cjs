@@ -68,6 +68,24 @@ test('normalization keeps the input untouched and walks published versions', asy
   assert.equal(fixed.publishedVersions[0].result.entries[0].roomId, 'r1');
 });
 
+test('full room mode leaves the solver room assignment untouched', async () => {
+  const { withFixedClassRooms } = await loadFixedRooms();
+  const { data } = fixture();
+  data.roomMode = 'full';
+  const fixed = withFixedClassRooms(data);
+  assert.equal(fixed.candidate.entries[0].roomId, 'r2');
+});
+
+test('simplified mode creates one fixed room per class when rooms are empty', async () => {
+  const { withFixedClassRooms } = await loadFixedRooms();
+  const { data } = fixture();
+  data.rooms = [];
+  data.candidate = null;
+  const fixed = withFixedClassRooms(data);
+  assert.equal(fixed.rooms.length, 2);
+  assert.equal(fixed.rooms[0].name, '一年级1班教室');
+});
+
 test('classes without a matching or large-enough room keep the solver room', async () => {
   const { withFixedClassRooms } = await loadFixedRooms();
   const { data } = fixture();

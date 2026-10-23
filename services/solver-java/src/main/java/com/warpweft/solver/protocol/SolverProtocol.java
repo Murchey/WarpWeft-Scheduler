@@ -74,10 +74,14 @@ public final class SolverProtocol {
                 text(node, "id", ""), text(node, "name", ""), integer(node, "capacity", 0), text(node, "type", "普通教室")
             ));
         }
+        Map<String, String> homeroomByClass = new HashMap<>();
         for (JsonNode node : root.path("classes")) {
-            data.classes.put(text(node, "id", ""), new ClassInfo(
-                text(node, "id", ""), text(node, "name", ""), integer(node, "size", 40)
+            String classId = text(node, "id", "");
+            data.classes.put(classId, new ClassInfo(
+                classId, text(node, "name", ""), integer(node, "size", 40)
             ));
+            String homeroom = text(node, "homeroomTeacherId", "");
+            if (!homeroom.isBlank()) homeroomByClass.put(classId, homeroom);
         }
         for (JsonNode node : root.path("unavailableSlots")) {
             data.unavailable.add(text(node, "teacherId", "") + "|" + text(node, "slotId", ""));
@@ -85,6 +89,7 @@ public final class SolverProtocol {
         Set<String> classIds = data.classes.keySet();
         Set<String> teacherIds = new HashSet<>();
         Map<String, Set<String>> teacherClasses = new HashMap<>();
+        Map<String, Set<String>> teacherSubjects = new HashMap<>();
         for (JsonNode node : root.path("teachers")) {
             String teacherId = text(node, "id", "");
             teacherIds.add(teacherId);
@@ -95,6 +100,9 @@ public final class SolverProtocol {
                 else data.violations.add("教师 " + teacherId + " 的负责班级引用了不存在的班级：" + classId);
             }
             teacherClasses.put(teacherId, bound);
+            Set<String> subjects = new HashSet<>();
+            for (JsonNode subjectNode : node.path("subjectIds")) subjects.add(subjectNode.asText(""));
+            teacherSubjects.put(teacherId, subjects);
         }
         Set<String> subjectIds = new HashSet<>();
         for (JsonNode node : root.path("subjects")) subjectIds.add(text(node, "id", ""));
@@ -114,6 +122,35 @@ public final class SolverProtocol {
             if (!subjectIds.contains(plan.subjectId())) data.violations.add("教学计划 " + plan.id() + " 引用了不存在的学科");
             if (!plan.fixedSlotId().isBlank() && !data.slots.containsKey(plan.fixedSlotId())) data.violations.add("教学计划 " + plan.id() + " 引用了不存在的固定时间");
             data.plans.add(plan);
+        }
+        Map<String, List<String>> homeroomByTeacher = new HashMap<>();
+        for (Map.Entry<String, String> entry : homeroomByClass.entrySet()) {
+            String classId = entry.getKey();
+            String teacherId = entry.getValue();
+            ClassInfo klass = data.classes.get(classId);
+            if (!teacherIds.contains(teacherId)) {
+                data.violations.add("班级 " + classId + " 的班主任不存在");
+                continue;
+            }
+            List<String> assigned = homeroomByTeacher.computeIfAbsent(teacherId, key -> new ArrayList<>());
+            assigned.add(klass == null ? classId : klass.name());
+            Set<String> bound = teacherClasses.get(teacherId);
+            if (bound != null && !bound.isEmpty() && !bound.contains(classId)) {
+                data.violations.add("班主任 " + teacherId + " 不负责班级 " + classId);
+            }
+            List<Plan> classPlans = data.plans.stream().filter(plan -> plan.classId().equals(classId)).toList();
+            Set<String> teacherSubjectIds = teacherSubjects.getOrDefault(teacherId, Set.of());
+            boolean qualified = !classPlans.isEmpty() && (teacherSubjectIds.isEmpty()
+                || classPlans.stream().anyMatch(plan -> teacherSubjectIds.contains(plan.subjectId())));
+            boolean hasLesson = classPlans.stream().anyMatch(plan -> plan.teacherId().equals(teacherId));
+            if (qualified && !hasLesson) {
+                data.violations.add("班主任 " + teacherId + " 必须在本班 " + classId + " 承担至少一节课");
+            }
+        }
+        for (Map.Entry<String, List<String>> entry : homeroomByTeacher.entrySet()) {
+            if (entry.getValue().size() > 1) {
+                data.violations.add("教师 " + entry.getKey() + " 同时担任多个班的班主任：" + String.join("、", entry.getValue()));
+            }
         }
         for (JsonNode node : root.path("electiveGroups")) {
             String groupId = text(node, "id", "");

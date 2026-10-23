@@ -317,3 +317,13 @@ node scripts/bench-solver.cjs --classes 24,96,120 --time-limit 30
 
 **测试**：`npm test` 175 条通过；新增教师绑定（自动分配 / API 保存 / solver input / Java 协议）与模板列测试。
 
+---
+
+## 13. 班主任、调整影响范围、简化模式与版本一致性
+
+- 班级新增 `homeroomTeacherId`；设定班主任自动把本班加入教师负责班级；班主任本班课规则在 preflight、API、Java 三处校验，支持“本班没有该教师学科”豁免；空教师计划优先分配给班主任。
+- 调课/代课/停课/改期/还原后显示影响范围：班级/教师前后日课表、变化节次和高亮；影响面板可一键导出班级/教师周课表，预览页也有一键导出当前视图。
+- `roomMode` 默认 simplified：模板不需要教室 sheet/教室类型，每班自动一间固定教室；完整模式恢复教室池容量/类型/冲突排课。
+- `data-schema.json` 提供 schemaVersion 2；`/api/health` 暴露 schema/app/solver 版本与 capabilities，客户端版本过旧时阻断保存/排课。
+- 新增模板班级班主任列、教师负责班级多选、影响计算、roomMode 分流和 API health 测试。
+

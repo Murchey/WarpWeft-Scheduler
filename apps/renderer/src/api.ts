@@ -112,6 +112,22 @@ export async function loadData(): Promise<SchoolData> {
   return withFixedClassRooms(JSON.parse(text) as SchoolData);
 }
 
+export interface ServerHealth {
+  ok: boolean;
+  appVersion?: string;
+  schemaVersion?: number;
+  solverProtocol?: string;
+  capabilities?: string[];
+  java?: { available?: boolean; version?: string | null };
+}
+
+export async function fetchHealth(): Promise<ServerHealth> {
+  const response = await request(`${getApiBase()}/api/health`, { cache: 'no-store' }, 8000);
+  const text = await response.text();
+  if (!response.ok) throw failure(response, text);
+  return JSON.parse(text) as ServerHealth;
+}
+
 export async function saveData(data: SchoolData): Promise<SchoolData> {
   const response = await request(
     `${getApiBase()}/api/data`,

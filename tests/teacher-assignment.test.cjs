@@ -63,6 +63,15 @@ test('teacher class bindings restrict blank-teacher assignment', async () => {
   assert.equal(result.unresolved, 1);
 });
 
+test('homeroom teacher gets a blank lesson in their own class first', async () => {
+  const { assignMissingTeachers } = await loadAssignment();
+  const data = fixture();
+  data.classes[0].homeroomTeacherId = 't1';
+  const result = assignMissingTeachers(data);
+  const byId = new Map(result.plans.map((plan) => [plan.id, plan]));
+  assert.equal(byId.get('p1').teacherId, 't1');
+});
+
 test('Chinese grade names and explicit teacher grades are compared numerically', async () => {
   const { gradeNumber } = await loadAssignment();
   assert.equal(gradeNumber('七年级'), 7);

@@ -1,41 +1,26 @@
 @echo off
-setlocal enabledelayedexpansion
 chcp 65001 >nul
+setlocal EnableExtensions
 cd /d "%~dp0"
-
-REM ---------------------------------------------------------------------------
-REM WarpWeft local development launcher
-REM   run_dev.bat        start API + Vite + Electron
-REM   run_dev.bat web    start API + Vite only (open the URL in a browser)
-REM   run_dev.bat web-noopen  same as web, but do not open a browser
-REM ---------------------------------------------------------------------------
-
-echo.
-echo ============================================================
-echo  WarpWeft Scheduler - development mode
-echo  repo: %CD%
-echo ============================================================
-echo.
+title WarpWeft Scheduler - Dev Launcher
 
 where node >nul 2>nul
 if errorlevel 1 (
-  echo [ERROR] Node.js was not found on PATH. Install Node.js 22+ first.
+  echo [ERROR] Node.js was not found. Install Node.js 22+ first.
   pause
   exit /b 1
 )
 where npm >nul 2>nul
 if errorlevel 1 (
-  echo [ERROR] npm was not found on PATH.
+  echo [ERROR] npm was not found.
   pause
   exit /b 1
 )
-
 if not exist "package.json" (
-  echo [ERROR] package.json was not found next to this script.
+  echo [ERROR] package.json was not found. Run this script from the repo root.
   pause
   exit /b 1
 )
-
 if not exist "node_modules" (
   echo [SETUP] node_modules is missing, running npm install...
   call npm install
@@ -46,95 +31,119 @@ if not exist "node_modules" (
   )
 )
 
-if not exist "resources\solver\warpweft-solver.jar" (
-  echo [SETUP] Java solver jar is missing, building it...
-  call npm run build:solver
-  if errorlevel 1 (
-    echo [ERROR] npm run build:solver failed. Check JDK 21 / JAVA_HOME.
-    pause
-    exit /b 1
-  )
+set "ARG=%~1"
+if defined ARG (
+  set "MODE=%ARG%"
+  goto dispatch
 )
 
-set "NO_ELECTRON="
-if /i "%~1"=="web" set "NO_ELECTRON=1"
-if /i "%~1"=="web-noopen" (set "NO_ELECTRON=1" & set "NO_OPEN=1")
-
-REM ---------------------------------------------------------------------------
-REM 1) local API on 4317 (skip when an instance is already healthy)
-REM ---------------------------------------------------------------------------
-call :probe "http://127.0.0.1:4317/api/health"
-if errorlevel 1 (
-  echo [START] API  http://127.0.0.1:4317
-  start "WarpWeft API (4317)" cmd /k node scripts/dev-api.cjs
-) else (
-  echo [SKIP] API already responds on http://127.0.0.1:4317
-)
-
-REM ---------------------------------------------------------------------------
-REM 2) Vite dev server on 5173 (strictPort so Electron always points here)
-REM ---------------------------------------------------------------------------
-call :probe "http://127.0.0.1:5173/"
-if errorlevel 1 (
-  echo [START] Vite http://127.0.0.1:5173
-  start "WarpWeft Vite (5173)" cmd /k npm run dev -- --port 5173 --strictPort
-) else (
-  echo [SKIP] Vite already responds on http://127.0.0.1:5173
-)
-
-echo [WAIT ] waiting for API and Vite to become ready...
-call :wait "http://127.0.0.1:4317/api/health" "API"
-if errorlevel 1 goto :failed
-call :wait "http://127.0.0.1:5173/" "Vite"
-if errorlevel 1 goto :failed
-
-if defined NO_ELECTRON (
-  echo.
-  echo [READY] Open http://127.0.0.1:5173 in a browser.
-  echo         API: http://127.0.0.1:4317/api/health
-  echo.
-  if not defined NO_OPEN start "" "http://127.0.0.1:5173"
-  exit /b 0
-)
-
-REM ---------------------------------------------------------------------------
-REM 3) Electron pointing at the Vite dev server
-REM ---------------------------------------------------------------------------
-echo [START] Electron desktop
-start "WarpWeft Desktop" cmd /c "set VITE_DEV_SERVER_URL=http://127.0.0.1:5173&& npm run desktop"
-
+:menu
+cls
+echo ============================================================
+echo   WarpWeft Scheduler - Dev Launcher
+echo   repo: %CD%
+echo ============================================================
 echo.
-echo [READY] API + Vite + Electron are starting.
-echo         Close the API / Vite / Electron windows to stop them.
+echo   [1] Electron desktop dev - recommended
+echo       Vite + Electron; Electron starts the local API
 echo.
+echo   [2] Browser dev - local API
+echo       Vite + local API; opens the browser
+echo.
+echo   [3] LAN server dev
+echo       API / Vite listen on 0.0.0.0 for other devices
+echo.
+echo   [4] Browser dev - no auto-open
+echo       Vite + local API; open the URL yourself
+echo.
+echo   [0] Exit
+echo.
+echo   First run: npm install
+echo ============================================================
+set "MODE="
+set /p "MODE=Enter a number and press Enter: "
+if not defined MODE goto menu
+if "%MODE%"=="0" goto end
+
+:dispatch
+if /i "%MODE%"=="1" goto mode_electron
+if /i "%MODE%"=="2" goto mode_web
+if /i "%MODE%"=="3" goto mode_lan
+if /i "%MODE%"=="4" goto mode_web_noopen
+if /i "%MODE%"=="web" goto mode_web
+if /i "%MODE%"=="web-noopen" goto mode_web_noopen
+if /i "%MODE%"=="lan" goto mode_lan
+if "%MODE%"=="0" goto end
+echo.
+echo Invalid choice: %MODE%
 ping -n 3 127.0.0.1 >nul
-exit /b 0
+if defined ARG exit /b 1
+goto menu
 
-:failed
+:mode_electron
 echo.
-echo [ERROR] The dev servers did not become ready in time.
-echo         Check the "WarpWeft API" and "WarpWeft Vite" windows for details.
-echo.
-pause
-exit /b 1
+echo [1/4] Starting Electron desktop dev...
+if not exist "node_modules\electron\dist\electron.exe" goto repair_electron
+if not exist "node_modules\electron\path.txt" goto repair_electron
+goto electron_ready
 
-:probe
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "try { $r = Invoke-WebRequest -Uri '%~1' -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 500) { exit 0 } else { exit 1 } } catch { exit 1 }"
-exit /b %errorlevel%
-
-:wait
-set "TARGET=%~1"
-set "LABEL=%~2"
-for /l %%i in (1,1,60) do (
-  call :probe "%TARGET%"
-  if not errorlevel 1 (
-    echo [READY] %LABEL% is up.
-    exit /b 0
-  )
-  ping -n 2 127.0.0.1 >nul
+:repair_electron
+echo [SETUP] Electron binary is missing, repairing...
+call npm run fix:electron
+if errorlevel 1 (
+  echo [ERROR] Electron repair failed. Run npm run fix:electron manually.
+  pause
+  exit /b 1
 )
-echo [ERROR] %LABEL% did not respond at %TARGET%
-exit /b 1
 
+:electron_ready
+echo.
+call npm run dev:electron
+set "EXITCODE=%ERRORLEVEL%"
+echo.
+echo Electron dev finished. Exit code: %EXITCODE%
+if defined ARG exit /b %EXITCODE%
+pause
+goto menu
 
+:mode_web
+echo.
+echo [2/4] Starting browser dev with local API...
+echo.
+call npm run dev:web
+set "EXITCODE=%ERRORLEVEL%"
+echo.
+echo Browser dev finished. Exit code: %EXITCODE%
+if defined ARG exit /b %EXITCODE%
+pause
+goto menu
+
+:mode_lan
+echo.
+echo [3/4] Starting LAN server dev...
+echo Firewall must allow inbound TCP 4317 and 5173.
+echo.
+call npm run dev:web -- --lan
+set "EXITCODE=%ERRORLEVEL%"
+echo.
+echo LAN dev finished. Exit code: %EXITCODE%
+if defined ARG exit /b %EXITCODE%
+pause
+goto menu
+
+:mode_web_noopen
+echo.
+echo [4/4] Starting browser dev without auto-open...
+echo.
+call npm run dev:web -- --no-open
+set "EXITCODE=%ERRORLEVEL%"
+echo.
+echo Browser dev finished. Exit code: %EXITCODE%
+if defined ARG exit /b %EXITCODE%
+pause
+goto menu
+
+:end
+echo Bye.
+endlocal
+exit /b 0

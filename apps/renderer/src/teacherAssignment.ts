@@ -43,6 +43,16 @@ export function classIdsForTeacher(
   );
 }
 
+export function subjectIdsForTeacher(
+  teacher: Pick<Teacher, 'subject' | 'subject2'>,
+  subjects: { id: string; name: string }[],
+): string[] {
+  const names = listSubjects(teacher as Teacher).map((name) => name.trim().toLowerCase());
+  if (names.length === 0) return [];
+  const byName = new Map(subjects.map((subject) => [subject.name.trim().toLowerCase(), subject.id]));
+  return Array.from(new Set(names.map((name) => byName.get(name)).filter((id): id is string => Boolean(id))));
+}
+
 export function teacherCanTeachClass(
   teacher: Pick<Teacher, 'classes'>,
   classes: { id: string; name: string }[],
@@ -80,8 +90,30 @@ export function assignMissingTeachers(data: SchoolData): {
 
   let assigned = 0;
   let unresolved = 0;
-  const plans = data.coursePlans.map((plan) => {
-    if (plan.teacherId?.trim()) return plan;
+  const plans = data.coursePlans.map((plan) => ({ ...plan }));
+
+  // First pass: every homeroom teacher gets one lesson in their own class when
+  // a blank plan covers a subject they can teach. This makes the homeroom rule
+  // satisfiable without silently stealing a non-blank plan from another teacher.
+  for (const klass of data.classes) {
+    if (!klass.homeroomTeacherId) continue;
+    const teacher = data.teachers.find((item) => item.id === klass.homeroomTeacherId);
+    if (!teacher || !teacherCanTeachClass(teacher, data.classes, klass.id)) continue;
+    const subjects = listSubjects(teacher);
+    if (subjects.length === 0) continue;
+    const index = plans.findIndex((plan) => {
+      if (plan.classId !== klass.id || plan.teacherId?.trim()) return false;
+      return subjects.includes(subjectName.get(plan.subjectId) ?? '');
+    });
+    if (index < 0) continue;
+    plans[index] = { ...plans[index], teacherId: teacher.id };
+    load.set(teacher.id, (load.get(teacher.id) ?? 0) + Number(plans[index].weeklyPeriods || 0));
+    assigned += 1;
+  }
+
+  // Second pass: remaining blank plans use the existing subject/grade/load logic.
+  for (const [index, plan] of plans.entries()) {
+    if (plan.teacherId?.trim()) continue;
     const subject = subjectName.get(plan.subjectId) ?? '';
     const grade = classGrade.get(plan.classId) ?? null;
     const candidates = data.teachers.filter((teacher) => {
@@ -94,7 +126,7 @@ export function assignMissingTeachers(data: SchoolData): {
     });
     if (candidates.length === 0) {
       unresolved += 1;
-      return plan;
+      continue;
     }
     const chosen = candidates.slice().sort((a, b) => {
       const difference = (load.get(a.id) ?? 0) - (load.get(b.id) ?? 0);
@@ -102,8 +134,8 @@ export function assignMissingTeachers(data: SchoolData): {
     })[0];
     load.set(chosen.id, (load.get(chosen.id) ?? 0) + Number(plan.weeklyPeriods || 0));
     assigned += 1;
-    return { ...plan, teacherId: chosen.id };
-  });
+    plans[index] = { ...plan, teacherId: chosen.id };
+  }
   return { plans, assigned, unresolved };
 }
 

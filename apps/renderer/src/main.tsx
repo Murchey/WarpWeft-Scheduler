@@ -3,14 +3,14 @@ import { createRoot } from 'react-dom/client';
 import { HeroUIProvider, Button, Card, CardBody, Chip, Progress, Select, SelectItem, Tabs, Tab } from '@heroui/react';
 import { validateInput } from '../../../packages/validation/src';
 import { buildImportTemplate, exportCsv, exportWorkbook, readWorkbook } from '../../../packages/import-export/src';
-import { ApiError, cancelServerJob, deleteServerClient, fetchServerOverview, loadData, saveData, solveSchedule, updateServerConfig } from './api';
+import { ApiError, cancelServerJob, deleteServerClient, fetchHealth, fetchServerOverview, loadData, saveData, solveSchedule, updateServerConfig } from './api';
 import { DAYS, SectionHeading } from './components';
 import { PreparePage } from './PreparePage';
 import type { PrepareSection } from './PreparePage';
 import { download, exportMessage } from './download';
 import type { ExportResult } from './download';
 import { TimetableExportDialog } from './TimetableExportDialog';
-import { timetableFileName } from './timetableExport';
+import { timetableFileName, VIEW_LABELS } from './timetableExport';
 import { loadTimetableTemplate } from './timetableTemplateLoader';
 import { fillSemesterTemplate, fillTimetableTemplate } from './timetableTemplate';
 import type { TimetableExportSettings } from './timetableExport';
@@ -18,9 +18,11 @@ import { checkMove, checkSwap } from './dnd';
 import { semesterWeeks, weekOfDate } from '../../../packages/semester/src';
 import { adjustedWeekEntries, semesterPatterns } from './semesterTimetable';
 import { readPreviewPrefs, savePreviewPrefs, weekDatesForHeader } from './timetablePreview';
+import { DATA_SCHEMA_VERSION, MIN_SERVER_SCHEMA } from './schema';
 import { withFixedClassRoomsResult } from './fixedClassrooms';
 import type { PreviewWeekFilter, PreviewView } from './timetablePreview';
-import { assignMissingTeachers, classIdsForTeacher, splitClassNames } from './teacherAssignment';
+import { assignMissingTeachers, classIdsForTeacher, splitClassNames, subjectIdsForTeacher } from './teacherAssignment';
+import { ensureSimplifiedRooms, isSimplifiedRooms } from './fixedClassrooms';
 import { messageOf, todayLocal, uid } from './utils';
 import { activeRules, describeRule, matchedPlans, unscheduledHints } from './rules';
 import { RUN_MODE_OPTIONS } from './runConfig';
@@ -130,20 +132,33 @@ function toSolverInput(
   const syntheticTeachers = resolvedPlans
     .filter((plan) => !plan.teacherId?.trim())
     .map((plan) => ({ id: solverTeacherId(plan), name: '未指定教师' }));
+  const effectiveData = ensureSimplifiedRooms(data);
   return {
     protocolVersion: '1.0',
+    dataSchemaVersion: DATA_SCHEMA_VERSION,
     dataSnapshotVersion: 'local-' + Date.now(),
-    timeSlots: data.timeSlots,
-    classes: data.classes.map((item) => ({ id: item.id, name: item.name, size: item.size })),
+    timeSlots: effectiveData.timeSlots,
+    classes: effectiveData.classes.map((item) => ({
+      id: item.id,
+      name: item.name,
+      size: item.size,
+      ...(item.homeroomTeacherId ? { homeroomTeacherId: item.homeroomTeacherId } : {}),
+    })),
     teachers: [
-      ...data.teachers.map((teacher) => {
-        const classIds = classIdsForTeacher(teacher, data.classes);
-        return classIds.length ? { id: teacher.id, name: teacher.name, classIds } : { id: teacher.id, name: teacher.name };
+      ...effectiveData.teachers.map((teacher) => {
+        const classIds = classIdsForTeacher(teacher, effectiveData.classes);
+        const subjectIds = subjectIdsForTeacher(teacher, effectiveData.subjects);
+        return {
+          id: teacher.id,
+          name: teacher.name,
+          ...(classIds.length ? { classIds } : {}),
+          ...(subjectIds.length ? { subjectIds } : {}),
+        };
       }),
       ...syntheticTeachers,
     ],
-    subjects: data.subjects,
-    rooms: data.rooms,
+    subjects: effectiveData.subjects,
+    rooms: effectiveData.rooms,
     coursePlans: resolvedPlans.map((plan) => ({ ...plan, teacherId: solverTeacherId(plan) })),
     unavailableSlots: data.unavailableSlots ?? [],
     lockedEntries,
@@ -175,11 +190,12 @@ function planShortageText(data: SchoolData, output: SolverOutput): string {
   if (lines.length === 0) return '';
   return '未排计划：\n' + lines.slice(0, 8).join('\n') + (lines.length > 8 ? '\n…还有 ' + (lines.length - 8) + ' 条' : '');
 }
-function preflight(data: SchoolData): string[] {
+function preflight(inputData: SchoolData): string[] {
+  const data = ensureSimplifiedRooms(inputData);
   const issues = validateInput(toSolverInput(data, 30, [])).map((issue) => issue.message);
   if (data.classes.length === 0) issues.push('至少需要一个班级');
   if (data.teachers.length === 0) issues.push('至少需要一位教师');
-  if (data.rooms.length === 0) issues.push('至少需要一间教室');
+  if (!isSimplifiedRooms(data) && data.rooms.length === 0) issues.push('至少需要一间教室');
   if (data.timeSlots.length === 0) issues.push('至少需要一个时间段');
   if (data.coursePlans.length === 0) issues.push('至少需要一条教学计划');
   if (data.subjects.length === 0) issues.push('至少需要一个学科');
@@ -382,6 +398,8 @@ function App() {
   const [loadError, setLoadError] = useState('');
   const [result, setResult] = useState<SolverOutput | null>(null);
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
+  const [serverSchema, setServerSchema] = useState<number | null>(null);
+  const [serverBlocked, setServerBlocked] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<RunProgress>({ phase: 'idle', message: '等待开始排课' });
@@ -425,6 +443,16 @@ function App() {
         setApiOnline(true);
         setSelectedClassId(loaded.classes[0]?.id ?? '');
         setResult(loaded.candidate ?? loaded.published ?? null);
+        fetchHealth()
+          .then((health) => {
+            if (cancelled) return;
+            const schema = Number(health.schemaVersion) || 1;
+            setServerSchema(schema);
+            setServerBlocked(schema < MIN_SERVER_SCHEMA);
+          })
+          .catch(() => {
+            if (!cancelled) setServerBlocked(true);
+          });
       })
       .catch(() => {
         if (cancelled) return;
@@ -494,6 +522,10 @@ function App() {
   };
 
   const commit: Commit = (next, options = {}) => {
+    if (serverBlocked) {
+      setError('服务端版本过旧（数据版本 v' + (serverSchema ?? '未知') + '），请升级服务端后再保存；当前只能查看和导出。');
+      return;
+    }
     let value = next;
     if (options.invalidate) {
       value = { ...next, candidate: null };
@@ -785,6 +817,10 @@ function App() {
 
   const run = async () => {
     if (!data || running) return;
+    if (serverBlocked) {
+      setError('服务端版本过旧，请升级服务端后再排课。');
+      return;
+    }
     setProgress({ phase: 'checking', message: '正在检查排课配置', startedAt: Date.now() });
     const issues = preflight(data);
     if (issues.length > 0) {
@@ -1090,6 +1126,27 @@ function App() {
     }
   };
 
+  const quickExportTimetable = (view: 'class' | 'teacher', entityId: string, weekNo: number | null) => {
+    if (!data || !(result ?? data.published)) {
+      setError('还没有可导出的课表，请先排课或发布课表。');
+      return;
+    }
+    const settings: TimetableExportSettings = {
+      layout: 'vertical',
+      view,
+      entityId,
+      schoolName: data.school.name,
+      title: VIEW_LABELS[view],
+      weeks: weekNo ? 'all' : weekFilter,
+      weekNo: weekNo ?? null,
+      scope: 'single',
+      showTeacher: true,
+      showRoom: !isSimplifiedRooms(data),
+      showWeeks: true,
+    };
+    void exportTimetable(settings, () => undefined);
+  };
+
   const openTimetableExport = () => {
     if (!data) return;
     if (!(result ?? data.published)) return;
@@ -1259,6 +1316,11 @@ function App() {
             当前服务未连接，修改不会保存。请通过桌面端启动，或先运行 <code>npm run dev:api</code> 再打开界面。
           </Banner>
         ) : null}
+        {serverBlocked ? (
+          <Banner tone="warning" title="服务端版本过旧">
+            当前服务端数据版本 v{serverSchema ?? '未知'}，本客户端至少需要 v{MIN_SERVER_SCHEMA}。请升级局域网服务端；升级前可以查看和导出，但不能保存或排课。
+          </Banner>
+        ) : null}
         {error ? (
           <Banner tone="error" title="操作未完成" onClose={() => setError('')}>
             {error}
@@ -1342,11 +1404,18 @@ function App() {
             onInspect={() => setTab('最终课表')}
             onExportCsv={exportCsvFile}
             onExportExcel={openTimetableExport}
+            onQuickExport={quickExportTimetable}
             onPrint={() => window.print()}
           />
         ) : null}
         {tab === '调代课' ? (
-          <AdjustmentsPage data={data} commit={commit} setError={setError} setNotice={setNotice} />
+          <AdjustmentsPage
+            data={data}
+            commit={commit}
+            setError={setError}
+            setNotice={setNotice}
+            onQuickExport={quickExportTimetable}
+          />
         ) : null}
         {tab === '最终课表' ? (
           <InspectionPage
@@ -2120,7 +2189,7 @@ function ServerPage({ apiOnline }: { apiOnline: boolean | null }) {
 function SettingsPage({ runMode, theme, onThemeChange, onEditMode, apiOnline, data, commit }: { runMode: RunMode | null; theme: 'light' | 'dark'; onThemeChange: (theme: 'light' | 'dark') => void; onEditMode: () => void; apiOnline: boolean | null; data: SchoolData; commit: Commit }) {
   const mode = RUN_MODE_OPTIONS.find((item) => item.value === runMode);
   const endpoint = window.localStorage.getItem('warpweft-runtime-endpoint') || 'http://127.0.0.1:4317';
-  return <div className="settings-layout"><Card className="business-card settings-card"><CardBody><SectionHeading english="RUNTIME" title="运行模式" /><p className="panel-note">决定数据和排课服务连接到哪里。修改后会重新连接工作区。</p><div className="settings-value"><span>当前模式</span><strong>{mode?.title ?? '未选择'}</strong><small>{mode?.english ?? 'NOT CONFIGURED'}</small></div><div className="settings-value"><span>服务地址</span><strong className="settings-endpoint">{endpoint}</strong></div><Button color="primary" onPress={onEditMode}>修改运行模式</Button></CardBody></Card><Card className="business-card settings-card"><CardBody><SectionHeading english="APPEARANCE" title="外观" /><p className="panel-note">调整工作台的显示主题。</p><Tabs selectedKey={theme} onSelectionChange={(key) => onThemeChange(String(key) as 'light' | 'dark')} aria-label="主题"><Tab key="light" title="浅色" /><Tab key="dark" title="深色" /></Tabs><div className="settings-value"><span>深色背景</span><strong>#1C1C1C</strong></div></CardBody></Card><Card className="business-card settings-card"><CardBody><SectionHeading english="WORKSPACE" title="当前工作区" /><label className="settings-value"><span>学校名称</span><input className="settings-input" value={data.school.name} onChange={(event) => commit({ ...data, school: { ...data.school, name: event.target.value } })} /></label><div className="settings-stats"><span>班级 <b>{data.classes.length}</b></span><span>教师 <b>{data.teachers.length}</b></span><span>教学计划 <b>{data.coursePlans.length}</b></span><span>服务状态 <Chip size="sm" color={apiOnline ? 'success' : 'warning'}>{apiOnline ? '在线' : apiOnline === false ? '离线' : '检测中'}</Chip></span></div><p className="panel-note">工作区数据由当前服务端管理。设置页不会自动填充演示数据。</p></CardBody></Card></div>;
+  return <div className="settings-layout"><Card className="business-card settings-card"><CardBody><SectionHeading english="RUNTIME" title="运行模式" /><p className="panel-note">决定数据和排课服务连接到哪里。修改后会重新连接工作区。</p><div className="settings-value"><span>当前模式</span><strong>{mode?.title ?? '未选择'}</strong><small>{mode?.english ?? 'NOT CONFIGURED'}</small></div><div className="settings-value"><span>服务地址</span><strong className="settings-endpoint">{endpoint}</strong></div><Button color="primary" onPress={onEditMode}>修改运行模式</Button></CardBody></Card><Card className="business-card settings-card"><CardBody><SectionHeading english="APPEARANCE" title="外观" /><p className="panel-note">调整工作台的显示主题。</p><Tabs selectedKey={theme} onSelectionChange={(key) => onThemeChange(String(key) as 'light' | 'dark')} aria-label="主题"><Tab key="light" title="浅色" /><Tab key="dark" title="深色" /></Tabs><div className="settings-value"><span>深色背景</span><strong>#1C1C1C</strong></div></CardBody></Card><Card className="business-card settings-card"><CardBody><SectionHeading english="WORKSPACE" title="当前工作区" /><label className="settings-value"><span>学校名称</span><input className="settings-input" value={data.school.name} onChange={(event) => commit({ ...data, school: { ...data.school, name: event.target.value } })} /></label><label className="settings-value"><span>教室模式</span><select className="settings-input" value={data.roomMode ?? 'simplified'} onChange={(event) => commit({ ...data, roomMode: event.target.value as 'simplified' | 'full' }, { invalidate: true })}><option value="simplified">简化模式（每班一间固定教室，不需要教室表）</option><option value="full">完整模式（按教室容量/类型/冲突排课）</option></select></label><div className="settings-stats"><span>班级 <b>{data.classes.length}</b></span><span>教师 <b>{data.teachers.length}</b></span><span>教学计划 <b>{data.coursePlans.length}</b></span><span>服务状态 <Chip size="sm" color={apiOnline ? 'success' : 'warning'}>{apiOnline ? '在线' : apiOnline === false ? '离线' : '检测中'}</Chip></span></div><p className="panel-note">工作区数据由当前服务端管理。设置页不会自动填充演示数据。</p></CardBody></Card></div>;
 }
 
 
@@ -2150,6 +2219,7 @@ function TimetablePage({
   onInspect,
   onExportCsv,
   onExportExcel,
+  onQuickExport,
   onPrint,
 }: {
   data: SchoolData;
@@ -2176,6 +2246,7 @@ function TimetablePage({
   onInspect: () => void;
   onExportCsv: () => void;
   onExportExcel: () => void;
+  onQuickExport: (view: 'class' | 'teacher', entityId: string, weekNo: number | null) => void;
   onPrint: () => void;
 }) {
   const [dragId, setDragId] = useState('');
@@ -2488,8 +2559,13 @@ function TimetablePage({
             导出 CSV
           </button>
           <button type="button" className="tt-btn tt-btn-quiet" onClick={onExportExcel}>
-            导出 Excel
+            导出设置…
           </button>
+          {view !== 'room' ? (
+            <button type="button" className="tt-btn tt-btn-quiet" onClick={() => onQuickExport(view, entityId, weekNo)} title="按当前视图、当前周直接导出，不需要再选设置">
+              导出当前视图
+            </button>
+          ) : null}
           <button type="button" className="tt-btn tt-btn-quiet" onClick={onPrint}>
             打印
           </button>

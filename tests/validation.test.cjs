@@ -38,6 +38,36 @@ test('solver input rejects a teacher outside the bound class', async () => {
   assert.ok(issues.some((issue) => issue.code === 'TEACHER_CLASS_BINDING'));
 });
 
+test('solver input requires the homeroom teacher to teach the class', async () => {
+  const { validateInput } = await loadValidation();
+  const data = input();
+  data.teachers.push({ id: 't2', name: '李老师', classIds: ['c1'] });
+  data.classes[0].homeroomTeacherId = 't1';
+  assert.equal(validateInput(data).length, 0);
+  data.coursePlans[0].teacherId = 't2';
+  const issues = validateInput(data);
+  assert.ok(issues.some((issue) => issue.code === 'HOMEROOM_TEACHER_NO_LESSON'));
+});
+
+test('solver input exempts a homeroom teacher with no matching subject', async () => {
+  const { validateInput } = await loadValidation();
+  const data = input();
+  data.teachers[0].subjectIds = ['sub-english'];
+  data.teachers.push({ id: 't2', name: '李老师', classIds: ['c1'] });
+  data.classes[0].homeroomTeacherId = 't1';
+  data.coursePlans[0].teacherId = 't2';
+  assert.equal(validateInput(data).some((issue) => issue.code === 'HOMEROOM_TEACHER_NO_LESSON'), false);
+});
+
+test('solver input rejects two classes with the same homeroom teacher', async () => {
+  const { validateInput } = await loadValidation();
+  const data = input();
+  data.classes[0].homeroomTeacherId = 't1';
+  data.classes[1].homeroomTeacherId = 't1';
+  data.coursePlans.push({ id: 'p2', classId: 'c2', subjectId: 'sub1', teacherId: 't1', weeklyPeriods: 1 });
+  assert.ok(validateInput(data).some((issue) => issue.code === 'HOMEROOM_TEACHER_DUPLICATE'));
+});
+
 test('solver input rejects unknown class ids in a teacher binding', async () => {
   const { validateInput } = await loadValidation();
   const data = input();

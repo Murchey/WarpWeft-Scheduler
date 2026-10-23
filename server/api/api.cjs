@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { openDatabase } = require('./database.cjs');
+const SCHEMA = require('../../data-schema.json');
+const PKG = require('../../package.json');
 const {
   loadConfig,
   normalizeIp,
@@ -99,8 +101,17 @@ function sanitizeOrphanReferences(data) {
       item && teacherIds.has(item.teacherId) && slotIds.has(item.slotId),
     );
   }
+  if (Array.isArray(data.classes)) {
+    data.classes = data.classes.map((klass) =>
+      klass && klass.homeroomTeacherId && !teacherIds.has(klass.homeroomTeacherId)
+        ? { ...klass, homeroomTeacherId: undefined }
+        : klass,
+    );
+  }
   if (Array.isArray(data.teachers)) {
-    const classNames = new Set(data.classes.map((item) => String(item.name ?? '').trim().toLowerCase()));
+    const classNames = new Set(
+      (Array.isArray(data.classes) ? data.classes : []).map((item) => String(item.name ?? '').trim().toLowerCase()),
+    );
     data.teachers = data.teachers.map((teacher) => {
       if (!teacher || teacher.classes === undefined || teacher.classes === null) return teacher;
       const names = Array.isArray(teacher.classes)
@@ -206,6 +217,41 @@ function validateData(data) {
       return '教学计划 ' + plan.id + ' 的时段类型无效';
     }
     if (!(Number(plan.weeklyPeriods) > 0)) return '教学计划 ' + plan.id + ' 的周课时必须大于 0';
+  }
+  const homeroomByTeacher = new Map();
+  const subjectNameById = new Map(data.subjects.map((item) => [item.id, String(item.name ?? '').trim().toLowerCase()]));
+  const subjectNamesOfTeacher = (teacher) => [teacher.subject, teacher.subject2]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(/[、,，;；/]+/))
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  for (const klass of data.classes) {
+    if (!klass.homeroomTeacherId) continue;
+    const teacher = teacherById.get(klass.homeroomTeacherId);
+    if (!teacher) return '班级 ' + klass.id + ' 的班主任不存在';
+    const assigned = homeroomByTeacher.get(teacher.id) || [];
+    assigned.push(klass.name);
+    homeroomByTeacher.set(teacher.id, assigned);
+    const bound = classNamesOf(teacher).map((item) => item.toLowerCase());
+    if (bound.length && !bound.includes(String(klass.name).trim().toLowerCase())) {
+      return '班主任 ' + teacher.id + ' 不负责班级 ' + klass.id;
+    }
+    const classPlans = data.coursePlans.filter((plan) => plan.classId === klass.id);
+    const teacherSubjects = subjectNamesOfTeacher(teacher);
+    const qualified = teacherSubjects.length === 0
+      ? classPlans
+      : classPlans.filter((plan) => teacherSubjects.includes(subjectNameById.get(plan.subjectId) || ''));
+    const hasLesson = classPlans.some((plan) => plan.teacherId === teacher.id);
+    const canAssignBlank = classPlans.some((plan) =>
+      !plan.teacherId &&
+      (teacherSubjects.length === 0 || teacherSubjects.includes(subjectNameById.get(plan.subjectId) || '')),
+    );
+    if (qualified.length > 0 && !hasLesson && !canAssignBlank) {
+      return '班主任 ' + teacher.id + ' 必须在本班 ' + klass.id + ' 承担至少一节课';
+    }
+  }
+  for (const [teacherId, classNames] of homeroomByTeacher) {
+    if (classNames.length > 1) return '教师 ' + teacherId + ' 同时担任多个班的班主任：' + classNames.join('、');
   }
   for (const item of data.unavailableSlots || []) {
     if (!teacherIds.has(item.teacherId)) return '教师不可用时间引用了不存在的教师';
@@ -1337,6 +1383,10 @@ function startApi({
           ok: true,
           dataSource: 'local-json',
           solver: 'java',
+          appVersion: PKG.version || '0.0.0',
+          schemaVersion: Number(SCHEMA.version) || 1,
+          solverProtocol: SCHEMA.solverProtocol || '1.0',
+          capabilities: Array.isArray(SCHEMA.features) ? SCHEMA.features : [],
           java: javaInfo,
           queue: queueCounts(),
           server: { host: bindHost, port, config },
@@ -1429,6 +1479,10 @@ function startApi({
           return send(res, 400, { error: '请求不是有效 JSON', code: 'INVALID_BODY' });
         }
         sanitizeOrphanReferences(body);
+        body.dataSchemaVersion = Number(SCHEMA.version) || 1;
+        if (body.roomMode !== undefined && !['simplified', 'full'].includes(body.roomMode)) {
+          return send(res, 400, { error: 'roomMode 只能是 simplified 或 full', code: 'INVALID_DATA' });
+        }
         const error = validateData(body);
         if (error) return send(res, 400, { error, code: 'INVALID_DATA' });
         return send(res, 200, store.write(body));

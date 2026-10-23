@@ -8,7 +8,11 @@ export interface ClassRoom {
   name: string;
   size: number;
   grade: string;
+  /** Homeroom teacher; must teach at least one lesson in this class unless exempt. */
+  homeroomTeacherId?: string;
 }
+
+export type RoomMode = 'simplified' | 'full';
 
 export interface Teacher {
   id: string;
@@ -129,9 +133,10 @@ export type { Adjustment, AdjustmentType, LessonLog, LessonStatus } from '../../
 export interface SolverInput {
   protocolVersion: string;
   dataSnapshotVersion: string;
+  dataSchemaVersion?: number;
   timeSlots: TimeSlot[];
-  classes: { id: string; name: string; size: number }[];
-  teachers: Teacher[];
+  classes: { id: string; name: string; size: number; homeroomTeacherId?: string }[];
+  teachers: (Teacher & { classIds?: string[]; subjectIds?: string[] })[];
   subjects: Subject[];
   rooms: Room[];
   coursePlans: CoursePlan[];
@@ -178,6 +183,9 @@ export interface SchoolData {
   candidate?: SolverOutput | null;
   published?: SolverOutput | null;
   semester?: { startDate: string; endDate: string };
+  /** simplified = one fixed room per class, no room sheet; full = room pool scheduling. */
+  roomMode?: RoomMode;
+  dataSchemaVersion?: number;
   adjustments?: Adjustment[];
   electiveGroups?: ElectiveGroup[];
   lessonLogs?: LessonLog[];

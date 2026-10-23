@@ -16,8 +16,8 @@ export interface ElectiveBlock { id: string; name?: string; teacherId: string; r
 export interface ElectiveGroup { id: string; name?: string; subjectId: string; weeklyPeriods: number; classIds: string[]; blocks: ElectiveBlock[]; }
 export interface CoursePlan { id: string; classId: string; subjectId: string; teacherId: string; weeklyPeriods: number; roomType?: string; fixedSlotId?: string; consecutive?: number; locked?: boolean; weeks?: WeekType; kind?: SlotKind; }
 export interface SolverInput {
-  protocolVersion: string; dataSnapshotVersion: string; timeSlots: TimeSlot[]; classes: {id:string; name:string; size:number}[];
-  teachers: {id:string; name:string; classIds?:string[]}[]; subjects: {id:string; name:string}[]; rooms: ClassRoom[]; coursePlans: CoursePlan[];
+  protocolVersion: string; dataSnapshotVersion: string; dataSchemaVersion?: number; timeSlots: TimeSlot[]; classes: {id:string; name:string; size:number; homeroomTeacherId?:string}[];
+  teachers: {id:string; name:string; classIds?:string[]; subjectIds?:string[]}[]; subjects: {id:string; name:string}[]; rooms: ClassRoom[]; coursePlans: CoursePlan[];
   unavailableSlots: {teacherId:string; slotId:string}[]; lockedEntries: ScheduleEntry[]; electiveGroups?: ElectiveGroup[];
   hardConstraints: string[]; rules?: RuleInput[]; softConstraints: {kind:SoftRuleKind; weight:number}[]; timeLimitSeconds:number; randomSeed:number;
 }
