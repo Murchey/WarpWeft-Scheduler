@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
-const { startApi } = require('./api.cjs');
+const { startApi } = require('../../server/api/api.cjs');
 
 const rootDir = path.resolve(__dirname, '../..');
 let server;

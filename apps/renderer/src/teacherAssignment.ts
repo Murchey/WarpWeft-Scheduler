@@ -23,6 +23,35 @@ function listGradeNumbers(value: string | undefined): number[] {
     .filter((grade): grade is number => grade !== null);
 }
 
+export function splitClassNames(value: string | undefined): string[] {
+  return String(value ?? '')
+    .split(/[,，;；、]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+/** Class IDs a teacher is bound to. An empty list means "no restriction". */
+export function classIdsForTeacher(
+  teacher: Pick<Teacher, 'classes'>,
+  classes: { id: string; name: string }[],
+): string[] {
+  const names = splitClassNames(teacher.classes);
+  if (names.length === 0) return [];
+  const byName = new Map(classes.map((klass) => [klass.name.trim().toLowerCase(), klass.id]));
+  return Array.from(
+    new Set(names.map((name) => byName.get(name.toLowerCase())).filter((id): id is string => Boolean(id))),
+  );
+}
+
+export function teacherCanTeachClass(
+  teacher: Pick<Teacher, 'classes'>,
+  classes: { id: string; name: string }[],
+  classId: string,
+): boolean {
+  if (splitClassNames(teacher.classes).length === 0) return true;
+  return classIdsForTeacher(teacher, classes).includes(classId);
+}
+
 function listSubjects(teacher: Teacher): string[] {
   return [teacher.subject, teacher.subject2]
     .filter(Boolean)
@@ -56,6 +85,7 @@ export function assignMissingTeachers(data: SchoolData): {
     const subject = subjectName.get(plan.subjectId) ?? '';
     const grade = classGrade.get(plan.classId) ?? null;
     const candidates = data.teachers.filter((teacher) => {
+      if (!teacherCanTeachClass(teacher, data.classes, plan.classId)) return false;
       const subjects = listSubjects(teacher);
       if (subjects.length > 0 && !subjects.some((item) => item === subject)) return false;
       const grades = listGradeNumbers(teacher.grade);

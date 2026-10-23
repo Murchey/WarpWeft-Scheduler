@@ -2,7 +2,7 @@
 
 > 定位：**命令行冲突分析模块**，不是 HTTP 服务端，也不参与排课运行路径。  
 > 依赖：JDK 21、`resources/solver/warpweft-solver.jar`（启发式求解器）  
-> 迁移：2026-10-22 从独立项目 `WarpWeft-FullSolver` 并入主仓库；原目录保留作回退。
+> 迁移：2026-10-22 从独立项目 `WarpWeft-FullSolver` 并入主仓库；2026-10-23 原独立目录已删除。
 
 ## 它做什么
 
@@ -82,7 +82,7 @@ java -jar server/fullsolver/dist/warpweft-fullsolver.jar --input input.json --mo
 
 ## 与其它模块的边界
 
-- `apps/desktop/api.cjs` 是当前的 HTTP API 与任务编排；
+- `server/api/` 是当前的 HTTP API 与任务编排；
 - `services/solver-java` 是启发式排课求解器；
 - `server/fullsolver` 只做离线冲突分析，不被 API 或渲染进程调用；
 - 本模块不读写业务数据，只接收 solver input、输出 JSON 报告。

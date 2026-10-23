@@ -17,8 +17,10 @@ import com.warpweft.solver.model.SolverData;
 import com.warpweft.solver.rules.Rule;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public final class SolverProtocol {
@@ -82,7 +84,18 @@ public final class SolverProtocol {
         }
         Set<String> classIds = data.classes.keySet();
         Set<String> teacherIds = new HashSet<>();
-        for (JsonNode node : root.path("teachers")) teacherIds.add(text(node, "id", ""));
+        Map<String, Set<String>> teacherClasses = new HashMap<>();
+        for (JsonNode node : root.path("teachers")) {
+            String teacherId = text(node, "id", "");
+            teacherIds.add(teacherId);
+            Set<String> bound = new HashSet<>();
+            for (JsonNode classNode : node.path("classIds")) {
+                String classId = classNode.asText("");
+                if (classIds.contains(classId)) bound.add(classId);
+                else data.violations.add("教师 " + teacherId + " 的负责班级引用了不存在的班级：" + classId);
+            }
+            teacherClasses.put(teacherId, bound);
+        }
         Set<String> subjectIds = new HashSet<>();
         for (JsonNode node : root.path("subjects")) subjectIds.add(text(node, "id", ""));
         for (JsonNode node : root.path("coursePlans")) {
@@ -94,6 +107,10 @@ public final class SolverProtocol {
             if (plan.weeklyPeriods() <= 0) data.violations.add("教学计划 " + plan.id() + " 的周课时必须大于 0");
             if (!classIds.contains(plan.classId())) data.violations.add("教学计划 " + plan.id() + " 引用了不存在的班级");
             if (!teacherIds.contains(plan.teacherId())) data.violations.add("教学计划 " + plan.id() + " 引用了不存在的教师");
+            Set<String> boundClasses = teacherClasses.get(plan.teacherId());
+            if (boundClasses != null && !boundClasses.isEmpty() && !boundClasses.contains(plan.classId())) {
+                data.violations.add("教学计划 " + plan.id() + " 的教师 " + plan.teacherId() + " 不负责班级 " + plan.classId());
+            }
             if (!subjectIds.contains(plan.subjectId())) data.violations.add("教学计划 " + plan.id() + " 引用了不存在的学科");
             if (!plan.fixedSlotId().isBlank() && !data.slots.containsKey(plan.fixedSlotId())) data.violations.add("教学计划 " + plan.id() + " 引用了不存在的固定时间");
             data.plans.add(plan);

@@ -1,5 +1,5 @@
 const path = require('node:path');
-const { startApi } = require('../apps/desktop/api.cjs');
+const { startApi } = require('../server/api/api.cjs');
 
 const rootDir = path.resolve(__dirname, '..');
 startApi({

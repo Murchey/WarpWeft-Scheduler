@@ -1,4 +1,4 @@
-﻿const test = require('node:test');
+const test = require('node:test');
 const assert = require('node:assert/strict');
 
 async function loadAssignment() {
@@ -46,6 +46,21 @@ test('a subject mismatch leaves the plan unresolved', async () => {
   assert.equal(result.assigned, 0);
   assert.equal(result.unresolved, 3);
   assert.equal(result.plans.every((plan) => plan.teacherId === ''), true);
+});
+
+test('teacher class bindings restrict blank-teacher assignment', async () => {
+  const { assignMissingTeachers } = await loadAssignment();
+  const data = fixture();
+  data.teachers = [
+    { id: 't1', name: '王老师', subject: '数学', grade: '1;2;3', classes: '二年级1班' },
+    { id: 't2', name: '李老师', subject: '数学', grade: '3;4', classes: '三年级1班' },
+  ];
+  const result = assignMissingTeachers(data);
+  const byId = new Map(result.plans.map((plan) => [plan.id, plan]));
+  assert.equal(byId.get('p1').teacherId, 't1');
+  assert.equal(byId.get('p2').teacherId, 't2');
+  assert.equal(byId.get('p3').teacherId, '');
+  assert.equal(result.unresolved, 1);
 });
 
 test('Chinese grade names and explicit teacher grades are compared numerically', async () => {

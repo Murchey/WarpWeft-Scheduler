@@ -1,16 +1,24 @@
 # server/ 模块边界
 
-本目录用于集中与“服务端/离线计算”相关的模块。当前只有 `fullsolver/`，**没有**把现有 HTTP API 迁入这里。
+本目录集中存放服务端相关模块：HTTP API、规则冲突分析和相关运行脚本。桌面端 Electron 只负责窗口/文件对话框，启动时加载 `server/api/api.cjs`。
 
 | 路径 | 角色 | 是否在运行路径 |
 | --- | --- | --- |
-| `apps/desktop/api.cjs` | 当前桌面端启动的 HTTP API：数据读写、短时/长时任务、检查点、客户端配额 | 是 |
+| `server/api/` | HTTP API：数据读写、短时/长时任务、检查点、客户端配额、服务端配置 | 是 |
+| `apps/desktop/main.cjs` | Electron 主进程：窗口、工作区选择、导出文件对话框，启动 `server/api` | 是 |
 | `services/solver-java/` | 启发式排课求解器（Java 21，stdin/stdout JSON） | 是 |
 | `server/fullsolver/` | 命令行规则冲突分析，调用求解器作为启发式 oracle | 否，离线/CLI |
 
-## 为什么不把 API 一起搬进来
+## API 迁移
 
-桌面启动、打包路径（`apps/desktop/main.cjs`、`resources/solver`）都依赖现有布局；T10 只迁移 FullSolver，避免一次改动同时动运行路径和安装包。若未来把 API 抽成独立服务，再整体迁入 `server/`，并同步 `package.json`、electron-builder 与文档。
+2026-10-23 将 `api.cjs`、`database.cjs`、`server-config.cjs` 从 `apps/desktop/` 迁入 `server/api/`。桌面入口、开发 API 脚本、测试和 electron-builder 的 `files` 已同步更新；`main.cjs` 仍以仓库根目录作为 `rootDir`，因此 `resources/solver` 与 `data/` 的路径不变。
+
+本地开发：
+
+```powershell
+npm run dev:api   # node scripts/dev-api.cjs -> server/api/api.cjs
+npm run dev       # Vite 渲染层
+```
 
 ## FullSolver 的判定语义
 

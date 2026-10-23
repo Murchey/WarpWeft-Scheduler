@@ -20,7 +20,7 @@ import { adjustedWeekEntries, semesterPatterns } from './semesterTimetable';
 import { readPreviewPrefs, savePreviewPrefs, weekDatesForHeader } from './timetablePreview';
 import { withFixedClassRoomsResult } from './fixedClassrooms';
 import type { PreviewWeekFilter, PreviewView } from './timetablePreview';
-import { assignMissingTeachers } from './teacherAssignment';
+import { assignMissingTeachers, classIdsForTeacher, splitClassNames } from './teacherAssignment';
 import { messageOf, todayLocal, uid } from './utils';
 import { activeRules, describeRule, matchedPlans, unscheduledHints } from './rules';
 import { RUN_MODE_OPTIONS } from './runConfig';
@@ -135,7 +135,13 @@ function toSolverInput(
     dataSnapshotVersion: 'local-' + Date.now(),
     timeSlots: data.timeSlots,
     classes: data.classes.map((item) => ({ id: item.id, name: item.name, size: item.size })),
-    teachers: [...data.teachers, ...syntheticTeachers],
+    teachers: [
+      ...data.teachers.map((teacher) => {
+        const classIds = classIdsForTeacher(teacher, data.classes);
+        return classIds.length ? { id: teacher.id, name: teacher.name, classIds } : { id: teacher.id, name: teacher.name };
+      }),
+      ...syntheticTeachers,
+    ],
     subjects: data.subjects,
     rooms: data.rooms,
     coursePlans: resolvedPlans.map((plan) => ({ ...plan, teacherId: solverTeacherId(plan) })),
@@ -198,6 +204,21 @@ function preflight(data: SchoolData): string[] {
     const load = Math.max(loadInWeek(plans, 'odd'), loadInWeek(plans, 'even'));
     if (load > slotCount) {
       issues.push(item.name + ' 的周课时 ' + load + ' 超过可用时间格 ' + slotCount);
+    }
+  }
+  for (const teacher of data.teachers) {
+    const names = splitClassNames(teacher.classes);
+    if (names.length === 0) continue;
+    for (const name of names) {
+      if (!data.classes.some((klass) => klass.name.trim().toLowerCase() === name.toLowerCase())) {
+        issues.push('教师 ' + teacher.name + ' 的负责班级不存在：' + name);
+      }
+    }
+    for (const plan of data.coursePlans.filter((item) => item.teacherId === teacher.id)) {
+      const klass = findClass(data, plan.classId);
+      if (klass && !names.some((name) => name.toLowerCase() === klass.name.trim().toLowerCase())) {
+        issues.push('教师 ' + teacher.name + ' 不负责班级 ' + klass.name);
+      }
     }
   }
   for (const plan of data.coursePlans) {

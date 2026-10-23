@@ -1,4 +1,4 @@
-﻿export interface School {
+export interface School {
   id: string;
   name: string;
 }
@@ -17,6 +17,8 @@ export interface Teacher {
   grade?: string;
   subject?: string;
   subject2?: string;
+  /** Class names this teacher is responsible for; empty means all classes. */
+  classes?: string;
 }
 
 export interface Subject {

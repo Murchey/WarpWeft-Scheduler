@@ -1,6 +1,6 @@
-﻿const test = require('node:test');
+const test = require('node:test');
 const assert = require('node:assert/strict');
-const { validateData, sanitizeOrphanReferences } = require('../apps/desktop/api.cjs');
+const { validateData, sanitizeOrphanReferences } = require('../server/api/api.cjs');
 
 test('API rejects invalid timetable references before persistence', () => {
   const data = {
@@ -96,6 +96,23 @@ test('API validates date adjustments before persistence', () => {
   assert.match(validateData(data), /调课目标无效/);
 });
 
+test('API rejects a teacher assigned outside their bound classes', () => {
+  const data = {
+    classes: [{ id: 'c1', name: '一班' }, { id: 'c2', name: '二班' }],
+    teachers: [{ id: 't1', name: '王老师', classes: '一班' }],
+    subjects: [{ id: 's1', name: '数学' }],
+    rooms: [{ id: 'r1', capacity: 30 }],
+    timeSlots: [{ id: 'slot-1', day: 1, period: 1 }],
+    coursePlans: [{ id: 'p1', classId: 'c1', teacherId: 't1', subjectId: 's1', weeklyPeriods: 1 }],
+  };
+  assert.equal(validateData(data), null);
+  data.coursePlans[0].classId = 'c2';
+  assert.match(validateData(data), /不负责教学计划/);
+  data.coursePlans[0].classId = 'c1';
+  data.teachers[0].classes = '三班';
+  assert.match(validateData(data), /负责班级不存在/);
+});
+
 test('API allows a teaching plan without a fixed teacher', () => {
   const data = {
     classes: [{ id: 'c1' }], teachers: [{ id: 't1' }], subjects: [{ id: 's1' }],
@@ -104,6 +121,16 @@ test('API allows a teaching plan without a fixed teacher', () => {
     candidate: { entries: [{ id: 'e1', classId: 'c1', teacherId: '', roomId: 'r1', slotId: 'slot-1' }] },
   };
   assert.equal(validateData(data), null);
+});
+
+test('orphan cleanup drops deleted class names from teacher bindings', () => {
+  const data = {
+    classes: [{ id: 'c1', name: '一班' }],
+    teachers: [{ id: 't1', name: '王老师', classes: '一班、二班' }],
+    subjects: [], rooms: [], timeSlots: [], coursePlans: [],
+  };
+  sanitizeOrphanReferences(data);
+  assert.equal(data.teachers[0].classes, '一班');
 });
 
 test('orphaned adjustment and lesson-log references are pruned before save', () => {

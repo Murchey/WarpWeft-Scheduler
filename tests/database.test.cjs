@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { openDatabase } = require('../apps/desktop/database.cjs');
+const { openDatabase } = require('../server/api/database.cjs');
 
 test('new workspace starts empty and does not inject demo data', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'warpweft-'));

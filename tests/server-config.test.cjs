@@ -9,7 +9,7 @@ const {
   cidrMatches,
   ipAllowed,
   normalizeConfig,
-} = require('../apps/desktop/server-config.cjs');
+} = require('../server/api/server-config.cjs');
 
 test('defaults are conservative and LAN-safe', () => {
   assert.equal(DEFAULTS.bindAddress, 'loopback');

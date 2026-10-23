@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { once } = require('node:events');
 
-const { startApi } = require('../apps/desktop/api.cjs');
+const { startApi } = require('../server/api/api.cjs');
 
 const fakeLongSolver = path.join(__dirname, 'fixtures', 'fake-long-solver.cjs');
 

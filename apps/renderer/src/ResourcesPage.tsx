@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { buildImportTemplate, normalizeGradeList, readWorkbookWithMeta } from '../../../packages/import-export/src';
 import type { ClassRoom, Commit, CoursePlan, Room, SchoolData, SlotKind, Subject, Teacher, TimeSlot } from './types';
 import { DAYS, EditableTable, SectionHeading } from './components';
@@ -6,6 +6,7 @@ import type { Column } from './components';
 import { ResourceWorkspace } from './ResourceWorkspace';
 import { download, exportMessage } from './download';
 import { messageOf, uid } from './utils';
+import { splitClassNames } from './teacherAssignment';
 import { isValidSemester, parseDateInput } from '../../../packages/semester/src';
 import { IMPORTANCE_LABELS, RULE_DEFINITIONS } from '../../../packages/constraints/src';
 import type { RuleImportance, RuleInstance, RuleKind, RuleScope, RuleTime } from '../../../packages/constraints/src';
@@ -99,8 +100,26 @@ function ResourcesPage({
     const rows = (data[collection] as unknown as Array<Record<string, unknown> & { id: string }>).map((row) =>
       row.id === id ? { ...row, [key]: value } : row,
     );
+    let next = { ...data, [collection]: rows } as unknown as SchoolData;
+    if (collection === 'classes' && key === 'name') {
+      const previous = data.classes.find((klass) => klass.id === id)?.name;
+      const nextName = String(value).trim();
+      if (previous && nextName && previous !== nextName) {
+        next = {
+          ...next,
+          teachers: data.teachers.map((teacher) => {
+            const names = splitClassNames(teacher.classes);
+            if (!names.some((name) => name.toLowerCase() === previous.toLowerCase())) return teacher;
+            return {
+              ...teacher,
+              classes: names.map((name) => (name.toLowerCase() === previous.toLowerCase() ? nextName : name)).join('、'),
+            };
+          }),
+        };
+      }
+    }
     const invalidate = collection === 'timeSlots' && (key === 'day' || key === 'period' || key === 'kind');
-    commit({ ...data, [collection]: rows } as unknown as SchoolData, { invalidate });
+    commit(next, { invalidate });
   };
   const pruneDeletedReferences = (
     next: SchoolData,
@@ -125,6 +144,17 @@ function ResourcesPage({
       if (collection === 'timeSlots' && deleted.has(item.slotId)) return false;
       return true;
     });
+    if (collection === 'classes') {
+      const removedNames = new Set(
+        data.classes.filter((klass) => deleted.has(klass.id)).map((klass) => klass.name.trim().toLowerCase()),
+      );
+      next.teachers = next.teachers.map((teacher) => {
+        const names = splitClassNames(teacher.classes);
+        const remaining = names.filter((name) => !removedNames.has(name.toLowerCase()));
+        if (remaining.length === names.length) return teacher;
+        return { ...teacher, classes: remaining.join('、') || undefined };
+      });
+    }
     return next;
   };
   const remove = (
@@ -384,13 +414,32 @@ function ResourcesPage({
         const grade = normalizeGradeList(v['负责年级'] ?? v['年级'] ?? v['grade']);
         const subject = text(v['主要学科'] ?? v['学科'] ?? v['subject']);
         const subject2 = text(v['其他学科（可选）'] ?? v['其他学科'] ?? v['兼任学科'] ?? v['subject2']);
+        const bound = splitClassNames(text(v['负责班级'] ?? v['绑定班级'] ?? v['任教班级'] ?? v['classes']));
+        const boundNames: string[] = [];
+        for (const className of bound) {
+          const klass = next.classes.find((item) => item.name.trim().toLowerCase() === className.toLowerCase());
+          if (!klass) {
+            issues.push('教师 第' + row.row + '行负责班级不存在：' + className);
+            continue;
+          }
+          boundNames.push(klass.name);
+        }
+        const classes = boundNames.join('、');
         const existing = next.teachers.find((item) => item.name.trim().toLowerCase() === key);
         if (existing) {
           existing.grade = grade || existing.grade;
           existing.subject = subject || existing.subject;
           existing.subject2 = subject2 || existing.subject2;
+          existing.classes = classes || existing.classes;
         } else {
-          next.teachers.push({ id: uid('teacher'), name, grade: grade || undefined, subject: subject || undefined, subject2: subject2 || undefined });
+          next.teachers.push({
+            id: uid('teacher'),
+            name,
+            grade: grade || undefined,
+            subject: subject || undefined,
+            subject2: subject2 || undefined,
+            classes: classes || undefined,
+          });
         }
       }
       const subjectNames = new Set<string>();
@@ -861,10 +910,11 @@ function ResourcesPage({
 
   if (kind === 'teachers') {
     const columns: Column<Teacher>[] = [
-        { key: 'name', label: '教师姓名', width: '34%' },
-        { key: 'grade', label: '负责年级', width: '20%' },
-        { key: 'subject', label: '主要学科', width: '22%' },
-        { key: 'subject2', label: '其他学科', width: '24%' },
+        { key: 'name', label: '教师姓名', width: '20%' },
+        { key: 'grade', label: '负责年级', width: '14%' },
+        { key: 'subject', label: '主要学科', width: '16%' },
+        { key: 'subject2', label: '其他学科', width: '16%' },
+        { key: 'classes', label: '负责班级（用、分隔）', width: '34%' },
       ];
     return (
       <div className="resource-single">
@@ -877,7 +927,7 @@ function ResourcesPage({
           onAdd={() => add('teachers')}
           onRemove={(id) => remove('teachers', id)}
           addLabel="新增教师"
-          note="教师不能在同一时间上两门课；被教学计划引用的教师不能删除。"
+          note="教师不能在同一时间上两门课；负责班级留空表示不限制，多个班级用“、”分隔；被教学计划引用的教师不能删除。"
           previewCount={6}
           onOpenAll={() => setWorkspace('teachers')}
         />
@@ -888,12 +938,12 @@ function ResourcesPage({
             rows={data.teachers}
             columns={columns}
             batchFields={[]}
-            searchText={(row) => [row.name, row.grade, row.subject, row.subject2].filter(Boolean).join(' ')}
+            searchText={(row) => [row.name, row.grade, row.subject, row.subject2, row.classes].filter(Boolean).join(' ')}
             onChange={(id, key, value) => update('teachers', id, key, value)}
             onBatchEdit={(ids, key, value) => batchEdit('teachers', ids, key, value)}
             onRemoveMany={(ids) => removeMany('teachers', ids)}
             onClose={() => setWorkspace(null)}
-            note="教师当前仅支持批量删除；改名请逐条编辑。被教学计划引用的教师不能删除。"
+            note="负责班级留空表示不限制；被教学计划引用的教师不能删除；教师当前仅支持批量删除，改名请逐条编辑。"
           />
         ) : null}
       </div>

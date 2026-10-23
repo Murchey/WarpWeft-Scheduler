@@ -1,4 +1,4 @@
-﻿import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx';
 import { IMPORTANCE_LABELS, RULE_DEFINITIONS } from '../constraints/src.ts';
 import type { RuleInstance } from '../constraints/src.ts';
 
@@ -219,6 +219,7 @@ const INSTRUCTIONS: (string | number)[][] = [
   ['教师', 'B2', '选填', '负责年级。多个年级用分号分隔，如 1;2;3；中英文分号均可混用。', '1;2;3'],
   ['教师', 'C2', '选填', '主要学科。', '数学'],
   ['教师', 'D2', '选填', '其他学科，可写多个，用“、”分隔。', '物理、化学'],
+  ['教师', 'E2', '选填', '负责班级，多个班级用“、”分隔；留空表示不限制。须与“班级”工作表一致。', '七年级1班、七年级2班'],
   ['学科', 'A2', '至少一行', '只填第 1 列：本校实际开设的学科名称，不要加其他列。', '语文'],
   ['教室', 'A2', '整表选填', '教室名称，一行一间。', '一号教室'],
   ['教室', 'B2', '整表选填', '教室类型；留空按“普通教室”。', '普通教室'],
@@ -257,7 +258,7 @@ export interface TemplateSource {
   schoolName?: string;
   semester?: { startDate: string; endDate: string } | null;
   classes?: { id: string; name: string; grade?: string; size?: number }[];
-  teachers?: { id: string; name: string; grade?: string; subject?: string; subject2?: string }[];
+  teachers?: { id: string; name: string; grade?: string; subject?: string; subject2?: string; classes?: string }[];
   subjects?: { id: string; name: string }[];
   rooms?: { id: string; name: string; type?: string; capacity?: number }[];
   timeSlots?: { id: string; day: number; period: number; start?: string; duration?: number; label?: string }[];
@@ -383,15 +384,16 @@ export function buildImportTemplate(source?: TemplateSource): ArrayBuffer {
     {
       name: '教师',
       rows: [
-        ['姓名', '负责年级（选填）', '主要学科（选填）', '其他学科（选填）'],
+        ['姓名', '负责年级（选填）', '主要学科（选填）', '其他学科（选填）', '负责班级（选填）'],
         ...(source?.teachers ?? []).map((teacher) => [
           teacher.name,
           teacher.grade ?? '',
           teacher.subject ?? '',
           teacher.subject2 ?? '',
+          teacher.classes ?? '',
         ]),
       ],
-      widths: [16, 20, 20, 24],
+      widths: [16, 20, 20, 24, 30],
     },
     {
       name: '学科',

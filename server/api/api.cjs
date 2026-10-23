@@ -1,4 +1,4 @@
-﻿const http = require('node:http');
+const http = require('node:http');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -99,6 +99,18 @@ function sanitizeOrphanReferences(data) {
       item && teacherIds.has(item.teacherId) && slotIds.has(item.slotId),
     );
   }
+  if (Array.isArray(data.teachers)) {
+    const classNames = new Set(data.classes.map((item) => String(item.name ?? '').trim().toLowerCase()));
+    data.teachers = data.teachers.map((teacher) => {
+      if (!teacher || teacher.classes === undefined || teacher.classes === null) return teacher;
+      const names = Array.isArray(teacher.classes)
+        ? teacher.classes.map((item) => String(item).trim()).filter(Boolean)
+        : String(teacher.classes).split(/[,，;；、]+/).map((item) => item.trim()).filter(Boolean);
+      const remaining = names.filter((name) => classNames.has(name.toLowerCase()));
+      if (remaining.length === names.length) return teacher;
+      return { ...teacher, classes: remaining.join('、') || undefined };
+    });
+  }
   return data;
 }
 function validateData(data) {
@@ -141,10 +153,25 @@ function validateData(data) {
     if (error) return error;
   }
   const classIds = new Set(data.classes.map((item) => item.id));
+  const classNameById = new Map(data.classes.map((item) => [item.id, item.name]));
+  const classByName = new Map(data.classes.map((item) => [String(item.name).trim().toLowerCase(), item.id]));
   const teacherIds = new Set(data.teachers.map((item) => item.id));
+  const teacherById = new Map(data.teachers.map((item) => [item.id, item]));
   const subjectIds = new Set(data.subjects.map((item) => item.id));
   const roomIds = new Set(data.rooms.map((item) => item.id));
   const slotIds = new Set(data.timeSlots.map((item) => item.id));
+  const classNamesOf = (teacher) => {
+    if (Array.isArray(teacher.classes)) return teacher.classes.map((item) => String(item).trim()).filter(Boolean);
+    return String(teacher.classes ?? '')
+      .split(/[,，;；、]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  };
+  for (const teacher of data.teachers) {
+    for (const name of classNamesOf(teacher)) {
+      if (!classByName.has(name.toLowerCase())) return '教师 ' + teacher.id + ' 的负责班级不存在：' + name;
+    }
+  }
   for (const room of data.rooms) {
     if (!(Number(room.capacity) > 0)) return '教室 ' + room.id + ' 的容量必须大于 0';
   }
@@ -163,6 +190,13 @@ function validateData(data) {
   for (const plan of data.coursePlans) {
     if (!classIds.has(plan.classId)) return '教学计划 ' + plan.id + ' 引用了不存在的班级';
     if (plan.teacherId && !teacherIds.has(plan.teacherId)) return '教学计划 ' + plan.id + ' 引用了不存在的教师';
+    const teacher = plan.teacherId ? teacherById.get(plan.teacherId) : undefined;
+    if (teacher) {
+      const names = classNamesOf(teacher).map((item) => item.toLowerCase());
+      if (names.length && !names.includes(String(classNameById.get(plan.classId) ?? '').trim().toLowerCase())) {
+        return '教师 ' + teacher.id + ' 不负责教学计划 ' + plan.id + ' 的班级';
+      }
+    }
     if (!subjectIds.has(plan.subjectId)) return '教学计划 ' + plan.id + ' 引用了不存在的学科';
     if (plan.fixedSlotId && !slotIds.has(plan.fixedSlotId)) return '教学计划 ' + plan.id + ' 引用了不存在的固定时间';
     if (plan.weeks !== undefined && plan.weeks !== null && !['all', 'odd', 'even'].includes(plan.weeks)) {

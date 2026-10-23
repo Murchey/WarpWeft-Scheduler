@@ -306,3 +306,14 @@ node scripts/bench-solver.cjs --classes 24,96,120 --time-limit 30
 2. **文档回写**：把本文档进度同步到 `product-roadmap.md` / `30-day-development-plan.md`（原文档 10 项已全部完成）。
 3. **可选增强**：代课审批流与站内消息、通知单打印版、按周批量确认上课记录、CP-SAT 求解器接入。
 
+---
+
+## 12. 教师负责班级、API 收拢与 FullSolver 收编
+
+- 教师数据新增 `classes`：填写负责班级名称（多个用“、”分隔），留空表示不限；教师表可直接编辑，Excel 模板新增“负责班级”列并校验班级存在。
+- 自动分配教师只从负责该班的教师中选；`validateInput`、`server/api` 保存校验和 Java `SolverProtocol` 都会拒绝“教师不负责该班”的教学计划；班级改名同步更新教师绑定，删除班级时清理绑定。
+- HTTP API 从 `apps/desktop/` 迁入 `server/api/`（`api.cjs`、`database.cjs`、`server-config.cjs`）；桌面入口、`scripts/dev-api.cjs`、测试与 electron-builder `files` 已同步，运行路径和 `resources/solver` 不变。
+- FullSolver 已确认以 `server/fullsolver/` 版本为准（启发式 oracle、`proof: false`），`build:fullsolver` / `verify:fullsolver` 通过；独立目录 `..\WarpWeft-FullSolver` 已删除，文档改为仓库内路径。
+
+**测试**：`npm test` 175 条通过；新增教师绑定（自动分配 / API 保存 / solver input / Java 协议）与模板列测试。
+

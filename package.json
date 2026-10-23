@@ -49,6 +49,7 @@
     "files": [
       "dist/**/*",
       "apps/desktop/**/*",
+      "server/api/**/*",
       "database/**/*",
       "package.json"
     ],

@@ -23,7 +23,7 @@
 
 仍待：
 
-- 规则冲突的精确最小不可行集合（当前为近似检测）：已拆为独立项目 ..\WarpWeft-FullSolver（以 MVP 求解器为可行性判定器，输出 MUS / 最小势冲突集）。
+- 规则冲突的精确最小不可行集合（当前为近似检测）：在仓库内 `server/fullsolver/`（以 MVP 求解器为可行性判定器，输出 MUS / 最小势冲突集）。
 - ~~RunsPage 仍在 main.tsx。~~（已拆出，见上）
 - Java 文件尚未分块：正在按 模型 / 规则 / 引擎 / 协议 四个包拆分（com.warpweft.solver.model|rules|engine|protocol），入口类与 jar 名称不变。
 
@@ -687,4 +687,4 @@ Java 端先支持 P0 中最有价值的 4~6 类：
 
 后端：`services/solver-java` 按 模型 / 规则 / 引擎 / 协议 四包拆分，入口类名与 jar 位置不变；详见 `README.md` 的 Solver 一节。
 
-完整求解器（精确最小冲突集）：独立项目 `..\WarpWeft-FullSolver`，`build.ps1` 构建、`verify.ps1` 三个场景验证（可行 / MUS / 最小势），与调度器只通过 solver input/output JSON 通信。
+完整求解器（精确最小冲突集）：仓库内 `server/fullsolver/`，`npm run build:fullsolver` 构建、`npm run verify:fullsolver` 三个场景验证（可行 / MUS / 最小势），与调度器只通过 solver input/output JSON 通信。

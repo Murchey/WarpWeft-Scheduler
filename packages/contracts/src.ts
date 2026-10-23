@@ -1,4 +1,4 @@
-﻿export const PROTOCOL_VERSION = '1.0';
+export const PROTOCOL_VERSION = '1.0';
 
 export type SolverStatus = 'QUEUED'|'PREPARING'|'SOLVING'|'FEASIBLE'|'IMPROVED'|'COMPLETED'|'CANCELLED'|'TIMEOUT'|'FAILED';
 export type SoftRuleKind = 'SUBJECT_DISTRIBUTION'|'TEACHER_CONTINUOUS'|'TEACHER_GAPS'|'TEACHER_WORKLOAD_BALANCE';
@@ -17,7 +17,7 @@ export interface ElectiveGroup { id: string; name?: string; subjectId: string; w
 export interface CoursePlan { id: string; classId: string; subjectId: string; teacherId: string; weeklyPeriods: number; roomType?: string; fixedSlotId?: string; consecutive?: number; locked?: boolean; weeks?: WeekType; kind?: SlotKind; }
 export interface SolverInput {
   protocolVersion: string; dataSnapshotVersion: string; timeSlots: TimeSlot[]; classes: {id:string; name:string; size:number}[];
-  teachers: {id:string; name:string}[]; subjects: {id:string; name:string}[]; rooms: ClassRoom[]; coursePlans: CoursePlan[];
+  teachers: {id:string; name:string; classIds?:string[]}[]; subjects: {id:string; name:string}[]; rooms: ClassRoom[]; coursePlans: CoursePlan[];
   unavailableSlots: {teacherId:string; slotId:string}[]; lockedEntries: ScheduleEntry[]; electiveGroups?: ElectiveGroup[];
   hardConstraints: string[]; rules?: RuleInput[]; softConstraints: {kind:SoftRuleKind; weight:number}[]; timeLimitSeconds:number; randomSeed:number;
 }

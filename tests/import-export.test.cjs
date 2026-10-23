@@ -1,4 +1,4 @@
-﻿const test = require('node:test');
+const test = require('node:test');
 const assert = require('node:assert/strict');
 const XLSX = require('xlsx');
 
@@ -15,7 +15,7 @@ test('import template uses the new headers and required position notes', async (
   assert.deepEqual(planHeader, ['班级', '学科', '教师（选填）', '每周课时', '周次（选填）', '课程类型（选填）', '教室类型（选填）', '固定时间（选填）']);
 
   const teacherHeader = XLSX.utils.sheet_to_json(workbook.Sheets['教师'], { header: 1 })[0];
-  assert.deepEqual(teacherHeader, ['姓名', '负责年级（选填）', '主要学科（选填）', '其他学科（选填）']);
+  assert.deepEqual(teacherHeader, ['姓名', '负责年级（选填）', '主要学科（选填）', '其他学科（选填）', '负责班级（选填）']);
 
   const classHeader = XLSX.utils.sheet_to_json(workbook.Sheets['班级'], { header: 1 })[0];
   assert.deepEqual(classHeader, ['名称', '年级（选填）', '人数（选填）']);
@@ -80,7 +80,7 @@ test('current workspace data can be exported back into the template', async () =
     schoolName: '实验中学',
     semester: { startDate: '2026-09-01', endDate: '2026-12-31' },
     classes: [{ id: 'c1', name: '七年级1班', grade: '七年级', size: 42 }],
-    teachers: [{ id: 't1', name: '王老师', grade: '1;2;3', subject: '数学', subject2: '物理' }],
+    teachers: [{ id: 't1', name: '王老师', grade: '1;2;3', subject: '数学', subject2: '物理', classes: '七年级1班、七年级2班' }],
     subjects: [{ id: 's1', name: '数学' }],
     rooms: [{ id: 'r1', name: '一号教室', type: '普通教室', capacity: 50 }],
     timeSlots: [
@@ -97,6 +97,7 @@ test('current workspace data can be exported back into the template', async () =
   assert.equal(workbook.Sheets['班级'].A2.v, '七年级1班');
   assert.equal(workbook.Sheets['教师'].B2.v, '1;2;3');
   assert.equal(workbook.Sheets['教师'].D2.v, '物理');
+  assert.equal(workbook.Sheets['教师'].E2.v, '七年级1班、七年级2班');
   assert.equal(workbook.Sheets['教学计划'].A2.v, '七年级1班');
   assert.equal(workbook.Sheets['教学计划'].C2.v, '王老师');
   assert.equal(workbook.Sheets['教学计划'].D2.v, 5);
