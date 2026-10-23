@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { startApi } = require('../../server/api/api.cjs');
@@ -135,12 +135,16 @@ function createWindow() {
     height: 920,
     minWidth: 980,
     minHeight: 700,
+    // The app draws its own command rail; the native menu bar only adds a
+    // second, redundant toolbar on Windows.
+    autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
       preload: path.join(__dirname, 'preload.cjs'),
     },
   });
+  window.setMenuBarVisibility(false);
   if (process.env.VITE_DEV_SERVER_URL) {
     window.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
@@ -151,6 +155,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
   const openWindow = () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   };
