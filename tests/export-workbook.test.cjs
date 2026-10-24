@@ -1,4 +1,4 @@
-﻿const test = require('node:test');
+const test = require('node:test');
 const assert = require('node:assert/strict');
 
 async function loadImportExport() {
@@ -36,7 +36,7 @@ test('exportWorkbook returns real XLSX bytes, not a string', async () => {
 
 test('the import template is a valid workbook too', async () => {
   const { buildImportTemplate, readWorkbook } = await loadImportExport();
-  const bytes = buildImportTemplate();
+  const bytes = await buildImportTemplate();
   assert.ok(bytes instanceof ArrayBuffer);
   const head = new Uint8Array(bytes, 0, 4);
   assert.deepEqual(Array.from(head), [0x50, 0x4b, 0x03, 0x04]);
@@ -45,7 +45,7 @@ test('the import template is a valid workbook too', async () => {
   const rows = readWorkbook(bytes);
   // 教学计划仅表头、没有数据行；说明表有内容，可证明工作簿结构完整。
   assert.ok(rows.some((row) => row.sheet === '说明'));
-  assert.ok(rows.some((row) => row.sheet === '说明' && row.values['工作表'] === '教学计划'));
+  assert.ok(rows.some((row) => row.sheet === '说明' && row.values['导入模板使用说明'] === '【教学计划】'));
 });
 
 test('blobPartOf keeps the exact window of a typed-array view', async () => {

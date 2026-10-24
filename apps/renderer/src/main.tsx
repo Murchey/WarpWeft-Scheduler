@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client';
 import { HeroUIProvider, Button, Card, CardBody, Chip, Progress, Select, SelectItem, Tabs, Tab } from '@heroui/react';
 import { validateInput } from '../../../packages/validation/src';
-import { buildImportTemplate, exportCsv, exportWorkbook, readWorkbook } from '../../../packages/import-export/src';
+import { exportCsv, exportWorkbook, readWorkbook } from '../../../packages/import-export/src';
 import { ApiError, cancelServerJob, deleteServerClient, fetchHealth, fetchServerOverview, loadData, saveData, solveSchedule, updateServerConfig } from './api';
 import { DAYS, SectionHeading } from './components';
 import { PreparePage } from './PreparePage';

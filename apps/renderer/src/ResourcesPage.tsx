@@ -833,7 +833,8 @@ function ResourcesPage({
         const failure =
           '导入校验未通过（未写入数据）：\n' +
           issues.slice(0, 6).join('\n') +
-          (issues.length > 6 ? '\n…还有 ' + (issues.length - 6) + ' 项' : '');
+          (issues.length > 6 ? '\n…还有 ' + (issues.length - 6) + ' 项' : '') +
+          '\n请在 Excel 中按上面的工作表和行号定位（第 1 行是表头），修改后重新导入。';
         setImportFeedback({ tone: 'error', text: failure });
         setError('导入校验未通过（未写入数据）：\n' + issues.join('\n'));
         return;
@@ -868,7 +869,7 @@ function ResourcesPage({
     setError('');
     try {
       await new Promise((resolve) => window.setTimeout(resolve, 30));
-      const bytes = buildImportTemplate(undefined, {
+      const bytes = await buildImportTemplate(undefined, {
         simplified: (data.roomMode ?? 'simplified') !== 'full',
       });
       setTemplateStage('saving');
@@ -909,7 +910,7 @@ function ResourcesPage({
               </button>
             </div>
           ) : null}
-          <p className="panel-note">支持学校、班级、教师、学科、教室、时间段和教学计划。建议先下载模板；模板内“说明”工作表逐项标出填写位置、必填项和示例。教室可整表留空，时间段只需先填每天最多节数。</p>
+          <p className="panel-note">先填 3 张必填表即可导入：<b>班级、学科、教学计划</b>。学校、学期、教师、教室、时间段可后补；模板“说明”按工作表分节列出字段、必填项和示例，表头带 * 的列必须填写，第 2 行灰色示例行请在导入前删除。教室可整表留空，时间段先填每天最多节数。</p>
           <div className="import-actions">
             <label className="file-button file-button-primary">
               <span>选择 Excel 文件</span>
@@ -944,7 +945,7 @@ function ResourcesPage({
             />
             <span>简化模式（每班一间固定教室，不需要教室表）</span>
           </label>
-          <p className="panel-note">仅支持 Excel（.xlsx/.xls）；简化模式模板不包含“教室”表，教学计划也不需要教室类型；完整模式保留教室表。教师表填写负责班级后，排课和自动分配都只使用这些班级；班级表可填班主任。测试完整数据集时建议勾选上方清空选项。</p>
+          <p className="panel-note">仅支持 Excel（.xlsx/.xls）；简化模式模板不包含“教室”表，教学计划也不需要教室类型；完整模式保留教室表。教师表填写负责班级后，排课和自动分配都只使用这些班级；班级表可填班主任。模板第 2 行是灰色示例行，导入前请删除。测试完整数据集时建议勾选上方清空选项。</p>
         </section>
       </div>
     );

@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import type { Commit, RuleInstance, SchoolData } from './types';
 import { AvailabilityEditor } from './AvailabilityEditor';
 import { PlansPage } from './PlansPage';
@@ -60,7 +60,7 @@ function PreparePage({
     setTemplateBusy(true);
     setError('');
     try {
-      const bytes = buildImportTemplate({ ...data, schoolName: data.school.name });
+      const bytes = await buildImportTemplate({ ...data, schoolName: data.school.name });
       const result = await download(
         bytes,
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
