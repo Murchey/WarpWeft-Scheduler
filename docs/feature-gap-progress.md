@@ -327,3 +327,13 @@ node scripts/bench-solver.cjs --classes 24,96,120 --time-limit 30
 - `data-schema.json` 提供 schemaVersion 2；`/api/health` 暴露 schema/app/solver 版本与 capabilities，客户端版本过旧时阻断保存/排课。
 - 新增模板班级班主任列、教师负责班级多选、影响计算、roomMode 分流和 API health 测试。
 
+---
+
+## 14. 课表冲突反馈、Toast 日志与设置排版
+
+- 课表预览进入时显示硬冲突数量与原因；每次手工拖动后对比调整前后的硬冲突数，提示「已解决 / 减少 / 仍有 N 项」，被阻止的移动直接列出具体冲突条目；预览顶部保留硬冲突原因条。
+- 顶部 Toast 固定展示，底部 30 秒进度条；自动消失、手动关闭或被新提示替换时写入 `warpweft-toast-log`，在设置页【日志】查看并清空；相同提示不重复弹出。
+- 保存与检测错误改用班级/教师/学科/时间名称，并提供「教师 → 负责班级」修复提示，不再显示 teacher-/plan-/entry- 原始 ID。
+- 设置页恢复卡片表面，`align-items:start` 防止卡片拉伸重叠；工作区和日志使用整行布局。
+- 用户 Excel 数据已重塑为 75 班 × 40 人=3000 人、200 名教师（190 任课 + 10 非任课）、725 条教学计划、周一至周五 8 节、2026-09-01 至 2027-01-31；原文件备份为 `warpweft-data-2026-10-22-original-backup.xlsx`。
+

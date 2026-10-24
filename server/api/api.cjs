@@ -147,7 +147,7 @@ function validateData(data) {
     const seen = new Set();
     for (const item of items) {
       if (!item || typeof item.id !== 'string' || !item.id.trim()) return label + '存在空 ID';
-      if (seen.has(item.id)) return label + '存在重复 ID：' + item.id;
+      if (seen.has(item.id)) return label + '存在重复记录：' + String(item.name || item.label || item.id);
       seen.add(item.id);
     }
     return null;
@@ -169,8 +169,25 @@ function validateData(data) {
   const teacherIds = new Set(data.teachers.map((item) => item.id));
   const teacherById = new Map(data.teachers.map((item) => [item.id, item]));
   const subjectIds = new Set(data.subjects.map((item) => item.id));
+  const subjectNameById = new Map(data.subjects.map((item) => [item.id, String(item.name ?? '').trim()]));
   const roomIds = new Set(data.rooms.map((item) => item.id));
+  const roomById = new Map(data.rooms.map((item) => [item.id, item]));
   const slotIds = new Set(data.timeSlots.map((item) => item.id));
+  const slotById = new Map(data.timeSlots.map((item) => [item.id, item]));
+  const planById = new Map(data.coursePlans.map((item) => [item.id, item]));
+  const classLabel = (id) => String(classNameById.get(id) ?? '未知班级');
+  const teacherLabel = (id) => String(teacherById.get(id)?.name ?? '未知教师');
+  const subjectLabel = (id) => String(subjectNameById.get(id) ?? '未知学科');
+  const roomLabel = (id) => String(roomById.get(id)?.name ?? '未知教室');
+  const slotLabel = (id) => {
+    const slot = slotById.get(id);
+    if (!slot) return '未知时间';
+    return String(slot.label || ('周' + slot.day + ' 第' + slot.period + '节'));
+  };
+  const planLabel = (plan) => '班级「' + classLabel(plan.classId) + '」的「' + subjectLabel(plan.subjectId) + '」计划';
+  const adjustmentLabel = (item) => classLabel(item.classId) + ' ' + slotLabel(item.slotId);
+  const logLabel = (item) => [classLabel(item.classId), subjectLabel(item.subjectId), item.date].filter(Boolean).join(' ');
+  const groupLabel = (group) => String(group.name || '未命名走班组');
   const classNamesOf = (teacher) => {
     if (Array.isArray(teacher.classes)) return teacher.classes.map((item) => String(item).trim()).filter(Boolean);
     return String(teacher.classes ?? '')
@@ -180,46 +197,46 @@ function validateData(data) {
   };
   for (const teacher of data.teachers) {
     for (const name of classNamesOf(teacher)) {
-      if (!classByName.has(name.toLowerCase())) return '教师 ' + teacher.id + ' 的负责班级不存在：' + name;
+      if (!classByName.has(name.toLowerCase())) return '教师「' + teacher.name + '」的负责班级「' + name + '」不存在；请先新增该班，或修改教师负责班级。';
     }
   }
   for (const room of data.rooms) {
-    if (!(Number(room.capacity) > 0)) return '教室 ' + room.id + ' 的容量必须大于 0';
+    if (!(Number(room.capacity) > 0)) return '教室「' + room.name + '」的容量必须大于 0';
   }
   for (const slot of data.timeSlots) {
-    if (!(Number(slot.day) > 0) || !(Number(slot.period) > 0)) return '时间段 ' + slot.id + ' 的星期和节次必须大于 0';
+    if (!(Number(slot.day) > 0) || !(Number(slot.period) > 0)) return '时间段「' + (slot.label || slot.id) + '」的星期和节次必须大于 0';
     if (slot.kind !== undefined && slot.kind !== null && !['morning', 'regular', 'evening', 'makeup'].includes(slot.kind)) {
-      return '时间段 ' + slot.id + ' 的时段类型无效（只能是 morning/regular/evening/makeup）';
+      return '时间段「' + (slot.label || slot.id) + '」的时段类型无效（只能是 早读/常规/晚自习/补课）';
     }
     if (slot.start !== undefined && slot.start !== null && slot.start !== '' && !/^\d{1,2}:\d{2}$/.test(String(slot.start))) {
-      return '时间段 ' + slot.id + ' 的开始时间无效（应为 HH:MM）';
+      return '时间段「' + (slot.label || slot.id) + '」的开始时间无效（应为 HH:MM）';
     }
     if (slot.duration !== undefined && slot.duration !== null && !(Number(slot.duration) >= 0)) {
-      return '时间段 ' + slot.id + ' 的时长必须是非负数';
+      return '时间段「' + (slot.label || slot.id) + '」的时长必须是非负数';
     }
   }
   for (const plan of data.coursePlans) {
-    if (!classIds.has(plan.classId)) return '教学计划 ' + plan.id + ' 引用了不存在的班级';
-    if (plan.teacherId && !teacherIds.has(plan.teacherId)) return '教学计划 ' + plan.id + ' 引用了不存在的教师';
+    if (!classIds.has(plan.classId)) return '教学计划「' + planLabel(plan) + '」引用了不存在的班级；请重新选择班级。';
+    if (plan.teacherId && !teacherIds.has(plan.teacherId)) return '教学计划「' + planLabel(plan) + '」引用了不存在的教师；请重新选择教师。';
     const teacher = plan.teacherId ? teacherById.get(plan.teacherId) : undefined;
     if (teacher) {
       const names = classNamesOf(teacher).map((item) => item.toLowerCase());
       if (names.length && !names.includes(String(classNameById.get(plan.classId) ?? '').trim().toLowerCase())) {
-        return '教师 ' + teacher.id + ' 不负责教学计划 ' + plan.id + ' 的班级';
+        return '教师「' + teacher.name + '」不负责班级「' + classLabel(plan.classId) + '」（教学计划：' + subjectLabel(plan.subjectId) + '）；请到「教师 → 负责班级」勾选该班，或为这条计划换一位教师。';
       }
     }
-    if (!subjectIds.has(plan.subjectId)) return '教学计划 ' + plan.id + ' 引用了不存在的学科';
-    if (plan.fixedSlotId && !slotIds.has(plan.fixedSlotId)) return '教学计划 ' + plan.id + ' 引用了不存在的固定时间';
+    if (!subjectIds.has(plan.subjectId)) return '教学计划「' + planLabel(plan) + '」引用了不存在的学科；请重新选择学科。';
+    if (plan.fixedSlotId && !slotIds.has(plan.fixedSlotId)) return '教学计划「' + planLabel(plan) + '」引用了不存在的固定时间「' + slotLabel(plan.fixedSlotId) + '」。';
     if (plan.weeks !== undefined && plan.weeks !== null && !['all', 'odd', 'even'].includes(plan.weeks)) {
-      return '教学计划 ' + plan.id + ' 的周次无效（只能是 all/odd/even）';
+      return '教学计划「' + planLabel(plan) + '」的周次无效（只能是 每周/单周/双周）。';
     }
     if (plan.kind !== undefined && plan.kind !== null && !['morning', 'regular', 'evening', 'makeup'].includes(plan.kind)) {
-      return '教学计划 ' + plan.id + ' 的时段类型无效';
+      return '教学计划「' + planLabel(plan) + '」的时段类型无效（只能是 早读/常规/晚自习/补课）。';
     }
-    if (!(Number(plan.weeklyPeriods) > 0)) return '教学计划 ' + plan.id + ' 的周课时必须大于 0';
+    if (!(Number(plan.weeklyPeriods) > 0)) return '教学计划「' + planLabel(plan) + '」的周课时必须大于 0。';
   }
   const homeroomByTeacher = new Map();
-  const subjectNameById = new Map(data.subjects.map((item) => [item.id, String(item.name ?? '').trim().toLowerCase()]));
+  const subjectNameLowerById = new Map(data.subjects.map((item) => [item.id, String(item.name ?? '').trim().toLowerCase()]));
   const subjectNamesOfTeacher = (teacher) => [teacher.subject, teacher.subject2]
     .filter(Boolean)
     .flatMap((value) => String(value).split(/[、,，;；/]+/))
@@ -228,39 +245,46 @@ function validateData(data) {
   for (const klass of data.classes) {
     if (!klass.homeroomTeacherId) continue;
     const teacher = teacherById.get(klass.homeroomTeacherId);
-    if (!teacher) return '班级 ' + klass.id + ' 的班主任不存在';
+    if (!teacher) return '班级「' + klass.name + '」的班主任不存在；请重新选择班主任。';
     const assigned = homeroomByTeacher.get(teacher.id) || [];
     assigned.push(klass.name);
     homeroomByTeacher.set(teacher.id, assigned);
     const bound = classNamesOf(teacher).map((item) => item.toLowerCase());
     if (bound.length && !bound.includes(String(klass.name).trim().toLowerCase())) {
-      return '班主任 ' + teacher.id + ' 不负责班级 ' + klass.id;
+      return '班主任「' + teacher.name + '」不负责班级「' + klass.name + '」；请到「教师 → 负责班级」勾选该班，或更换班主任。';
     }
     const classPlans = data.coursePlans.filter((plan) => plan.classId === klass.id);
     const teacherSubjects = subjectNamesOfTeacher(teacher);
     const qualified = teacherSubjects.length === 0
       ? classPlans
-      : classPlans.filter((plan) => teacherSubjects.includes(subjectNameById.get(plan.subjectId) || ''));
+      : classPlans.filter((plan) => teacherSubjects.includes(subjectNameLowerById.get(plan.subjectId) || ''));
     const hasLesson = classPlans.some((plan) => plan.teacherId === teacher.id);
     const canAssignBlank = classPlans.some((plan) =>
       !plan.teacherId &&
-      (teacherSubjects.length === 0 || teacherSubjects.includes(subjectNameById.get(plan.subjectId) || '')),
+      (teacherSubjects.length === 0 || teacherSubjects.includes(subjectNameLowerById.get(plan.subjectId) || '')),
     );
     if (qualified.length > 0 && !hasLesson && !canAssignBlank) {
-      return '班主任 ' + teacher.id + ' 必须在本班 ' + klass.id + ' 承担至少一节课';
+      return '班主任「' + teacher.name + '」必须在本班「' + klass.name + '」承担至少一节自己可教的课。';
     }
   }
   for (const [teacherId, classNames] of homeroomByTeacher) {
-    if (classNames.length > 1) return '教师 ' + teacherId + ' 同时担任多个班的班主任：' + classNames.join('、');
+    if (classNames.length > 1) return '教师「' + teacherLabel(teacherId) + '」同时担任多个班的班主任：' + classNames.join('、') + '；一个教师只能带一个班。';
   }
   for (const item of data.unavailableSlots || []) {
-    if (!teacherIds.has(item.teacherId)) return '教师不可用时间引用了不存在的教师';
-    if (!slotIds.has(item.slotId)) return '教师不可用时间引用了不存在的时间段';
+    if (!teacherIds.has(item.teacherId)) return '教师不可用时间引用了不存在的教师「' + teacherLabel(item.teacherId) + '」';
+    if (!slotIds.has(item.slotId)) return '教师不可用时间引用了不存在的时间段「' + slotLabel(item.slotId) + '」';
   }
   for (const collection of [data.candidate, data.published]) {
     if (!collection || !Array.isArray(collection.entries)) continue;
     for (const entry of collection.entries) {
-      if (!classIds.has(entry.classId) || (entry.teacherId && !teacherIds.has(entry.teacherId)) || !roomIds.has(entry.roomId) || !slotIds.has(entry.slotId)) return '课表条目 ' + entry.id + ' 引用了不存在的资源';
+      if (!classIds.has(entry.classId) || (entry.teacherId && !teacherIds.has(entry.teacherId)) || !roomIds.has(entry.roomId) || !slotIds.has(entry.slotId)) {
+        const missing = [];
+        if (!classIds.has(entry.classId)) missing.push('班级「' + classLabel(entry.classId) + '」');
+        if (entry.teacherId && !teacherIds.has(entry.teacherId)) missing.push('教师「' + teacherLabel(entry.teacherId) + '」');
+        if (!roomIds.has(entry.roomId)) missing.push('教室「' + roomLabel(entry.roomId) + '」');
+        if (!slotIds.has(entry.slotId)) missing.push('时间「' + slotLabel(entry.slotId) + '」');
+        return '课表条目引用了不存在的资源：' + missing.join('、');
+      }
     }
   }
   if (data.adjustments !== undefined) {
@@ -268,14 +292,15 @@ function validateData(data) {
     const teacherIdsForAdjustment = teacherIds;
     for (const item of data.adjustments) {
       if (!item || typeof item.id !== 'string' || !item.id.trim()) return '调代课记录缺少 ID';
-      if (!['move', 'substitute', 'cancel'].includes(item.type)) return '调代课记录 ' + item.id + ' 的类型无效';
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(item.date || ''))) return '调代课记录 ' + item.id + ' 的日期无效';
-      if (!slotIds.has(item.slotId)) return '调代课记录 ' + item.id + ' 引用了不存在的时间段';
-      if (!classIds.has(item.classId)) return '调代课记录 ' + item.id + ' 引用了不存在的班级';
-      if (item.type === 'move' && !slotIds.has(item.targetSlotId || '')) return '调代课记录 ' + item.id + ' 的调课目标无效';
-      if (item.type === 'substitute' && !teacherIdsForAdjustment.has(item.substituteTeacherId || '')) return '调代课记录 ' + item.id + ' 的代课教师不存在';
-      if (item.roomId && !roomIds.has(item.roomId)) return '调代课记录 ' + item.id + ' 引用了不存在的教室';
-      if (item.status !== 'active' && item.status !== 'revoked') return '调代课记录 ' + item.id + ' 的状态无效';
+      const adjustment = adjustmentLabel(item);
+      if (!['move', 'substitute', 'cancel'].includes(item.type)) return '调代课记录「' + adjustment + '」的类型无效';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(item.date || ''))) return '调代课记录「' + adjustment + '」的日期无效';
+      if (!slotIds.has(item.slotId)) return '调代课记录「' + adjustment + '」引用了不存在的时间段';
+      if (!classIds.has(item.classId)) return '调代课记录「' + adjustment + '」引用了不存在的班级';
+      if (item.type === 'move' && !slotIds.has(item.targetSlotId || '')) return '调代课记录「' + adjustment + '」的调课目标时间无效';
+      if (item.type === 'substitute' && !teacherIdsForAdjustment.has(item.substituteTeacherId || '')) return '调代课记录「' + adjustment + '」的代课教师「' + teacherLabel(item.substituteTeacherId) + '」不存在';
+      if (item.roomId && !roomIds.has(item.roomId)) return '调代课记录「' + adjustment + '」引用了不存在的教室';
+      if (item.status !== 'active' && item.status !== 'revoked') return '调代课记录「' + adjustment + '」的状态无效';
     }
   }
   if (data.lessonLogs !== undefined) {
@@ -283,14 +308,15 @@ function validateData(data) {
     const logIds = new Set();
     for (const item of data.lessonLogs) {
       if (!item || typeof item.id !== 'string' || !item.id.trim()) return '上课记录缺少 ID';
-      if (logIds.has(item.id)) return '上课记录 ID 重复：' + item.id;
+      const log = item.note || logLabel(item);
+      if (logIds.has(item.id)) return '上课记录「' + log + '」重复';
       logIds.add(item.id);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(item.date || ''))) return '上课记录 ' + item.id + ' 的日期无效';
-      if (!['normal', 'substituted', 'moved', 'cancelled'].includes(item.status)) return '上课记录 ' + item.id + ' 的状态无效';
-      if (!classIds.has(item.classId)) return '上课记录 ' + item.id + ' 引用了不存在的班级';
-      if (!teacherIds.has(item.teacherId)) return '上课记录 ' + item.id + ' 引用了不存在的教师';
-      if (!slotIds.has(item.slotId)) return '上课记录 ' + item.id + ' 引用了不存在的时间段';
-      if (!subjectIds.has(item.subjectId)) return '上课记录 ' + item.id + ' 引用了不存在的学科';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(item.date || ''))) return '上课记录「' + log + '」的日期无效';
+      if (!['normal', 'substituted', 'moved', 'cancelled'].includes(item.status)) return '上课记录「' + log + '」的状态无效';
+      if (!classIds.has(item.classId)) return '上课记录「' + log + '」引用了不存在的班级';
+      if (!teacherIds.has(item.teacherId)) return '上课记录「' + log + '」引用了不存在的教师「' + teacherLabel(item.teacherId) + '」';
+      if (!slotIds.has(item.slotId)) return '上课记录「' + log + '」引用了不存在的时间段「' + slotLabel(item.slotId) + '」';
+      if (!subjectIds.has(item.subjectId)) return '上课记录「' + log + '」引用了不存在的学科「' + subjectLabel(item.subjectId) + '」';
     }
   }
   if (data.electiveGroups !== undefined) {
@@ -298,21 +324,21 @@ function validateData(data) {
     const groupIds = new Set();
     for (const group of data.electiveGroups) {
       if (!group || typeof group.id !== 'string' || !group.id.trim()) return '走班组缺少 ID';
-      if (groupIds.has(group.id)) return '走班组 ID 重复：' + group.id;
+      if (groupIds.has(group.id)) return '走班组「' + groupLabel(group) + '」重复';
       groupIds.add(group.id);
-      if (!subjectIds.has(group.subjectId)) return '走班组 ' + group.id + ' 引用了不存在的学科';
-      if (!(Number(group.weeklyPeriods) > 0)) return '走班组 ' + group.id + ' 的周课时必须大于 0';
-      if (!Array.isArray(group.classIds) || group.classIds.length === 0) return '走班组 ' + group.id + ' 至少需要一个班级';
+      if (!subjectIds.has(group.subjectId)) return '走班组「' + groupLabel(group) + '」引用了不存在的学科「' + subjectLabel(group.subjectId) + '」';
+      if (!(Number(group.weeklyPeriods) > 0)) return '走班组「' + groupLabel(group) + '」的周课时必须大于 0';
+      if (!Array.isArray(group.classIds) || group.classIds.length === 0) return '走班组「' + groupLabel(group) + '」至少需要一个班级';
       for (const classId of group.classIds) {
-        if (!classIds.has(classId)) return '走班组 ' + group.id + ' 引用了不存在的班级';
+        if (!classIds.has(classId)) return '走班组「' + groupLabel(group) + '」引用了不存在的班级「' + classLabel(classId) + '」';
       }
-      if (!Array.isArray(group.blocks) || group.blocks.length === 0) return '走班组 ' + group.id + ' 至少需要一个并行班';
+      if (!Array.isArray(group.blocks) || group.blocks.length === 0) return '走班组「' + groupLabel(group) + '」至少需要一个并行班';
       const blockIds = new Set();
       for (const block of group.blocks) {
-        if (!block || typeof block.id !== 'string' || !block.id.trim()) return '走班组 ' + group.id + ' 的并行班缺少 ID';
-        if (blockIds.has(block.id)) return '走班组 ' + group.id + ' 的并行班 ID 重复';
+        if (!block || typeof block.id !== 'string' || !block.id.trim()) return '走班组「' + groupLabel(group) + '」的并行班缺少标识';
+        if (blockIds.has(block.id)) return '走班组「' + groupLabel(group) + '」的并行班重复';
         blockIds.add(block.id);
-        if (!teacherIds.has(block.teacherId)) return '走班组 ' + group.id + ' 的并行班引用了不存在的教师';
+        if (!teacherIds.has(block.teacherId)) return '走班组「' + groupLabel(group) + '」的并行班引用了不存在的教师「' + teacherLabel(block.teacherId) + '」';
       }
     }
   }

@@ -203,15 +203,15 @@ export function inspectTimetable(input: InspectionInput): InspectionReport {
     if (severity === 'hard') for (const id of refs.entryIds ?? []) conflictEntryIds.add(id);
   };
 
-  const className = (id: string) => classes.get(id)?.name ?? (id || '未知班级');
-  const teacherName = (id: string) => teachers.get(id)?.name ?? (id || '未知教师');
-  const roomName = (id: string) => rooms.get(id)?.name ?? (id || '未知教室');
-  const subjectName = (id: string) => subjects.get(id)?.name ?? (id || '未知学科');
+  const className = (id: string) => classes.get(id)?.name ?? '未知班级';
+  const teacherName = (id: string) => teachers.get(id)?.name ?? '未知教师';
+  const roomName = (id: string) => rooms.get(id)?.name ?? '未知教室';
+  const subjectName = (id: string) => subjects.get(id)?.name ?? '未知学科';
   const slotLabel = (id: string) => slots.get(id)?.label ?? '未知时段';
 
   const electiveGroups = new Map((input.electiveGroups ?? []).map((group) => [group.id, group]));
   const classLabel = (entry: InspectionInput['entries'][number]) =>
-    entry.groupId ? electiveGroups.get(entry.groupId)?.name ?? entry.groupId : className(entry.classId);
+    entry.groupId ? electiveGroups.get(entry.groupId)?.name ?? '未知走班组' : className(entry.classId);
 
   const validEntries = input.entries.filter((entry) => {
     const problems: string[] = [];
@@ -229,11 +229,18 @@ export function inspectTimetable(input: InspectionInput): InspectionReport {
       if (!slots.has(entry.slotId)) problems.push('时间段');
     }
     if (problems.length === 0) return true;
+    const plan = plans.get(entry.coursePlanId);
+    const context = [
+      '班级「' + classLabel(entry) + '」',
+      plan ? '学科「' + subjectName(plan.subjectId) + '」' : '',
+      '教师「' + teacherName(entry.teacherId) + '」',
+      '时间「' + slotLabel(entry.slotId) + '」',
+    ].filter(Boolean).join(' · ');
     issue(
       'MISSING_REFERENCE',
       'hard',
       '课表条目引用了不存在的资源',
-      '条目 ' + entry.id + ' 缺少：' + problems.join('、'),
+      '缺少：' + problems.join('、') + '；' + context,
       { entryIds: [entry.id] },
     );
     return false;

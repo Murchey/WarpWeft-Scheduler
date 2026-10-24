@@ -15,7 +15,7 @@ test('import template uses the new headers and required position notes', async (
   assert.deepEqual(planHeader, ['班级*', '学科*', '教师（选填）', '每周课时*', '周次（选填）', '课程类型（选填）', '教室类型（选填）', '固定时间（选填）']);
 
   const teacherHeader = XLSX.utils.sheet_to_json(workbook.Sheets['教师'], { header: 1 })[0];
-  assert.deepEqual(teacherHeader, ['姓名*', '负责年级（选填）', '主要学科（选填）', '其他学科（选填）', '负责班级（选填）']);
+  assert.deepEqual(teacherHeader, ['姓名*', '负责年级（选填，分号分隔）', '主要学科（选填）', '其他学科（选填，用、分隔）', '负责班级（选填，用、分隔）']);
 
   const classHeader = XLSX.utils.sheet_to_json(workbook.Sheets['班级'], { header: 1 })[0];
   assert.deepEqual(classHeader, ['名称*', '年级（选填）', '人数（选填）', '班主任（选填）']);
@@ -170,7 +170,7 @@ test('custom scheduling rules are exported as a documented template sheet', asyn
   };
   const workbook = XLSX.read(Buffer.from(await buildImportTemplate(source)), { type: 'buffer' });
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets['排课规则'], { header: 1 });
-  assert.deepEqual(rows[0], ['规则类型*', '作用对象类型*', '作用对象', '适用时间', '重要程度', '参数', '备注']);
+  assert.deepEqual(rows[0], ['规则类型*', '作用对象类型*', '作用对象', '适用时间', '重要程度', '参数（选填，多项用；分隔）', '备注']);
   const ruleRow = rows.find((row) => row[0] === '教师每日上限' && row[2] === '王老师');
   assert.ok(ruleRow);
   assert.equal(ruleRow[3], '周一至周二');

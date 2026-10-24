@@ -86,14 +86,16 @@ test('API validates date adjustments before persistence', () => {
       originalEntryId: 'e1', substituteTeacherId: 'missing-teacher', createdAt: '2026-10-18T00:00:00.000Z', status: 'active',
     }],
   };
-  assert.match(validateData(data), /代课教师不存在/);
+  const substituteMessage = validateData(data);
+  assert.match(substituteMessage, /代课教师.*不存在/);
+  assert.doesNotMatch(substituteMessage, /missing-teacher/);
   data.adjustments[0].substituteTeacherId = 't1';
   data.adjustments[0].date = '2026/10/19';
   assert.match(validateData(data), /日期无效/);
   data.adjustments[0].date = '2026-10-19';
   data.adjustments[0].type = 'move';
   data.adjustments[0].targetSlotId = 'missing-slot';
-  assert.match(validateData(data), /调课目标无效/);
+  assert.match(validateData(data), /调课目标.*无效/);
 });
 
 test('API rejects a teacher assigned outside their bound classes', () => {
@@ -107,10 +109,14 @@ test('API rejects a teacher assigned outside their bound classes', () => {
   };
   assert.equal(validateData(data), null);
   data.coursePlans[0].classId = 'c2';
-  assert.match(validateData(data), /不负责教学计划/);
+  const message = validateData(data);
+  assert.match(message, /不负责班级/);
+  assert.match(message, /王老师/);
+  assert.match(message, /二班/);
+  assert.doesNotMatch(message, /teacher-|plan-/);
   data.coursePlans[0].classId = 'c1';
   data.teachers[0].classes = '三班';
-  assert.match(validateData(data), /负责班级不存在/);
+  assert.match(validateData(data), /负责班级.*不存在/);
 });
 
 test('API enforces the homeroom teacher class lesson and subject exemption', () => {

@@ -385,7 +385,7 @@ function templateTimeSlotRows(source?: TemplateSource): { rows: (string | number
       return [period, slot?.start ?? '', slot?.duration ?? ''];
     }),
     ['', '', '', ''],
-    ['单日节次设置（不写等于满节次）', '', '', ''],
+    ['单日节次设置（不写等于满节次；多个节次用分号分隔）', '', '', ''],
     ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
     [1, 2, 3, 4, 5, 6, 7].map((day) => {
       const list = dayPeriods.get(day);
@@ -517,7 +517,7 @@ export async function buildImportTemplate(
     for (const row of config.rows) worksheet.addRow(row);
     worksheet.columns = config.widths.map((width) => ({ width }));
     const header = worksheet.getRow(1);
-    header.height = 26;
+    header.height = 34;
     header.eachCell((cell, column) => {
       const base = config.headers[column - 1] ?? '';
       const isRequired = required.has(base);
@@ -592,7 +592,13 @@ export async function buildImportTemplate(
   });
   addDataSheet({
     name: '教师',
-    headers: ['姓名', '负责年级（选填）', '主要学科（选填）', '其他学科（选填）', '负责班级（选填）'],
+    headers: [
+      '姓名',
+      '负责年级（选填，分号分隔）',
+      '主要学科（选填）',
+      '其他学科（选填，用、分隔）',
+      '负责班级（选填，用、分隔）',
+    ],
     rows: (source?.teachers ?? []).map((teacher) => [
       teacher.name,
       teacher.grade ?? '',
@@ -691,7 +697,15 @@ export async function buildImportTemplate(
 
   addDataSheet({
     name: '排课规则',
-    headers: ['规则类型', '作用对象类型', '作用对象', '适用时间', '重要程度', '参数', '备注'],
+    headers: [
+      '规则类型',
+      '作用对象类型',
+      '作用对象',
+      '适用时间',
+      '重要程度',
+      '参数（选填，多项用；分隔）',
+      '备注',
+    ],
     rows: ruleRows,
     widths: [24, 16, 20, 24, 12, 34, 30],
     required: ['规则类型', '作用对象类型'],

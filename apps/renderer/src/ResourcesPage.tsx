@@ -910,7 +910,7 @@ function ResourcesPage({
               </button>
             </div>
           ) : null}
-          <p className="panel-note">先填 3 张必填表即可导入：<b>班级、学科、教学计划</b>。学校、学期、教师、教室、时间段可后补；模板“说明”按工作表分节列出字段、必填项和示例，表头带 * 的列必须填写，第 2 行灰色示例行请在导入前删除。教室可整表留空，时间段先填每天最多节数。</p>
+          <p className="panel-note">先填 3 张必填表即可导入：<b>班级、学科、教学计划</b>。学校、学期、教师、教室、时间段可后补；模板“说明”按工作表分节列出字段、必填项和示例，表头带 * 的列必须填写，多值字段表头会注明分隔符（如“分号分隔”“用、分隔”），第 2 行灰色示例行请在导入前删除。教室可整表留空，时间段先填每天最多节数。</p>
           <div className="import-actions">
             <label className="file-button file-button-primary">
               <span>选择 Excel 文件</span>

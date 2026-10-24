@@ -19,6 +19,8 @@ import { semesterWeeks, weekOfDate } from '../../../packages/semester/src';
 import { adjustedWeekEntries, semesterPatterns } from './semesterTimetable';
 import brandIcon from '../../../assets/icon.svg?url';
 import { readPreviewPrefs, savePreviewPrefs, weekDatesForHeader } from './timetablePreview';
+import { appendToastLog, readToastLogs, saveToastLogs } from './toastLog';
+import type { ToastLogEntry, ToastTone } from './toastLog';
 import { DATA_SCHEMA_VERSION, MIN_SERVER_SCHEMA } from './schema';
 import { withFixedClassRoomsResult } from './fixedClassrooms';
 import type { PreviewWeekFilter, PreviewView } from './timetablePreview';
@@ -240,7 +242,7 @@ function preflight(inputData: SchoolData): string[] {
   }
   for (const plan of data.coursePlans) {
     if (!findSubject(data, plan.subjectId)) {
-      issues.push('教学计划 ' + plan.id + ' 引用了不存在的学科');
+      issues.push((findClass(data, plan.classId)?.name ?? '未知班级') + ' 的教学计划引用了不存在的学科');
     }
     const planKind = plan.kind ?? 'regular';
     if (!data.timeSlots.some((slot) => (slot.kind ?? 'regular') === planKind)) {
@@ -256,17 +258,21 @@ function preflight(inputData: SchoolData): string[] {
   const teacherIds = new Set(data.teachers.map((teacher) => teacher.id));
   const slotIds = new Set(data.timeSlots.map((slot) => slot.id));
   for (const item of data.unavailableSlots ?? []) {
-    if (!teacherIds.has(item.teacherId) || !slotIds.has(item.slotId)) issues.push('教师不可用时间引用了不存在的教师或时间段');
+    if (!teacherIds.has(item.teacherId) || !slotIds.has(item.slotId)) {
+      issues.push('教师不可用时间引用了不存在的教师或时间段；请检查教师不可用时间表');
+    }
   }
-  const fixed = new Map<string, { id: string; weeks: string }[]>();
+  const planText = (plan: CoursePlan) =>
+    (findClass(data, plan.classId)?.name ?? '未知班级') + ' / ' + planSubjectName(data, plan);
+  const fixed = new Map<string, { id: string; label: string; weeks: string }[]>();
   for (const plan of data.coursePlans) {
     if (!plan.fixedSlotId) continue;
     const weeks = plan.weeks ?? 'all';
     for (const key of ['c:' + plan.classId + ':' + plan.fixedSlotId, 't:' + plan.teacherId + ':' + plan.fixedSlotId]) {
       const prior = fixed.get(key) ?? [];
       const clash = prior.find((item) => weeksOverlap(item.weeks, weeks));
-      if (clash) issues.push('固定时间冲突：' + clash.id + ' 与 ' + plan.id);
-      else prior.push({ id: plan.id, weeks });
+      if (clash) issues.push('固定时间冲突：「' + clash.label + '」与「' + planText(plan) + '」不能同时占用同一时间');
+      else prior.push({ id: plan.id, label: planText(plan), weeks });
       fixed.set(key, prior);
     }
   }
@@ -305,6 +311,17 @@ function conflictIds(entries: ScheduleEntry[], plans: CoursePlan[] = []): Set<st
   return ids;
 }
 
+function hardConflictText(report: InspectionReport, limit = 4): string {
+  const hard = report.issues.filter((issue) => issue.severity === 'hard');
+  const lines = hard.slice(0, limit).map((issue) => '· ' + issue.title + '：' + issue.detail);
+  if (hard.length > limit) lines.push('…还有 ' + (hard.length - limit) + ' 项硬冲突');
+  return lines.join('\n');
+}
+
+function conflictSignature(report: InspectionReport | null): string {
+  if (!report) return '';
+  return report.summary.hard + ':' + report.issues.filter((issue) => issue.severity === 'hard').map((issue) => issue.id).sort().join('|');
+}
 
 function exportRows(data: SchoolData, result: SolverOutput): Record<string, string | number>[] {
   return result.entries.map((entry) => {
@@ -323,6 +340,34 @@ function exportRows(data: SchoolData, result: SolverOutput): Record<string, stri
       锁定: entry.locked ? '是' : '否',
     };
   });
+}
+
+type ToastState = {
+  id: number;
+  tone: ToastTone;
+  title: string;
+  message: string;
+  createdAt: number;
+  expiresAt: number;
+  duration: number;
+};
+
+function ToastView({ toast, onClose }: { toast: ToastState; onClose: () => void }) {
+  return (
+    <div className={'app-toast is-' + toast.tone} role={toast.tone === 'error' ? 'alert' : 'status'}>
+      <div className="app-toast-mark">{toast.tone === 'success' ? '✓' : toast.tone === 'error' ? '!' : 'i'}</div>
+      <div className="app-toast-copy">
+        <strong>{toast.title}</strong>
+        <p>{toast.message}</p>
+      </div>
+      <button type="button" className="app-toast-close" onClick={onClose} aria-label="关闭提示">
+        ×
+      </button>
+      <div className="app-toast-progress">
+        <i style={{ animationDuration: toast.duration + 'ms' }} />
+      </div>
+    </div>
+  );
 }
 
 function Banner({
@@ -405,8 +450,82 @@ function App() {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<RunProgress>({ phase: 'idle', message: '等待开始排课' });
   const [shortRuns, setShortRuns] = useState<ShortRunRecord[]>([]);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const [toastLogs, setToastLogs] = useState<ToastLogEntry[]>(() => readToastLogs());
+  const toastRef = useRef<ToastState | null>(null);
+  const toastSeq = useRef(0);
+  const recordToast = useCallback((current: ToastState, reason: 'timeout' | 'closed' | 'replaced') => {
+    setToastLogs((entries) => appendToastLog(entries, { ...current, at: current.createdAt, reason }));
+  }, []);
+  useEffect(() => {
+    saveToastLogs(toastLogs);
+  }, [toastLogs]);
+  const showToast = useCallback(
+    (tone: ToastTone, title: string, message: string, duration = 30000) => {
+      const previous = toastRef.current;
+      if (previous && previous.tone === tone && previous.title === title && previous.message === message) {
+        return;
+      }
+      if (previous) recordToast(previous, 'replaced');
+      const now = Date.now();
+      const next: ToastState = {
+        id: ++toastSeq.current,
+        tone,
+        title,
+        message,
+        createdAt: now,
+        expiresAt: now + duration,
+        duration,
+      };
+      toastRef.current = next;
+      setToast(next);
+    },
+    [recordToast],
+  );
+  const dismissToast = useCallback(
+    (id: number, reason: 'timeout' | 'closed' = 'closed') => {
+      const current = toastRef.current;
+      if (!current || current.id !== id) return;
+      toastRef.current = null;
+      setToast(null);
+      recordToast(current, reason);
+    },
+    [recordToast],
+  );
+  const setError = useCallback(
+    (message: string) => {
+      if (!message) {
+        if (toastRef.current?.tone === 'error') dismissToast(toastRef.current.id, 'closed');
+        return;
+      }
+      showToast('error', '操作未完成', message);
+    },
+    [dismissToast, showToast],
+  );
+  const setNotice = useCallback(
+    (message: string) => {
+      if (!message) {
+        if (toastRef.current?.tone === 'success') dismissToast(toastRef.current.id, 'closed');
+        return;
+      }
+      showToast('success', '已完成', message);
+    },
+    [dismissToast, showToast],
+  );
+  const setWarning = useCallback(
+    (message: string) => showToast('warning', '需要注意', message),
+    [showToast],
+  );
+  const clearToastLogs = useCallback(() => {
+    setToastLogs([]);
+    saveToastLogs([]);
+  }, []);
+  useEffect(() => {
+    if (!toast) return;
+    const remaining = Math.max(0, toast.expiresAt - Date.now());
+    const timer = window.setTimeout(() => dismissToast(toast.id, 'timeout'), remaining);
+    return () => window.clearTimeout(timer);
+  }, [toast, dismissToast]);
   const [previewPrefs] = useState(() => readPreviewPrefs(window.localStorage));
   const [selectedClassId, setSelectedClassId] = useState('');
   const [view, setView] = useState<View>(previewPrefs.view);
@@ -593,6 +712,19 @@ function App() {
       return null;
     }
   }, [data, result]);
+
+  const conflictToastSignature = useRef('');
+  useEffect(() => {
+    if (tab !== '课表预览') {
+      conflictToastSignature.current = '';
+      return;
+    }
+    if (!report || report.summary.hard === 0) return;
+    const signature = conflictSignature(report);
+    if (conflictToastSignature.current === signature) return;
+    conflictToastSignature.current = signature;
+    setError('当前课表有 ' + report.summary.hard + ' 项硬冲突：\n' + hardConflictText(report));
+  }, [tab, report, setError]);
 
   const locateInspection = (refs: InspectionRefs) => {
     const teacherId = refs.teacherIds?.[0];
@@ -998,12 +1130,30 @@ function App() {
     }
     source.source = 'MANUAL';
     const conflicts = conflictIds(entries, data.coursePlans);
+    const afterReport = inspectTimetable({ ...data, entries });
+    const movedIds = new Set([source.id, target?.id].filter((id): id is string => Boolean(id)));
+    const relevantIssues = afterReport.issues.filter(
+      (issue) => issue.severity === 'hard' && issue.refs.entryIds?.some((id) => movedIds.has(id)),
+    );
     if (conflicts.has(source.id) || (target && conflicts.has(target.id))) {
-      setError('调整后会产生教师、教室或班级冲突，请选择其他时间');
+      const reasons = relevantIssues.length
+        ? relevantIssues.slice(0, 4).map((issue) => '· ' + issue.title + '：' + issue.detail).join('\n')
+        : hardConflictText(afterReport);
+      setError('调整未应用：仍然会产生冲突\n' + reasons);
       return;
     }
+    const beforeHard = report?.summary.hard ?? 0;
+    const afterHard = afterReport.summary.hard;
+    conflictToastSignature.current = conflictSignature(afterReport);
     setHistory((current) => [...current.slice(-19), result]);
     applyResult({ ...result, entries });
+    if (afterHard === 0 && beforeHard > 0) {
+      setNotice('硬冲突已解决：' + beforeHard + ' → 0');
+    } else if (afterHard > 0 && afterHard < beforeHard) {
+      setWarning('硬冲突减少：' + beforeHard + ' → ' + afterHard + '\n仍有：\n' + hardConflictText(afterReport));
+    } else if (afterHard > 0) {
+      setWarning('位置已更新，但仍有 ' + afterHard + ' 项硬冲突：\n' + hardConflictText(afterReport));
+    }
   };
 
   const toggleLock = (entryId: string) => {
@@ -1324,15 +1474,8 @@ function App() {
             当前服务端数据版本 v{serverSchema ?? '未知'}，本客户端至少需要 v{MIN_SERVER_SCHEMA}。请升级局域网服务端；升级前可以查看和导出，但不能保存或排课。
           </Banner>
         ) : null}
-        {error ? (
-          <Banner tone="error" title="操作未完成" onClose={() => setError('')}>
-            {error}
-          </Banner>
-        ) : null}
-        {notice ? (
-          <Banner tone="success" title="已完成" onClose={() => setNotice('')}>
-            {notice}
-          </Banner>
+        {toast ? (
+          <ToastView key={toast.id} toast={toast} onClose={() => dismissToast(toast.id, 'closed')} />
         ) : null}
         {tab === '工作台' ? (
           <Dashboard
@@ -1454,7 +1597,19 @@ function App() {
           />
         ) : null}
         {tab === '服务端' && runMode === 'lan-server' ? <ServerPage apiOnline={apiOnline} /> : null}
-        {tab === '设置' ? <SettingsPage runMode={runMode} theme={theme} onThemeChange={setTheme} onEditMode={() => setModeSettingsOpen(true)} apiOnline={apiOnline} data={data} commit={commit} /> : null}
+        {tab === '设置' ? (
+          <SettingsPage
+            runMode={runMode}
+            theme={theme}
+            onThemeChange={setTheme}
+            onEditMode={() => setModeSettingsOpen(true)}
+            apiOnline={apiOnline}
+            data={data}
+            commit={commit}
+            toastLogs={toastLogs}
+            onClearToastLogs={clearToastLogs}
+          />
+        ) : null}
       </main>
       {running ? (
         <div className="run-foreground" role="status" aria-live="polite" aria-label="短时排课计算中">
@@ -2189,13 +2344,100 @@ function ServerPage({ apiOnline }: { apiOnline: boolean | null }) {
   );
 }
 
-function SettingsPage({ runMode, theme, onThemeChange, onEditMode, apiOnline, data, commit }: { runMode: RunMode | null; theme: 'light' | 'dark'; onThemeChange: (theme: 'light' | 'dark') => void; onEditMode: () => void; apiOnline: boolean | null; data: SchoolData; commit: Commit }) {
+function SettingsPage({
+  runMode,
+  theme,
+  onThemeChange,
+  onEditMode,
+  apiOnline,
+  data,
+  commit,
+  toastLogs,
+  onClearToastLogs,
+}: {
+  runMode: RunMode | null;
+  theme: 'light' | 'dark';
+  onThemeChange: (theme: 'light' | 'dark') => void;
+  onEditMode: () => void;
+  apiOnline: boolean | null;
+  data: SchoolData;
+  commit: Commit;
+  toastLogs: ToastLogEntry[];
+  onClearToastLogs: () => void;
+}) {
   const mode = RUN_MODE_OPTIONS.find((item) => item.value === runMode);
   const endpoint = window.localStorage.getItem('warpweft-runtime-endpoint') || 'http://127.0.0.1:4317';
-  return <div className="settings-layout"><Card className="business-card settings-card"><CardBody><SectionHeading english="RUNTIME" title="运行模式" /><p className="panel-note">决定数据和排课服务连接到哪里。修改后会重新连接工作区。</p><div className="settings-value"><span>当前模式</span><strong>{mode?.title ?? '未选择'}</strong><small>{mode?.english ?? 'NOT CONFIGURED'}</small></div><div className="settings-value"><span>服务地址</span><strong className="settings-endpoint">{endpoint}</strong></div><Button color="primary" onPress={onEditMode}>修改运行模式</Button></CardBody></Card><Card className="business-card settings-card"><CardBody><SectionHeading english="APPEARANCE" title="外观" /><p className="panel-note">调整工作台的显示主题。</p><Tabs selectedKey={theme} onSelectionChange={(key) => onThemeChange(String(key) as 'light' | 'dark')} aria-label="主题"><Tab key="light" title="浅色" /><Tab key="dark" title="深色" /></Tabs><div className="settings-value"><span>深色背景</span><strong>#1C1C1C</strong></div></CardBody></Card><Card className="business-card settings-card"><CardBody><SectionHeading english="WORKSPACE" title="当前工作区" /><label className="settings-value"><span>学校名称</span><input className="settings-input" value={data.school.name} onChange={(event) => commit({ ...data, school: { ...data.school, name: event.target.value } })} /></label><label className="settings-value"><span>教室模式</span><select className="settings-input" value={data.roomMode ?? 'simplified'} onChange={(event) => commit({ ...data, roomMode: event.target.value as 'simplified' | 'full' }, { invalidate: true })}><option value="simplified">简化模式（每班一间固定教室，不需要教室表）</option><option value="full">完整模式（按教室容量/类型/冲突排课）</option></select></label><div className="settings-stats"><span>班级 <b>{data.classes.length}</b></span><span>教师 <b>{data.teachers.length}</b></span><span>教学计划 <b>{data.coursePlans.length}</b></span><span>服务状态 <Chip size="sm" color={apiOnline ? 'success' : 'warning'}>{apiOnline ? '在线' : apiOnline === false ? '离线' : '检测中'}</Chip></span></div><p className="panel-note">工作区数据由当前服务端管理。设置页不会自动填充演示数据。</p></CardBody></Card></div>;
+  const toneLabels: Record<ToastTone, string> = {
+    error: '错误',
+    success: '完成',
+    warning: '提醒',
+    info: '提示',
+  };
+  const reasonLabels = {
+    timeout: '30 秒后自动消失',
+    closed: '手动关闭',
+    replaced: '被新提示替换',
+  };
+  return (
+    <div className="settings-layout">
+      <Card className="business-card settings-card"><CardBody>
+        <SectionHeading english="RUNTIME" title="运行模式" />
+        <p className="panel-note">决定数据和排课服务连接到哪里。修改后会重新连接工作区。</p>
+        <div className="settings-value"><span>当前模式</span><strong>{mode?.title ?? '未选择'}</strong><small>{mode?.english ?? 'NOT CONFIGURED'}</small></div>
+        <div className="settings-value"><span>服务地址</span><strong className="settings-endpoint">{endpoint}</strong></div>
+        <Button color="primary" onPress={onEditMode}>修改运行模式</Button>
+      </CardBody></Card>
+
+      <Card className="business-card settings-card"><CardBody>
+        <SectionHeading english="APPEARANCE" title="外观" />
+        <p className="panel-note">调整工作台的显示主题。</p>
+        <Tabs selectedKey={theme} onSelectionChange={(key) => onThemeChange(String(key) as 'light' | 'dark')} aria-label="主题">
+          <Tab key="light" title="浅色" />
+          <Tab key="dark" title="深色" />
+        </Tabs>
+        <div className="settings-value"><span>深色背景</span><strong>#1C1C1C</strong></div>
+      </CardBody></Card>
+
+      <Card className="business-card settings-card settings-card-wide"><CardBody>
+        <SectionHeading english="WORKSPACE" title="当前工作区" />
+        <label className="settings-value"><span>学校名称</span><input className="settings-input" value={data.school.name} onChange={(event) => commit({ ...data, school: { ...data.school, name: event.target.value } })} /></label>
+        <label className="settings-value"><span>教室模式</span><select className="settings-input" value={data.roomMode ?? 'simplified'} onChange={(event) => commit({ ...data, roomMode: event.target.value as 'simplified' | 'full' }, { invalidate: true })}><option value="simplified">简化模式（每班一间固定教室，不需要教室表）</option><option value="full">完整模式（按教室容量/类型/冲突排课）</option></select></label>
+        <div className="settings-stats">
+          <span>班级 <b>{data.classes.length}</b></span>
+          <span>教师 <b>{data.teachers.length}</b></span>
+          <span>教学计划 <b>{data.coursePlans.length}</b></span>
+          <span>服务状态 <Chip size="sm" color={apiOnline ? 'success' : 'warning'}>{apiOnline ? '在线' : apiOnline === false ? '离线' : '检测中'}</Chip></span>
+        </div>
+        <p className="panel-note">工作区数据由当前服务端管理。设置页不会自动填充演示数据。</p>
+      </CardBody></Card>
+
+      <Card className="business-card settings-card settings-card-wide settings-log-card"><CardBody>
+        <div className="settings-card-head">
+          <SectionHeading english="ACTIVITY LOG" title="日志" />
+          <button type="button" className="tt-btn tt-btn-quiet" onClick={onClearToastLogs} disabled={toastLogs.length === 0}>清空日志</button>
+        </div>
+        <p className="panel-note">顶部 toast 会在 30 秒后自动消失；消失、手动关闭或被替换的记录保留在这里，最多 100 条。</p>
+        {toastLogs.length === 0 ? (
+          <div className="settings-log-empty">暂无日志。操作提示、排课结果和冲突原因会出现在这里。</div>
+        ) : (
+          <div className="settings-log-list">
+            {toastLogs.map((entry) => (
+              <article className={'settings-log-item is-' + entry.tone} key={entry.id}>
+                <div className="settings-log-meta">
+                  <span className={'settings-log-tone is-' + entry.tone}>{toneLabels[entry.tone]}</span>
+                  <time>{new Date(entry.at).toLocaleString('zh-CN', { hour12: false })}</time>
+                  <em>{reasonLabels[entry.reason]}</em>
+                </div>
+                <strong>{entry.title}</strong>
+                <p>{entry.message}</p>
+              </article>
+            ))}
+          </div>
+        )}
+      </CardBody></Card>
+    </div>
+  );
 }
-
-
 
 function TimetablePage({
   data,
@@ -2638,6 +2880,13 @@ function TimetablePage({
         <div className="tt-warning">
           <b>还有 {totalMissing} 课时未排</b>
           <span>{missing.map((item) => (findClass(data, item.plan.classId)?.name ?? '') + ' ' + planSubjectName(data, item.plan)).join('；')}</span>
+        </div>
+      ) : null}
+
+      {report && report.summary.hard > 0 && !overlayDate ? (
+        <div className="tt-warning is-danger">
+          <b>硬冲突 {report.summary.hard} 项</b>
+          <span>{hardConflictText(report, 3)}</span>
         </div>
       ) : null}
 
