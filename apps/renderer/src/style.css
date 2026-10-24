@@ -241,6 +241,8 @@ html[data-theme='dark'] .slot-card.conflict { background: rgba(255,107,107,.14);
 .config-summary span { display: grid; gap: 5px; padding: 11px; background: var(--chip); color: var(--muted); font: 10px var(--font-ui); letter-spacing: .08em; }
 .config-summary strong { color: var(--ink); font: 13px var(--font-text); letter-spacing: 0; }
 .soft-prefs { margin-top: 18px; border-top: 1px solid var(--rule); padding-top: 14px; }
+.rules-soft-panel { padding: 20px 26px; }
+.rules-soft-panel .soft-prefs { margin-top: 0; border-top: 0; padding-top: 0; }
 .soft-prefs-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .soft-prefs-head b { display: block; font-size: 14px; }
 .soft-prefs-head small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.6; }
@@ -252,7 +254,7 @@ html[data-theme='dark'] .slot-card.conflict { background: rgba(255,107,107,.14);
 .soft-prefs-row select { border: 1px solid var(--ink); background: var(--panel); color: var(--ink); padding: 7px 8px; font: 12px var(--font-text); }
 .soft-prefs .panel-note { margin: 12px 0 0; }
 .candidate-panel { min-width: 0; }
-.run-progress { margin-top: 18px; padding: 14px 16px; border: 1px solid var(--rule); background: var(--chip); }
+.run-progress { margin-top: 18px; padding: 14px 16px; border: 1px solid var(--rule); background: var(--chip); overflow: hidden; }
 .run-progress-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
 .run-progress-head strong { display: block; margin-top: 5px; font-size: 14px; }
 .run-progress-head small { color: var(--muted); font: 12px var(--font-ui); }
@@ -1412,7 +1414,22 @@ html[data-theme='dark'] .tt-warning.is-danger{background:#2b1717;color:#fca5a5}
 .long-completed-row div{display:flex;flex-direction:column;gap:3px;min-width:0}
 .long-completed-row b{font:12px var(--font-ui);color:var(--ink);overflow:hidden;text-overflow:ellipsis}
 .long-completed-row small{font-size:11px;color:var(--muted)}
+.long-completed-row.is-active{background:var(--paper);box-shadow:inset 3px 0 0 var(--signal);padding-left:8px}
+.long-job-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;text-align:left;border:0;background:transparent;padding:0;cursor:pointer;color:inherit}
+.long-job-main:hover b{color:var(--danger)}
+.long-completed-row .long-job-row-actions{display:flex;flex-direction:row;gap:6px;align-items:center;flex:0 0 auto}
+.long-job-row-actions .ghost-button{font-size:11px;padding:5px 8px}
 .long-delete{border-color:var(--danger);color:var(--danger)}
+.long-file-panel{margin-top:14px;padding:12px 14px;border:1px solid var(--rule);border-radius:10px;background:var(--paper)}
+.long-file-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.long-file-head b{display:block;font-size:13px}
+.long-file-head small{display:block;margin-top:4px;color:var(--muted);font-size:11px;line-height:1.5}
+.long-file-row{display:grid;grid-template-columns:120px minmax(0,1fr) auto;gap:10px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--rule)}
+.long-file-row > span{font:10px var(--font-ui);letter-spacing:.08em;color:var(--muted)}
+.long-file-row code{font:11px ui-monospace,Consolas,monospace;color:var(--ink);overflow-wrap:anywhere}
+.long-file-actions{display:flex;gap:6px;flex-wrap:wrap}
+.long-file-actions .ghost-button{font-size:11px;padding:5px 8px}
+@media(max-width:720px){.long-file-row{grid-template-columns:1fr}.long-file-actions{justify-content:flex-start}}
 
 /* Foreground progress while a short solve is running */
 .run-foreground{position:fixed;inset:0;z-index:2400;display:grid;place-items:center;padding:24px;background:rgba(8,10,9,.72);backdrop-filter:blur(3px)}

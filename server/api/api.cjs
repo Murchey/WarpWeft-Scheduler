@@ -973,6 +973,8 @@ function startApi({
       clientId: job.clientId || null,
       taskUuid: job.taskUuid || null,
       snapshotId: job.snapshotId || null,
+      inputFile: longJobFile(job.id),
+      bestFile: job.bestFile || path.join(longJobsDir, job.id + '.best.json'),
       hasFeasibleSolution: !!job.hasFeasibleSolution,
       canResume: ['paused', 'interrupted', 'failed', 'cancelled', 'completed'].includes(job.status) && !longJobRunning,
     };
@@ -1271,7 +1273,9 @@ function startApi({
   function deleteLongJob(id) {
     const job = longJobs.get(id);
     if (!job) throw requestError('长时任务不存在', 404, 'LONG_JOB_NOT_FOUND');
-    if (job.status !== 'completed' && job.status !== 'cancelled') throw requestError('只有已完成或已取消任务可以删除', 409, 'LONG_JOB_NOT_COMPLETED');
+    if (!['completed', 'cancelled', 'failed', 'interrupted', 'paused'].includes(job.status)) {
+      throw requestError('运行中或排队中的任务不能删除；请先取消任务', 409, 'LONG_JOB_NOT_COMPLETED');
+    }
     longJobs.delete(id);
     if (job.taskUuid) longJobsByUuid.delete(job.taskUuid);
     try {

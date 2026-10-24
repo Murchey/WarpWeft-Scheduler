@@ -50,6 +50,11 @@ function canResumeStatus(status: string): boolean {
   return ['paused', 'interrupted', 'failed', 'cancelled', 'completed'].includes(status);
 }
 
+/** Queued/running jobs must be cancelled first; everything else is deletable. */
+function canDeleteStatus(status: string): boolean {
+  return ['completed', 'cancelled', 'failed', 'interrupted', 'paused'].includes(status);
+}
+
 export function LongRunPanel({
   inputFactory,
   onApplyResult,
@@ -62,6 +67,7 @@ export function LongRunPanel({
   onRegisterStart,
   onActiveChange,
   onJobsChange,
+  open = false,
 }: {
   inputFactory: (seconds: number) => SolverInput;
   onApplyResult: (job: LongJobDetail) => void;
@@ -74,12 +80,15 @@ export function LongRunPanel({
   onRegisterStart?: (start: () => Promise<void>) => void;
   onActiveChange?: (active: boolean) => void;
   onJobsChange?: (jobs: LongJob[]) => void;
+  /** When the history panel expands, refresh the server-side job list. */
+  open?: boolean;
 }) {
   const [job, setJob] = useState<LongJobDetail | null>(null);
   const [jobs, setJobs] = useState<LongJob[]>([]);
   const [busy, setBusy] = useState('');
   const startRef = useRef<() => Promise<void>>(async () => {});
   const [panelError, setPanelError] = useState('');
+  const [fileJobId, setFileJobId] = useState('');
 
   const refreshList = useCallback(async (): Promise<LongJob[]> => {
     try {
@@ -118,6 +127,10 @@ export function LongRunPanel({
       return null;
     }
   }, []);
+
+  useEffect(() => {
+    if (open) void refreshList();
+  }, [open, refreshList]);
 
   useEffect(() => {
     let cancelled = false;
@@ -280,17 +293,18 @@ export function LongRunPanel({
       }
     });
 
-  const removeCompleted = (target: LongJob) =>
+  const removeJob = (target: LongJob) =>
     withBusy('delete', async () => {
-      if (target.status !== 'completed' && target.status !== 'cancelled') {
-        onError('只有已完成任务可以删除');
+      if (!canDeleteStatus(target.status)) {
+        onError('运行中或排队中的任务不能删除；请先取消任务');
         return;
       }
-      if (!window.confirm('删除' + statusLabel(target.status) + '任务 ' + target.id + '？任务文件和检查点会被删除，此操作不可撤销。')) return;
+      if (!window.confirm('删除' + statusLabel(target.status) + '任务 ' + target.id + '？任务数据文件和检查点会被删除，此操作不可撤销。')) return;
       try {
         await deleteLongJob(target.id);
         if (target.taskUuid) forgetTask(window.localStorage, target.taskUuid);
         if (job?.id === target.id) setJob(null);
+        if (fileJobId === target.id) setFileJobId('');
         await refreshList();
         onNotice('已删除长时任务 ' + target.id);
       } catch (cause) {
@@ -298,9 +312,34 @@ export function LongRunPanel({
       }
     });
 
+  const copyFilePath = async (path: string) => {
+    try {
+      await navigator.clipboard.writeText(path);
+      onNotice('文件路径已复制');
+    } catch {
+      window.prompt('浏览器无法自动复制，请手动复制以下路径：', path);
+    }
+  };
+
+  const revealFilePath = async (path: string) => {
+    const bridge = (window as unknown as { warpweft?: { showItemInFolder?: (target: string) => Promise<{ ok?: boolean; error?: string }> } }).warpweft;
+    if (bridge?.showItemInFolder) {
+      try {
+        const result = await bridge.showItemInFolder(path);
+        if (result && result.ok === false) throw new Error(result.error || '打开文件夹失败');
+        onNotice('已在文件管理器中定位任务文件');
+      } catch (cause) {
+        onError('打开文件夹失败：' + (cause instanceof Error ? cause.message : String(cause)));
+      }
+      return;
+    }
+    await copyFilePath(path);
+    onNotice('浏览器模式无法打开文件夹，路径已复制');
+  };
+
   const activeStatus = job?.status ?? '';
   const isRunning = activeStatus === 'running';
-  const removableJobs = jobs.filter((item) => item.status === 'completed' || item.status === 'cancelled');
+  const fileJob = fileJobId ? (job?.id === fileJobId ? job : jobs.find((item) => item.id === fileJobId)) : null;
 
   const applyBest = () => {
     if (!job) return;
@@ -427,13 +466,16 @@ export function LongRunPanel({
             <button className="ghost-button" onClick={() => void restartWithCurrentData()} disabled={Boolean(busy)} title="用当前工作区数据重新开始长时任务，不沿用旧检查点">
               {busy === 'restart' ? '正在按新数据启动…' : '加载新数据重排'}
             </button>
+            <button className="ghost-button" onClick={() => setFileJobId(job.id)} disabled={Boolean(busy)}>
+              查看原始数据文件位置
+            </button>
             {isRunning || job.status === 'paused' ? (
               <button className="ghost-button long-cancel" onClick={() => void cancel(job.id)} disabled={Boolean(busy)}>
                 {busy === 'cancel' ? '取消中…' : '取消任务'}
               </button>
             ) : null}
-            {job.status === 'completed' || job.status === 'cancelled' ? (
-              <button className="ghost-button long-delete" onClick={() => void removeCompleted(job)} disabled={Boolean(busy)}>
+            {canDeleteStatus(job.status) ? (
+              <button className="ghost-button long-delete" onClick={() => void removeJob(job)} disabled={Boolean(busy)}>
                 {busy === 'delete' ? '删除中…' : '删除任务'}
               </button>
             ) : null}
@@ -442,18 +484,54 @@ export function LongRunPanel({
       ) : (
         <p className="panel-note">还没有长时任务。长时任务适合 120+ 班级或资源很紧、需要跑很久的数据。</p>
       )}
-      {removableJobs.filter((item) => item.id !== job?.id).length > 0 ? (
-        <div className="long-completed-list">
-          <h4>已完成 / 已取消任务</h4>
-          {removableJobs.filter((item) => item.id !== job?.id).map((item) => (
-            <div className="long-completed-row" key={item.id}>
-              <div>
-                <b>{item.id}</b>
-                <small>{statusLabel(item.status)} · {new Date(item.createdAt).toLocaleString('zh-CN')} · {item.placed}/{item.total} 课时</small>
+      {fileJob ? (
+        <div className="long-file-panel">
+          <div className="long-file-head">
+            <div>
+              <b>原始数据文件位置</b>
+              <small>任务启动时的数据快照和最佳课表检查点保存在服务端工作区；删除任务会同时删除这两个文件。</small>
+            </div>
+            <button type="button" className="ghost-button" onClick={() => setFileJobId('')}>关闭</button>
+          </div>
+          <div className="long-file-row">
+            <span>任务数据文件</span>
+            <code>{fileJob.inputFile || '当前服务端未返回路径，请重启或升级本地服务端'}</code>
+            {fileJob.inputFile ? (
+              <div className="long-file-actions">
+                <button type="button" className="ghost-button" onClick={() => void copyFilePath(fileJob.inputFile as string)}>复制路径</button>
+                <button type="button" className="ghost-button" onClick={() => void revealFilePath(fileJob.inputFile as string)}>打开文件夹</button>
               </div>
-              <button type="button" className="ghost-button" onClick={() => void removeCompleted(item)} disabled={Boolean(busy)}>
-                {busy === 'delete' ? '删除中…' : '删除'}
+            ) : null}
+          </div>
+          <div className="long-file-row">
+            <span>最佳课表 / 检查点</span>
+            <code>{fileJob.bestFile || '当前服务端未返回路径，请重启或升级本地服务端'}</code>
+            {fileJob.bestFile ? (
+              <div className="long-file-actions">
+                <button type="button" className="ghost-button" onClick={() => void copyFilePath(fileJob.bestFile as string)}>复制路径</button>
+                <button type="button" className="ghost-button" onClick={() => void revealFilePath(fileJob.bestFile as string)}>打开文件夹</button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+      {jobs.length > 0 ? (
+        <div className="long-completed-list">
+          <h4>全部任务</h4>
+          {jobs.map((item) => (
+            <div className={'long-completed-row' + (item.id === job?.id ? ' is-active' : '')} key={item.id}>
+              <button type="button" className="long-job-main" onClick={() => void loadJob(item.id)}>
+                <b>{item.id}{item.id === job?.id ? ' · 当前' : ''}</b>
+                <small>{statusLabel(item.status)} · {new Date(item.createdAt).toLocaleString('zh-CN')} · {item.placed}/{item.total} 课时</small>
               </button>
+              <div className="long-job-row-actions">
+                <button type="button" className="ghost-button" onClick={() => setFileJobId(item.id)}>文件位置</button>
+                {canDeleteStatus(item.status) ? (
+                  <button type="button" className="ghost-button long-delete" onClick={() => void removeJob(item)} disabled={Boolean(busy)}>
+                    {busy === 'delete' ? '删除中…' : '删除'}
+                  </button>
+                ) : null}
+              </div>
             </div>
           ))}
         </div>

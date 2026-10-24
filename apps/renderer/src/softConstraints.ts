@@ -13,25 +13,25 @@ export const SOFT_CONSTRAINT_DEFINITIONS: SoftConstraintDefinition[] = [
   {
     kind: 'SUBJECT_DISTRIBUTION',
     label: '学科分散',
-    description: '同一班同一天尽量不重复同一学科。',
+    description: '数字越大，越优先把同一学科分散到不同天；不保证绝对不重复。',
     defaultWeight: 3,
   },
   {
     kind: 'TEACHER_GAPS',
     label: '教师空档',
-    description: '减少教师两节课之间的空节。',
+    description: '数字越大，越优先减少教师两节课之间的空节；不保证教师完全没有空节。',
     defaultWeight: 1,
   },
   {
     kind: 'TEACHER_WORKLOAD_BALANCE',
     label: '教师工作量均衡',
-    description: '教师周课时尽量接近平均值。',
+    description: '数字越大，越优先让教师周课时接近平均值。',
     defaultWeight: 2,
   },
   {
     kind: 'CLASS_GAPS',
     label: '班级空档',
-    description: '减少班级常规日间时段第一和最后一节之间的空节，让同班课程更集中。',
+    description: '数字越大，越优先把同班课程排成连续块；受教师/教室约束，不保证空档为 0。',
     defaultWeight: 2,
   },
 ];

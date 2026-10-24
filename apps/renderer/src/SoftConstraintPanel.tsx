@@ -3,12 +3,12 @@ import type { Commit, SchoolData, SoftRuleKind } from './types';
 import { normalizeSoftConstraints, SOFT_CONSTRAINT_DEFINITIONS, withSoftWeight } from './softConstraints';
 
 const WEIGHT_OPTIONS = [
-  { value: 0, label: '关闭' },
-  { value: 1, label: '低 1' },
-  { value: 2, label: '中 2' },
-  { value: 3, label: '高 3' },
-  { value: 4, label: '很高 4' },
-  { value: 5, label: '最高 5' },
+  { value: 0, label: '0 不启用' },
+  { value: 1, label: '1' },
+  { value: 2, label: '2' },
+  { value: 3, label: '3' },
+  { value: 4, label: '4' },
+  { value: 5, label: '5' },
 ];
 
 export function SoftConstraintPanel({
@@ -30,7 +30,7 @@ export function SoftConstraintPanel({
       <div className="soft-prefs-head">
         <div>
           <b>课表偏好（软约束）</b>
-          <small>只影响课程位置，不改变可行性；权重越高越优先。修改后会清除当前候选课表。</small>
+          <small>数字是权重：0 = 不启用，1–5 越大表示越优先满足该偏好。权重只影响课程位置，不改变可行性，也不保证目标为 0；修改后会清除当前候选课表。</small>
         </div>
         <span className="status-tag">{current.filter((item) => item.weight > 0).length} 项启用</span>
       </div>
@@ -44,6 +44,8 @@ export function SoftConstraintPanel({
             <select
               value={weightOf(definition.kind)}
               disabled={disabled}
+              aria-label={definition.label + '权重'}
+              title={'权重 0–5：数字越大越优先，不保证目标为 0'}
               onChange={(event) => update(definition.kind, Number(event.target.value))}
             >
               {WEIGHT_OPTIONS.map((option) => (
@@ -54,6 +56,7 @@ export function SoftConstraintPanel({
         ))}
       </div>
       <p className="panel-note">
+        权重不是“空档数量”，数值越大只代表求解器越优先减少空档，仍可能因教师/教室约束保留空档。
         班级空档只统计常规、自习、课后服务三类日间时段；早读、晚自习、补课之间的作息间隔不计入。
       </p>
     </div>

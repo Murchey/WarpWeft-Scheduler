@@ -95,6 +95,8 @@ test('long job runs, reports progress and persists a checkpoint', async () => {
     assert.equal(detail.unplaced, 0);
     assert.equal(detail.bestEntries.length, 5);
     assert.equal(detail.hasFeasibleSolution, true);
+    assert.ok(detail.inputFile.endsWith(created.job.id + '.json'));
+    assert.ok(detail.bestFile.includes(created.job.id) && detail.bestFile.endsWith('.best.json'));
 
     // The checkpoint file is the source for the UI and for resume.
     const files = fs.readdirSync(path.join(dataDir, 'solve-jobs'));

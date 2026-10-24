@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
-import type { Commit, RunMode, SchoolData, SolverInput, SolverOutput } from './types';
+import type { RunMode, SchoolData, SolverInput, SolverOutput } from './types';
 import type { RunProgress } from './runConfig';
 import { RUN_MODE_OPTIONS } from './runConfig';
 import { SectionHeading } from './components';
@@ -8,7 +8,6 @@ import { findClass, missingPlans, planSubjectName } from './selectors';
 import { activeRules, describeRule } from './rules';
 import { LongRunPanel } from './LongRunPanel';
 import type { LongJob, LongJobDetail } from './api';
-import { SoftConstraintPanel } from './SoftConstraintPanel';
 
 const RUN_STATUS_LABELS: Record<string, string> = {
   queued: '排队中', running: '运行中', paused: '已暂停', completed: '已完成', failed: '未完成', cancelled: '已取消', interrupted: '已中断',
@@ -20,7 +19,7 @@ function runStatusText(status: string): string {
 }
 
 export function RunsPage({
-  data, result, issues, running, progress, timeLimit, setTimeLimit, onRun, onRepair, onTimetable, onClear, runMode, shortRuns, inputFactory, onApplyLongResult, onNotice, onError, commit,
+  data, result, issues, running, progress, timeLimit, setTimeLimit, onRun, onRepair, onTimetable, onClear, runMode, shortRuns, inputFactory, onApplyLongResult, onNotice, onError,
 }: {
   data: SchoolData; result: SolverOutput | null; issues: string[]; running: boolean; progress: RunProgress;
   timeLimit: number; setTimeLimit: (value: number) => void; onRun: () => void;
@@ -31,7 +30,6 @@ export function RunsPage({
   onApplyLongResult: (job: LongJobDetail) => void;
   onNotice: (message: string) => void;
   onError: (message: string) => void;
-  commit: Commit;
 }) {
   const expected = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
   const availableTotal = data.classes.length * data.timeSlots.length;
@@ -159,7 +157,6 @@ export function RunsPage({
                   <div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div>
                 </>
               )}
-              <SoftConstraintPanel data={data} commit={commit} disabled={!canConfigure} />
             </>
           )}
         </section>
@@ -227,6 +224,7 @@ export function RunsPage({
             onRegisterStart={registerLongStart}
             onActiveChange={setLongActive}
             onJobsChange={setLongJobs}
+            open={historyOpen}
           />
         </div>
       </section>

@@ -422,6 +422,10 @@ export interface LongJob {
   error: string | null;
   hasFeasibleSolution: boolean;
   canResume: boolean;
+  /** Server-side task data snapshot (input JSON). */
+  inputFile?: string | null;
+  /** Server-side best timetable/checkpoint JSON. */
+  bestFile?: string | null;
   taskUuid?: string | null;
   snapshotId?: string | null;
 }

@@ -13,6 +13,7 @@ import {
   scopeLabel,
   timeLabel,
 } from './rules';
+import { SoftConstraintPanel } from './SoftConstraintPanel';
 
 function RulesPage({
   data,
@@ -107,6 +108,10 @@ function RulesPage({
             ))}
           </div>
         </div>
+      </section>
+
+      <section className="section-panel rules-soft-panel">
+        <SoftConstraintPanel data={data} commit={commit} />
       </section>
 
       {conflicts.length > 0 ? (

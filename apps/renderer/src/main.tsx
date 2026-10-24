@@ -1463,7 +1463,6 @@ function App() {
             onApplyLongResult={applyLongResult}
             onNotice={setNotice}
             onError={setError}
-            commit={commit}
           />
         ) : null}
         {tab === '课表预览' ? (
