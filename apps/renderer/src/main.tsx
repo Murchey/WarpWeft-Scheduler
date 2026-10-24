@@ -64,18 +64,6 @@ import './style.css';
 
 const TABS = ['工作台', '排课准备', '排课任务', '课表预览', '调代课', '最终课表', '统计报表', '服务端', '设置'] as const;
 type Tab = (typeof TABS)[number];
-const EN: Record<Tab, string> = {
-  工作台: 'OVERVIEW',
-  排课准备: 'PREPARE',
-  排课任务: 'SCHEDULE RUNS',
-  课表预览: 'TIMETABLE PREVIEW',
-  调代课: 'ADJUSTMENTS',
-  最终课表: 'FINAL TIMETABLE',
-  统计报表: 'WORKLOAD',
-
-  服务端: 'SERVER',
-  设置: 'SETTINGS',
-};
 type SaveState = 'idle' | 'saving' | 'saved' | 'offline' | 'error';
 type View = PreviewView;
 
@@ -88,7 +76,7 @@ function RuntimeModeDialog({ current, onSave, onClose }: { current: RunMode | nu
   const [endpoint, setEndpoint] = useState(() => window.localStorage.getItem('warpweft-runtime-endpoint') || selected.endpoint);
   const endpointValid = (() => { try { const url = new URL(endpoint); return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.host); } catch { return false; } })();
   useEffect(() => { setEndpoint(window.localStorage.getItem('warpweft-runtime-endpoint') || selected.endpoint); }, [mode]);
-  return <div className="mode-overlay" role="dialog" aria-modal="true"><div className="mode-dialog"><div className="mode-dialog-head"><span className="kicker">// RUNTIME MODE</span>{onClose ? <button className="banner-close" onClick={onClose} aria-label="关闭设置">×</button> : null}</div><h2>{current ? '运行模式设置' : '选择运行模式'}</h2><p className="mode-lead">先选择数据和排课服务的运行位置，之后可以在设置中修改。</p><div className="mode-options">{RUN_MODE_OPTIONS.map((item) => <button key={item.value} className={'mode-option' + (mode === item.value ? ' selected' : '')} onClick={() => setMode(item.value)}><span className="mode-option-index">0{RUN_MODE_OPTIONS.indexOf(item) + 1}</span><span><b>{item.title}</b><em>{item.english}</em><small>{item.description}</small></span></button>)}</div><label className="mode-endpoint">服务地址<input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="http://192.168.1.20:4317" /><small>{mode === 'single' || mode === 'lan-server' ? '本机模式使用默认地址即可。' : '请输入可访问的服务端 API 地址。'}{endpoint && !endpointValid ? ' 地址格式无效。' : ''}</small></label><div className="mode-actions"><button className="ghost-button" onClick={onClose} disabled={!current}>取消</button><button className="action-button" disabled={!endpointValid} onClick={() => onSave(mode, endpoint)}>{current ? '保存设置' : '进入工作台'} <span>↗</span></button></div></div></div>;
+  return <div className="mode-overlay" role="dialog" aria-modal="true"><div className="mode-dialog"><div className="mode-dialog-head"><span className="kicker">// RUNTIME MODE</span>{onClose ? <button className="banner-close" onClick={onClose} aria-label="关闭设置">×</button> : null}</div><h2>{current ? '运行模式设置' : '选择运行模式'}</h2><p className="mode-lead">先选择数据和排课服务的运行位置，之后可以在设置中修改。</p><div className="mode-options">{RUN_MODE_OPTIONS.map((item) => <button key={item.value} className={'mode-option' + (mode === item.value ? ' selected' : '')} onClick={() => setMode(item.value)}><span className="mode-option-index">0{RUN_MODE_OPTIONS.indexOf(item) + 1}</span><span><b>{item.title}</b><small>{item.description}</small></span></button>)}</div><label className="mode-endpoint">服务地址<input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="http://192.168.1.20:4317" /><small>{mode === 'single' || mode === 'lan-server' ? '本机模式使用默认地址即可。' : '请输入可访问的服务端 API 地址。'}{endpoint && !endpointValid ? ' 地址格式无效。' : ''}</small></label><div className="mode-actions"><button className="ghost-button" onClick={onClose} disabled={!current}>取消</button><button className="action-button" disabled={!endpointValid} onClick={() => onSave(mode, endpoint)}>{current ? '保存设置' : '进入工作台'} <span>↗</span></button></div></div></div>;
 }
 
 
@@ -1374,7 +1362,6 @@ function App() {
           </span>
           <div>
             <span className="brand-name">WARPWEFT</span>
-            <span className="brand-sub">SCHEDULER / LOCAL</span>
           </div>
         </div>
         <nav className="nav-list" aria-label="主导航">
@@ -1387,21 +1374,19 @@ function App() {
             >
               <span className="nav-no">0{index + 1}</span>
               <span>{item}</span>
-              <em>{EN[item]}</em>
             </button>
           ))}
         </nav>
         <div className="rail-footer">
-          <span>DATA SOURCE</span>
+          <span>数据来源</span>
           <strong>{data.school.name}</strong>
-          <small>{apiOnline === false ? 'LOCAL DATA / NOT SAVED' : 'LOCAL FILE / OFFLINE'}</small>
+          <small>{apiOnline === false ? '本地数据 / 未保存' : '本地文件 / 离线'}</small>
           <small>{data.updatedAt ? '更新 ' + fmtTime(data.updatedAt) : '尚未保存'}</small>
         </div>
       </aside>
       <main className={'workspace' + (tab === '课表预览' ? ' workspace-timetable' : '')}>
         <header className="topbar">
           <div>
-            <span className="kicker">// {EN[tab]}</span>
             <h1>{tab}</h1>
           </div>
           <div className="top-actions">
@@ -1682,11 +1667,11 @@ function Dashboard({
   const ready = issues.length === 0;
   const stateLabel = result
     ? ['COMPLETED', 'FEASIBLE', 'IMPROVED', 'OPTIMAL'].includes(result.status)
-      ? 'READY'
+      ? '就绪'
       : result.status === 'TIMEOUT'
-        ? 'TIMEOUT'
-        : 'FAILED'
-    : 'IDLE';
+        ? '超时'
+        : '失败'
+    : '待排课';
   return (
     <>
       <section className="hero-panel">
@@ -2339,7 +2324,7 @@ function SettingsPage({
       <Card className="business-card settings-card"><CardBody>
         <SectionHeading english="RUNTIME" title="运行模式" />
         <p className="panel-note">决定数据和排课服务连接到哪里。修改后会重新连接工作区。</p>
-        <div className="settings-value"><span>当前模式</span><strong>{mode?.title ?? '未选择'}</strong><small>{mode?.english ?? 'NOT CONFIGURED'}</small></div>
+        <div className="settings-value"><span>当前模式</span><strong>{mode?.title ?? '未选择'}</strong></div>
         <div className="settings-value"><span>服务地址</span><strong className="settings-endpoint">{endpoint}</strong></div>
         <Button color="primary" onPress={onEditMode}>修改运行模式</Button>
       </CardBody></Card>

@@ -54,6 +54,8 @@ html[data-theme='dark'] body{background:var(--paper)}html[data-theme='dark'] .co
 html[data-theme='dark'] .app-toast{box-shadow:0 18px 55px rgba(0,0,0,.5)}
 
 .node-status.offline{color:var(--danger)}
+/* Remove residual English subtitles from the Chinese UI. */
+.kicker,.brand-sub,.nav-item em,.prepare-nav-item em,.metric-code,.tt-selection-kicker,.tt-day-head small,.tt-period-head small,.hero-subtitle,.hero-readout > span,.mode-option em{display:none!important}
 .node-status.offline i{background:var(--danger)}
 .save-state{font:11px var(--font-ui);letter-spacing:.08em;color:var(--muted);white-space:nowrap}
 .save-state.saved{color:#12805c}
