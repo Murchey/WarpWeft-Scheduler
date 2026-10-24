@@ -88,9 +88,13 @@ npm run build:solver
 
 生成 Windows 安装包（仍需用户安装 JDK 21）：
 
-```powershell
-npm run dist:win
-```
+推荐双击项目根目录的 [build_appliction.bat](build_appliction.bat)，选择 `[1] 编译本地版本`；也可以执行 `npm run dist:win`，效果相同。脚本会依次构建 Java Solver、渲染进程、Electron 免安装应用和 NSIS 安装包，产物统一放在项目根目录 `dist/`：
+
+- `dist/WarpWeft Scheduler Setup <版本>.exe`：安装包，安装包和应用 exe 均使用 `assets/icon.ico`
+- `dist/win-unpacked/`：免安装应用
+- `dist/index.html`、`dist/assets/`：打包进应用的渲染进程文件
+
+脚本里的 `[2] 编译云服务端` 是预留入口，当前只显示 TODO，不会生成文件。
 
 ## 数据与打包
 
