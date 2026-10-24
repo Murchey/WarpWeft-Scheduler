@@ -8,7 +8,7 @@
  */
 
 export interface StatsInput {
-  timeSlots: { id: string; day: number; period: number; label: string }[];
+  timeSlots: { id: string; day: number; period: number; label: string; kind?: string }[];
   classes: { id: string; name: string; grade?: string }[];
   teachers: { id: string; name: string }[];
   subjects: { id: string; name: string }[];
@@ -66,6 +66,8 @@ export interface ClassRow {
   missing: number;
   capacity: number;
   freeSlots: number;
+  /** Free periods between the first and last regular day lesson, summed over days. */
+  dayGaps: number;
   byDay: { day: number; planned: number; placed: number }[];
 }
 
@@ -179,6 +181,7 @@ export function buildStats(input: StatsInput): StatsReport {
       missing: 0,
       capacity: input.timeSlots.length,
       freeSlots: input.timeSlots.length,
+      dayGaps: 0,
       byDay: days.map((day) => ({ day, planned: 0, placed: 0 })),
     };
     classRows.set(classId, row);
@@ -242,6 +245,36 @@ export function buildStats(input: StatsInput): StatsReport {
     row.byDay.sort((a, b) => a.day - b.day);
   }
 
+  // Day gaps: only the regular daytime block (regular/study/aftercare).
+  // Morning/evening/makeup lessons are separated by real breaks and must not
+  // make an otherwise compact class look broken.
+  const electiveById = new Map((input.electiveGroups ?? []).map((group) => [group.id, group]));
+  const classDayPeriods = new Map<string, Set<number>>();
+  for (const entry of input.entries) {
+    const slot = slots.get(entry.slotId);
+    if (!slot) continue;
+    if (!plans.has(entry.coursePlanId) && !(entry.groupId && electiveById.has(entry.groupId))) continue;
+    const kind = slot.kind ?? 'regular';
+    if (kind !== 'regular' && kind !== 'study' && kind !== 'aftercare') continue;
+    const classIds = entry.groupId ? (electiveById.get(entry.groupId)?.classIds ?? []) : [entry.classId];
+    for (const classId of classIds) {
+      if (!classRows.has(classId)) continue;
+      const key = classId + '|' + slot.day;
+      if (!classDayPeriods.has(key)) classDayPeriods.set(key, new Set());
+      classDayPeriods.get(key)!.add(slot.period);
+    }
+  }
+  for (const row of classRows.values()) {
+    let gaps = 0;
+    for (const day of days) {
+      const occupied = classDayPeriods.get(row.id + '|' + day);
+      if (!occupied || occupied.size < 2) continue;
+      const periods = Array.from(occupied).sort((a, b) => a - b);
+      gaps += (periods[periods.length - 1] - periods[0] + 1) - periods.length;
+    }
+    row.dayGaps = gaps;
+  }
+
   // ---- derive --------------------------------------------------------------
   const teacherSubjectSplits = new Map<string, SubjectSplit[]>();
   for (const pair of teacherSubjectPairs) {
@@ -295,9 +328,9 @@ export function buildStats(input: StatsInput): StatsReport {
     return { day, slots: slotsPerDay, capacity, placed: used, ratio: ratio(used, capacity) };
   });
 
-  // Workload split by slot kind (early reading / regular / evening / makeup).
-  const KIND_ORDER = ['morning', 'regular', 'evening', 'makeup'];
-  const KIND_LABELS: Record<string, string> = { morning: '早读', regular: '常规', evening: '晚自习', makeup: '补课' };
+  // Workload split by course kind (early reading / regular / study / aftercare / evening / makeup).
+  const KIND_ORDER = ['morning', 'regular', 'study', 'aftercare', 'evening', 'makeup'];
+  const KIND_LABELS: Record<string, string> = { morning: '早读', regular: '常规', study: '自习', aftercare: '课后服务', evening: '晚自习', makeup: '补课' };
   const kindPlanned = new Map<string, number>();
   const kindPlaced = new Map<string, number>();
   for (const plan of input.coursePlans) {
@@ -372,7 +405,8 @@ export function classRowsForExport(report: StatsReport): Record<string, string |
     已排课时: row.placed,
     未排课时: row.missing,
     可用时间格: row.capacity,
-    空档: row.freeSlots,
+    剩余容量: row.freeSlots,
+    日内空档: row.dayGaps,
   }));
 }
 

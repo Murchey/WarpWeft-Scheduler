@@ -11,6 +11,7 @@ import com.warpweft.solver.model.Plan;
 import com.warpweft.solver.model.Placement;
 import com.warpweft.solver.model.Room;
 import com.warpweft.solver.model.Slot;
+import com.warpweft.solver.model.SoftWeights;
 import com.warpweft.solver.model.SolverData;
 import com.warpweft.solver.model.Task;
 import com.warpweft.solver.protocol.SolverProtocol;
@@ -92,7 +93,7 @@ public final class Scheduler {
         int totalEntries = tasks.size() + pairedEntries + data.locked.size() + data.seed.size() + groupEntries;
         if (totalEntries == 0) {
             State empty = new State(data.slots, data.rooms, data.classes, data.unavailable, data.rules, groupClasses);
-            return SolverProtocol.success(data.protocolVersion, empty, started);
+            return SolverProtocol.success(data.protocolVersion, empty, started, data.softWeights);
         }
 
         Map<String, Double> pressure = pressureOf(data, roomsByPlan);
@@ -169,7 +170,7 @@ public final class Scheduler {
                 if (System.nanoTime() >= deadline) {
                     continue;
                 }
-                Placement bestPlacement = choosePlacement(state, task.plan(), roomsByPlan.get(task.plan().id()), random);
+                Placement bestPlacement = choosePlacement(state, task.plan(), roomsByPlan.get(task.plan().id()), random, data.softWeights);
                 if (bestPlacement == null) {
                     continue;
                 }
@@ -181,7 +182,7 @@ public final class Scheduler {
             }
             int groupMissing = groupMissing(state, data);
             unplaced += groupMissing;
-            int score = softScore(state).total();
+            int score = softScore(state, data.softWeights).total();
             System.err.println("[java] attempt " + (attempt + 1) + ": placed " + (totalEntries - unplaced) + "/" + totalEntries + ", score " + score);
             if (unplaced < bestUnplaced || (unplaced == bestUnplaced && score > bestScore)) {
                 best = state;
@@ -192,8 +193,8 @@ public final class Scheduler {
             }
             if (unplaced == 0) {
                 localSearch(state, data, planById, roomsByPlan, random, deadline);
-                publish(started, state, totalEntries, 0, softScore(state).total(), checkpointFile, true);
-                ObjectNode result = SolverProtocol.success(data.protocolVersion, state, started);
+                publish(started, state, totalEntries, 0, softScore(state, data.softWeights).total(), checkpointFile, true);
+                ObjectNode result = SolverProtocol.success(data.protocolVersion, state, started, data.softWeights);
                 System.err.println("[java] completed in " + result.get("elapsedMs").asLong() + " ms");
                 return result;
             }
@@ -217,7 +218,7 @@ public final class Scheduler {
             }
             int unplaced = repairMissing(candidate, data, planById, roomsByPlan, random, deadline);
             unplaced += groupMissing(candidate, data);
-            int score = softScore(candidate).total();
+            int score = softScore(candidate, data.softWeights).total();
             if (unplaced < bestUnplaced || (unplaced == bestUnplaced && score > bestScore)) {
                 best = candidate;
                 bestUnplaced = unplaced;
@@ -231,8 +232,8 @@ public final class Scheduler {
 
         if (best != null && bestUnplaced == 0) {
             localSearch(best, data, planById, roomsByPlan, new Random(randomSeed), deadline);
-            publish(started, best, totalEntries, 0, softScore(best).total(), checkpointFile, true);
-            return SolverProtocol.success(data.protocolVersion, best, started);
+            publish(started, best, totalEntries, 0, softScore(best, data.softWeights).total(), checkpointFile, true);
+            return SolverProtocol.success(data.protocolVersion, best, started, data.softWeights);
         }
         if (best != null) {
             publish(started, best, totalEntries, bestUnplaced, bestScore, checkpointFile, true);
@@ -410,7 +411,7 @@ public final class Scheduler {
         return missing;
     }
 
-    private static Placement choosePlacement(State state, Plan plan, List<Room> rooms, Random random) {
+    private static Placement choosePlacement(State state, Plan plan, List<Room> rooms, Random random, SoftWeights weights) {
         if (rooms == null || rooms.isEmpty()) return null;
         List<Slot> candidateSlots = new ArrayList<>();
         if (plan.fixedSlotId() != null && !plan.fixedSlotId().isBlank()) {
@@ -424,6 +425,21 @@ public final class Scheduler {
         Placement best = null;
         int bestScore = Integer.MAX_VALUE;
         int classSize = state.classes.containsKey(plan.classId()) ? state.classes.get(plan.classId()).size() : 0;
+        Map<Integer, TreeSet<Integer>> classPeriodsByDay = new HashMap<>();
+        if (weights.classGaps() > 0) {
+            for (Entry entry : state.entries) {
+                Slot existing = state.slots.get(entry.slotId());
+                if (existing == null || !isDaytimeKind(existing.kind())) continue;
+                if (entry.groupId() != null) {
+                    for (String classId : state.groupClasses.getOrDefault(entry.groupId(), List.of())) {
+                        if (!classId.equals(plan.classId())) continue;
+                        classPeriodsByDay.computeIfAbsent(existing.day(), key -> new TreeSet<>()).add(existing.period());
+                    }
+                } else if (entry.classId().equals(plan.classId())) {
+                    classPeriodsByDay.computeIfAbsent(existing.day(), key -> new TreeSet<>()).add(existing.period());
+                }
+            }
+        }
         for (Slot slot : candidateSlots) {
             for (Room room : rooms) {
                 if (!RuleEvaluator.canPlace(state, plan, slot, room)) continue;
@@ -432,6 +448,7 @@ public final class Scheduler {
                     + state.teacherDayLoad(plan.teacherId(), slot.day(), mask) * 2
                     + state.subjectDayCount(plan.classId(), slot.day(), plan.subjectId(), mask) * 10
                     + Math.max(0, room.capacity() - classSize) / 10
+                    + (weights.classGaps() > 0 ? compactCost(classPeriodsByDay.get(slot.day()), slot.period()) * 4 : 0)
                     + RuleEvaluator.rulePlacementPenalty(state, plan, slot)
                     + random.nextInt(3);
                 if (score < bestScore) {
@@ -441,6 +458,23 @@ public final class Scheduler {
             }
         }
         return best;
+    }
+
+    /** Only the regular daytime block participates in class-gap scoring. */
+    private static boolean isDaytimeKind(String kind) {
+        return kind == null || "regular".equals(kind) || "study".equals(kind) || "aftercare".equals(kind);
+    }
+
+    /** Prefer a slot next to an existing lesson; filling an inner hole is best. */
+    private static int compactCost(TreeSet<Integer> periods, int period) {
+        if (periods == null || periods.isEmpty()) return 0;
+        int nearest = Integer.MAX_VALUE;
+        for (int existing : periods) nearest = Math.min(nearest, Math.abs(existing - period));
+        int cost = Math.max(0, nearest - 1);
+        Integer lower = periods.lower(period);
+        Integer higher = periods.higher(period);
+        if (lower != null && higher != null) cost = Math.max(0, cost - 1);
+        return cost;
     }
 
     /**
@@ -483,7 +517,7 @@ public final class Scheduler {
     private static boolean placeWithEjection(State state, SolverData data, Plan plan, Map<String, Plan> planById, Map<String, List<Room>> roomsByPlan, Random random, long deadline, int depth, int[] budget) {
         if (System.nanoTime() >= deadline || budget[0] <= 0) return false;
         List<Room> rooms = roomsByPlan.get(plan.id());
-        Placement direct = choosePlacement(state, plan, rooms, random);
+        Placement direct = choosePlacement(state, plan, rooms, random, data.softWeights);
         if (direct != null) {
             state.add(autoEntry(plan, direct, -1));
             return true;
@@ -555,8 +589,11 @@ public final class Scheduler {
     }
 
     private static void localSearch(State state, SolverData data, Map<String, Plan> planById, Map<String, List<Room>> roomsByPlan, Random random, long deadline) {
-        int iterations = Math.min(1500, 200 + state.entries.size() * 10);
-        int currentScore = softScore(state).total();
+        if (!data.softWeights.anyEnabled()) return;
+        int iterations = data.softWeights.classGaps() > 0
+            ? Math.min(12000, 200 + state.entries.size() * 20)
+            : Math.min(1500, 200 + state.entries.size() * 10);
+        int currentScore = softScore(state, data.softWeights).total();
         for (int i = 0; i < iterations && System.nanoTime() < deadline; i++) {
             List<Entry> movable = new ArrayList<>();
             for (Entry entry : state.entries) {
@@ -570,14 +607,14 @@ public final class Scheduler {
             Slot target = slots.get(random.nextInt(slots.size()));
             if (target.id().equals(entry.slotId())) continue;
             state.remove(entry);
-            Placement placement = choosePlacement(state, plan, roomsByPlan.get(plan.id()), random);
+            Placement placement = choosePlacement(state, plan, roomsByPlan.get(plan.id()), random, data.softWeights);
             if (placement == null) {
                 state.add(entry);
                 continue;
             }
             Entry moved = new Entry(entry.id(), entry.coursePlanId(), entry.classId(), entry.subjectId(), entry.teacherId(), placement.room().id(), placement.slot().id(), entry.weeks(), entry.source(), false);
             state.add(moved);
-            int nextScore = softScore(state).total();
+            int nextScore = softScore(state, data.softWeights).total();
             if (nextScore < currentScore) {
                 state.remove(moved);
                 state.add(entry);
@@ -642,36 +679,60 @@ public final class Scheduler {
         }
     }
 
-    public static Score softScore(State state) {
+    public static Score softScore(State state, SoftWeights weights) {
         int subject = 0;
         Map<String, Integer> classDaySubjects = new HashMap<>();
         Map<String, TreeSet<Integer>> teacherPeriods = new HashMap<>();
+        Map<String, TreeSet<Integer>> classPeriods = new HashMap<>();
         Map<String, Integer> teacherLoads = new HashMap<>();
         for (Entry entry : state.entries) {
             Slot slot = state.slots.get(entry.slotId());
+            if (slot == null) continue;
             String subjectKey = entry.classId() + "|" + slot.day() + "|" + entry.subjectId();
             classDaySubjects.merge(subjectKey, 1, Integer::sum);
             teacherPeriods.computeIfAbsent(entry.teacherId() + "|" + slot.day(), key -> new TreeSet<>()).add(slot.period());
             teacherLoads.merge(entry.teacherId(), 1, Integer::sum);
+            if (isDaytimeKind(slot.kind())) {
+                if (entry.groupId() != null) {
+                    for (String classId : state.groupClasses.getOrDefault(entry.groupId(), List.of())) {
+                        classPeriods.computeIfAbsent(classId + "|" + slot.day(), key -> new TreeSet<>()).add(slot.period());
+                    }
+                } else {
+                    classPeriods.computeIfAbsent(entry.classId() + "|" + slot.day(), key -> new TreeSet<>()).add(slot.period());
+                }
+            }
         }
-        for (int count : classDaySubjects.values()) if (count > 1) subject += (count - 1) * 3;
-        int gaps = 0;
+        for (int count : classDaySubjects.values()) if (count > 1) subject += (count - 1);
+        int teacherGapCount = 0;
         for (TreeSet<Integer> periods : teacherPeriods.values()) {
             if (periods.size() < 2) continue;
             Integer previous = null;
             for (Integer period : periods) {
-                if (previous != null) gaps += Math.max(0, period - previous - 1);
+                if (previous != null) teacherGapCount += Math.max(0, period - previous - 1);
+                previous = period;
+            }
+        }
+        int classGapCount = 0;
+        for (TreeSet<Integer> periods : classPeriods.values()) {
+            if (periods.size() < 2) continue;
+            Integer previous = null;
+            for (Integer period : periods) {
+                if (previous != null) classGapCount += Math.max(0, period - previous - 1);
                 previous = period;
             }
         }
         double average = teacherLoads.values().stream().mapToInt(Integer::intValue).average().orElse(0);
-        int balance = (int) Math.round(teacherLoads.values().stream().mapToDouble(load -> Math.abs(load - average)).average().orElse(0) * 2);
+        int balance = (int) Math.round(teacherLoads.values().stream().mapToDouble(load -> Math.abs(load - average)).average().orElse(0)
+            * weights.teacherWorkloadBalance());
+        int subjectPenalty = subject * weights.subjectDistribution();
+        int teacherGapPenalty = teacherGapCount * weights.teacherGaps();
+        int classGapPenalty = classGapCount * weights.classGaps();
         int rulePenalty = RuleEvaluator.rulePenalty(state);
-        int total = subject + gaps + balance + rulePenalty;
-        return new Score(Math.max(0, 100 - total), subject, 0, gaps, balance, rulePenalty);
+        int total = subjectPenalty + teacherGapPenalty + balance + classGapPenalty + rulePenalty;
+        return new Score(Math.max(0, 100 - total), subjectPenalty, 0, teacherGapPenalty, balance, classGapPenalty, rulePenalty);
     }
 
-    public record Score(int total, int subjectDistribution, int teacherContinuous, int teacherGaps, int teacherWorkloadBalance, int rulePenalty) {}
+    public record Score(int total, int subjectDistribution, int teacherContinuous, int teacherGaps, int teacherWorkloadBalance, int classGaps, int rulePenalty) {}
 }
 
 

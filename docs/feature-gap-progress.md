@@ -324,7 +324,7 @@ node scripts/bench-solver.cjs --classes 24,96,120 --time-limit 30
 - 班级新增 `homeroomTeacherId`；设定班主任自动把本班加入教师负责班级；班主任本班课规则在 preflight、API、Java 三处校验，支持“本班没有该教师学科”豁免；空教师计划优先分配给班主任。
 - 调课/代课/停课/改期/还原后显示影响范围：班级/教师前后日课表、变化节次和高亮；影响面板可一键导出班级/教师周课表，预览页也有一键导出当前视图。
 - `roomMode` 默认 simplified：模板不需要教室 sheet/教室类型，每班自动一间固定教室；完整模式恢复教室池容量/类型/冲突排课。
-- `data-schema.json` 提供 schemaVersion 2；`/api/health` 暴露 schema/app/solver 版本与 capabilities，客户端版本过旧时阻断保存/排课。
+- `data-schema.json` 提供 schemaVersion 3；`/api/health` 暴露 schema/app/solver 版本与 capabilities，客户端版本过旧时阻断保存/排课。
 - 新增模板班级班主任列、教师负责班级多选、影响计算、roomMode 分流和 API health 测试。
 
 ---
@@ -336,4 +336,20 @@ node scripts/bench-solver.cjs --classes 24,96,120 --time-limit 30
 - 保存与检测错误改用班级/教师/学科/时间名称，并提供「教师 → 负责班级」修复提示，不再显示 teacher-/plan-/entry- 原始 ID。
 - 设置页恢复卡片表面，`align-items:start` 防止卡片拉伸重叠；工作区和日志使用整行布局。
 - 用户 Excel 数据已重塑为 75 班 × 40 人=3000 人、200 名教师（190 任课 + 10 非任课）、725 条教学计划、周一至周五 8 节、2026-09-01 至 2027-01-31；原文件备份为 `warpweft-data-2026-10-22-original-backup.xlsx`。
+
+---
+
+## 15. 自习/课后服务类型、班级空档软约束与统计口径
+
+- 新增课程/时段类型 `study`（自习）与 `aftercare`（课后服务）；导入模板、教学计划编辑器、资源页、统计和课表页脚均已识别。
+- 类型匹配规则：自习/课后服务计划可排入同类型时段，也可排入常规时段；常规计划不能进入自习/课后服务专用时段；早读/晚自习/补课仍只与同类型配对。
+- Java 求解器开始真正读取 `softConstraints` 权重；新增 `CLASS_GAPS`（班级空档）软约束，只统计常规/自习/课后服务日间时段，按班级按天统计第一和最后一节之间的空节，走班按成员班展开。
+- 排课任务第 03 步新增「课表偏好（软约束）」面板，权重 0–5 可选；修改会清除当前候选课表。新旧工作区默认值不同：旧数据保持旧四类默认，新建工作区默认开启班级空档（权重 2）。
+- 统计报表的「空档」改为「剩余容量」，并增加「可用格」「日内空档」两列；导出列名同步。剩余容量是结构性余量，不等于未排课时。
+- 课表页脚改为「本视图剩余容量」，今日视图无课文案改为「无课」；排课向导第 01 步会提示计划课时与可用格的差额。
+- `data-schema.json` 升级到 schemaVersion 3，capabilities 增加 `lessonKinds`、`classGapSoftConstraint`；客户端会阻断旧服务端的保存/排课。
+
+**验证**：75 班 / 1798 课时数据在 `CLASS_GAPS` 权重 2 下仍为 1798/1798、硬冲突 0，日内空档从 707 降到 380；`npm test` 198 条通过，`npm run build` 通过。
+
+**测试**：新增/更新 `tests/java-slots.test.cjs`、`tests/java-soft.test.cjs`、`tests/inspection.test.cjs`、`tests/dnd.test.cjs`、`tests/import-export.test.cjs`、`tests/statistics.test.cjs`、`tests/api-validation.test.cjs`。
 

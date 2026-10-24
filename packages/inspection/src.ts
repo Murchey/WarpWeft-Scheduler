@@ -38,9 +38,23 @@ export const CATEGORY_LABELS: Record<InspectionCategory, string> = {
 export const KIND_LABELS: Record<string, string> = {
   morning: '早读',
   regular: '常规',
+  study: '自习',
+  aftercare: '课后服务',
   evening: '晚自习',
   makeup: '补课',
 };
+
+/**
+ * A plan may fill a matching slot kind. 自习/课后服务 also accept regular
+ * slots so schools can use the existing day grid without creating dedicated
+ * periods; regular plans still cannot enter a study/aftercare slot.
+ */
+export function slotKindAcceptsPlan(slotKind?: string, planKind?: string): boolean {
+  const slot = slotKind ?? 'regular';
+  const plan = planKind ?? 'regular';
+  if (slot === plan) return true;
+  return (plan === 'study' || plan === 'aftercare') && slot === 'regular';
+}
 
 export interface InspectionRefs {
   entryIds?: string[];
@@ -354,7 +368,7 @@ export function inspectTimetable(input: InspectionInput): InspectionReport {
     if (!plan) continue;
     const slotKind = slots.get(entry.slotId)?.kind ?? 'regular';
     const planKind = plan.kind ?? 'regular';
-    if (slotKind !== planKind) {
+    if (!slotKindAcceptsPlan(slotKind, planKind)) {
       issue(
         'SLOT_KIND',
         'hard',

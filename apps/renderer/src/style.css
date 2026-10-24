@@ -240,6 +240,17 @@ html[data-theme='dark'] .slot-card.conflict { background: rgba(255,107,107,.14);
 .config-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 18px; }
 .config-summary span { display: grid; gap: 5px; padding: 11px; background: var(--chip); color: var(--muted); font: 10px var(--font-ui); letter-spacing: .08em; }
 .config-summary strong { color: var(--ink); font: 13px var(--font-text); letter-spacing: 0; }
+.soft-prefs { margin-top: 18px; border-top: 1px solid var(--rule); padding-top: 14px; }
+.soft-prefs-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.soft-prefs-head b { display: block; font-size: 14px; }
+.soft-prefs-head small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.soft-prefs-list { display: grid; gap: 8px; margin-top: 12px; }
+.soft-prefs-row { display: grid; grid-template-columns: minmax(0, 1fr) 116px; gap: 12px; align-items: center; padding: 9px 11px; background: var(--chip); }
+.soft-prefs-row > span { display: grid; gap: 3px; }
+.soft-prefs-row b { font-size: 13px; }
+.soft-prefs-row small { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.soft-prefs-row select { border: 1px solid var(--ink); background: var(--panel); color: var(--ink); padding: 7px 8px; font: 12px var(--font-text); }
+.soft-prefs .panel-note { margin: 12px 0 0; }
 .candidate-panel { min-width: 0; }
 .run-progress { margin-top: 18px; padding: 14px 16px; border: 1px solid var(--rule); background: var(--chip); }
 .run-progress-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }

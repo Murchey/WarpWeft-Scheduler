@@ -22,6 +22,7 @@ public final class SolverData {
     public final List<Rule> rules = new ArrayList<>();
     public final List<ElectiveGroup> groups = new ArrayList<>();
     public final List<String> violations = new ArrayList<>();
+    public SoftWeights softWeights = SoftWeights.defaults();
 
     public SolverData(String protocolVersion) {
         this.protocolVersion = protocolVersion;

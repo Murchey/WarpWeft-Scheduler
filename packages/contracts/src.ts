@@ -1,14 +1,14 @@
 export const PROTOCOL_VERSION = '1.0';
 
 export type SolverStatus = 'QUEUED'|'PREPARING'|'SOLVING'|'FEASIBLE'|'IMPROVED'|'COMPLETED'|'CANCELLED'|'TIMEOUT'|'FAILED';
-export type SoftRuleKind = 'SUBJECT_DISTRIBUTION'|'TEACHER_CONTINUOUS'|'TEACHER_GAPS'|'TEACHER_WORKLOAD_BALANCE';
+export type SoftRuleKind = 'SUBJECT_DISTRIBUTION'|'TEACHER_CONTINUOUS'|'TEACHER_GAPS'|'TEACHER_WORKLOAD_BALANCE'|'CLASS_GAPS';
 export type RuleImportance = 'must'|'prefer'|'avoid';
 export type RuleKind = 'TEACHER_MAX_DAILY'|'TEACHER_MAX_CONSECUTIVE'|'TEACHER_FREE_HALF_DAY'|'SUBJECT_MAX_PER_DAY'|'SUBJECT_TIME_PREFERENCE'|'SUBJECT_AVOID_FIRST_LAST'|'SUBJECT_SPREAD'|'DOUBLE_PERIOD';
 export interface RuleScope { type: 'all'|'grade'|'class'|'teacher'|'subject'|'room'; teacherId?: string; subjectId?: string; classId?: string; grade?: string; roomId?: string; }
 export interface RuleTime { type: 'all'|'weekday'|'periodRange'; days?: number[]; from?: number; to?: number; }
 export interface RuleInput { id: string; kind: RuleKind; scope: RuleScope; time: RuleTime; importance: RuleImportance; params: Record<string,string|number>; enabled: boolean; note?: string; createdAt: string; source: 'preset'|'manual'|'import'|'migration'; }
 
-export type SlotKind = 'morning' | 'regular' | 'evening' | 'makeup';
+export type SlotKind = 'morning' | 'regular' | 'study' | 'aftercare' | 'evening' | 'makeup';
 export interface TimeSlot { id: string; day: number; period: number; label: string; kind?: SlotKind; start?: string; duration?: number; }
 export interface ClassRoom { id: string; name: string; capacity: number; type: string; }
 export type WeekType = 'all' | 'odd' | 'even';

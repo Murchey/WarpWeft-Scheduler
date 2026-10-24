@@ -1,5 +1,5 @@
-﻿import React, { useMemo, useState } from 'react';
-import type { Commit, CoursePlan, SchoolData } from './types';
+import React, { useMemo, useState } from 'react';
+import type { Commit, CoursePlan, SchoolData, SlotKind } from './types';
 import { SectionHeading } from './components';
 import type { Column } from './components';
 import { ResourceWorkspace } from './ResourceWorkspace';
@@ -120,6 +120,8 @@ function PlansPage({
       options: [
         { value: 'regular', label: '常规' },
         { value: 'morning', label: '早读' },
+        { value: 'study', label: '自习' },
+        { value: 'aftercare', label: '课后服务' },
         { value: 'evening', label: '晚自习' },
         { value: 'makeup', label: '补课' },
       ],
@@ -298,9 +300,11 @@ function PlansPage({
                     </select>
                   </td>
                   <td>
-                    <select value={plan.kind ?? 'regular'} onChange={(event) => update(plan.id, { kind: event.target.value as 'morning' | 'regular' | 'evening' | 'makeup' })} title="早读/晚自习/补课计划只会排进对应类型的时段">
+                    <select value={plan.kind ?? 'regular'} onChange={(event) => update(plan.id, { kind: event.target.value as SlotKind })} title="自习/课后服务可排入常规时段；早读/晚自习/补课只排进对应类型的时段">
                       <option value="regular">常规</option>
                       <option value="morning">早读</option>
+                      <option value="study">自习</option>
+                      <option value="aftercare">课后服务</option>
                       <option value="evening">晚自习</option>
                       <option value="makeup">补课</option>
                     </select>
@@ -359,6 +363,8 @@ function PlansPage({
               options: [
                 { value: 'regular', label: '常规' },
                 { value: 'morning', label: '早读' },
+                { value: 'study', label: '自习' },
+                { value: 'aftercare', label: '课后服务' },
                 { value: 'evening', label: '晚自习' },
                 { value: 'makeup', label: '补课' },
               ],

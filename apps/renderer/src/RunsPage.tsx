@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
-import type { RunMode, SchoolData, SolverInput, SolverOutput } from './types';
+import type { Commit, RunMode, SchoolData, SolverInput, SolverOutput } from './types';
 import type { RunProgress } from './runConfig';
 import { RUN_MODE_OPTIONS } from './runConfig';
 import { SectionHeading } from './components';
@@ -8,6 +8,7 @@ import { findClass, missingPlans, planSubjectName } from './selectors';
 import { activeRules, describeRule } from './rules';
 import { LongRunPanel } from './LongRunPanel';
 import type { LongJob, LongJobDetail } from './api';
+import { SoftConstraintPanel } from './SoftConstraintPanel';
 
 const RUN_STATUS_LABELS: Record<string, string> = {
   queued: '排队中', running: '运行中', paused: '已暂停', completed: '已完成', failed: '未完成', cancelled: '已取消', interrupted: '已中断',
@@ -19,7 +20,7 @@ function runStatusText(status: string): string {
 }
 
 export function RunsPage({
-  data, result, issues, running, progress, timeLimit, setTimeLimit, onRun, onRepair, onTimetable, onClear, runMode, shortRuns, inputFactory, onApplyLongResult, onNotice, onError,
+  data, result, issues, running, progress, timeLimit, setTimeLimit, onRun, onRepair, onTimetable, onClear, runMode, shortRuns, inputFactory, onApplyLongResult, onNotice, onError, commit,
 }: {
   data: SchoolData; result: SolverOutput | null; issues: string[]; running: boolean; progress: RunProgress;
   timeLimit: number; setTimeLimit: (value: number) => void; onRun: () => void;
@@ -30,8 +31,10 @@ export function RunsPage({
   onApplyLongResult: (job: LongJobDetail) => void;
   onNotice: (message: string) => void;
   onError: (message: string) => void;
+  commit: Commit;
 }) {
   const expected = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
+  const availableTotal = data.classes.length * data.timeSlots.length;
   const missing = result ? missingPlans(data, result) : [];
   const [repairScope, setRepairScope] = useState<'class' | 'teacher' | 'rule'>('class');
   const [repairId, setRepairId] = useState(data.classes[0]?.id ?? '');
@@ -102,7 +105,17 @@ export function RunsPage({
             <div><span className="kicker">PREFLIGHT</span><h2>数据检查</h2></div>
             <span className={issues.length ? 'status-tag danger' : 'status-tag'}>{issues.length ? issues.length + ' 项待处理' : '通过'}</span>
           </div>
-          {issues.length ? <ul className="issue-list">{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul> : <p className="panel-note success-note">检查通过：{expected} 周课时、{data.timeSlots.length} 个可用时间格。</p>}
+          {issues.length ? <ul className="issue-list">{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul> : (
+            <>
+              <p className="panel-note success-note">检查通过：{expected} 周课时、{data.timeSlots.length} 个可用时间格。</p>
+              {availableTotal > expected ? (
+                <p className="panel-note">
+                  按当前计划平均每班 {(expected / Math.max(1, data.classes.length)).toFixed(1)} 节，可用 {data.timeSlots.length} 格，剩余 {availableTotal - expected} 格属于结构性空余。
+                  如需填满，可增加教学计划（例如自习、课后服务）或减少每天节数。
+                </p>
+              ) : null}
+            </>
+          )}
           <div className="hero-actions"><button className="ghost-button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>回到顶部查看状态</button></div>
         </section>
 
@@ -146,6 +159,7 @@ export function RunsPage({
                   <div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div>
                 </>
               )}
+              <SoftConstraintPanel data={data} commit={commit} disabled={!canConfigure} />
             </>
           )}
         </section>

@@ -299,7 +299,7 @@ export function InspectionPage({
             <SectionHeading english="CLASS DENSITY" title="班级课时密度" />
           </div>
           <UtilizationTable rows={report.utilization.classes} nameHeader="班级" empty="没有班级数据。" />
-          <p className="panel-note">占用率 = 该班已排课时 ÷ 可用时间格；接近 100% 说明这个班几乎没有空档。</p>
+          <p className="panel-note">占用率 = 该班已排课时 ÷ 可用时间格；计划课时少于可用格时占用率偏低是正常的。日内空档请看统计报表。</p>
         </section>
       </div>
 

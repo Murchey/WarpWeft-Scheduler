@@ -77,6 +77,39 @@ test('regular plans do not spill into evening slots', () => {
   assert.equal(evening.entries.length, 1);
 });
 
+test('study and aftercare plans can fill regular slots', () => {
+  const study = run({
+    plans: [plan('p-study', 'class-1', 'subject-math', 'teacher-math', { fixedSlotId: 'mon-1', kind: 'study' })],
+  });
+  assert.equal(study.hasFeasibleSolution, true);
+  assert.equal(study.entries.length, 1);
+  assert.equal(study.entries[0].slotId, 'mon-1');
+
+  const aftercare = run({
+    plans: [plan('p-aftercare', 'class-1', 'subject-math', 'teacher-math', { fixedSlotId: 'mon-1', kind: 'aftercare' })],
+  });
+  assert.equal(aftercare.hasFeasibleSolution, true);
+  assert.equal(aftercare.entries.length, 1);
+  assert.equal(aftercare.entries[0].slotId, 'mon-1');
+});
+
+test('regular plans cannot use aftercare slots, aftercare plans can', () => {
+  const slots = demo.timeSlots.map((slot) => ({ ...slot, kind: 'aftercare' }));
+  const regular = run({
+    slots,
+    plans: [plan('p-regular', 'class-1', 'subject-math', 'teacher-math', { fixedSlotId: 'mon-1', kind: 'regular' })],
+  });
+  assert.equal(regular.hasFeasibleSolution, false);
+  assert.equal(regular.entries.length, 0);
+
+  const aftercare = run({
+    slots,
+    plans: [plan('p-aftercare', 'class-1', 'subject-math', 'teacher-math', { fixedSlotId: 'mon-1', kind: 'aftercare' })],
+  });
+  assert.equal(aftercare.hasFeasibleSolution, true);
+  assert.equal(aftercare.entries.length, 1);
+});
+
 test('mix of morning and regular plans fills each kind', () => {
   const output = run({
     slots: withKind(['mon-1'], 'morning'),

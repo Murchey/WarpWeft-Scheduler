@@ -259,6 +259,21 @@ test('a lesson placed in the wrong slot kind is a hard conflict', async () => {
   assert.equal(fixed.issues.filter((item) => item.category === 'SLOT_KIND').length, 0);
 });
 
+test('study/aftercare plans may use regular slots but regular plans may not use their slots', async () => {
+  const { inspectTimetable } = await loadInspection();
+  const study = baseInput();
+  study.coursePlans[0] = { ...study.coursePlans[0], kind: 'study' };
+  assert.equal(inspectTimetable(study).issues.filter((item) => item.category === 'SLOT_KIND').length, 0);
+
+  const aftercare = baseInput();
+  aftercare.coursePlans[0] = { ...aftercare.coursePlans[0], kind: 'aftercare' };
+  assert.equal(inspectTimetable(aftercare).issues.filter((item) => item.category === 'SLOT_KIND').length, 0);
+
+  const wrong = baseInput();
+  wrong.timeSlots[0] = { ...wrong.timeSlots[0], kind: 'aftercare' };
+  assert.equal(inspectTimetable(wrong).issues.filter((item) => item.category === 'SLOT_KIND').length, 1);
+});
+
 test('elective group blocks occupy member classes as one lesson', async () => {
   const { inspectTimetable } = await loadInspection();
   const input = baseInput();

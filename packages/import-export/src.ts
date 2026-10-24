@@ -308,7 +308,7 @@ function buildInstructions(simplified: boolean): (string | number)[][] {
     ['教师', '否', '留空表示未定。', '王老师'],
     ['每周课时', '是', '正整数，一周上几节。', '5'],
     ['周次', '否', '每周 / 单周 / 双周；留空按每周。', '每周'],
-    ['课程类型', '否', '常规 / 早读 / 晚自习 / 补课。', '常规'],
+    ['课程类型', '否', '常规 / 早读 / 自习 / 课后服务 / 晚自习 / 补课。', '常规'],
     ...(simplified ? [] : [['教室类型', '否', '须与「教室」表类型一致；留空不限。', '普通教室']] as [string, string, string, string][]),
     ['固定时间', '否', '如「周一 第1节」；留空由系统排。', ''],
   ]);
@@ -344,7 +344,7 @@ export interface TemplateSource {
     teacherId?: string;
     weeklyPeriods: number;
     weeks?: 'all' | 'odd' | 'even';
-    kind?: 'morning' | 'regular' | 'evening' | 'makeup';
+    kind?: 'morning' | 'regular' | 'study' | 'aftercare' | 'evening' | 'makeup';
     roomType?: string;
     fixedSlotId?: string;
   }[];
@@ -352,7 +352,7 @@ export interface TemplateSource {
 
 const DAY_NAMES = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 const WEEK_LABELS: Record<string, string> = { all: '每周', odd: '单周', even: '双周' };
-const KIND_LABELS: Record<string, string> = { regular: '常规', morning: '早读', evening: '晚自习', makeup: '补课' };
+const KIND_LABELS: Record<string, string> = { regular: '常规', morning: '早读', study: '自习', aftercare: '课后服务', evening: '晚自习', makeup: '补课' };
 
 function weekdayText(days: number[]): string {
   const unique = Array.from(new Set(days)).filter((day) => day >= 1 && day <= 7).sort((a, b) => a - b);
@@ -731,9 +731,10 @@ export async function buildImportTemplate(
     ['全校', '年级', '教师', '班级', '学科', '教室'],
     ['必须', '尽量', '避免'],
     ['每周', '单周', '双周'],
-    ['常规', '早读', '晚自习', '补课'],
+    ['常规', '早读', '自习', '课后服务', '晚自习', '补课'],
   ];
-  for (let row = 0; row < optionRows[0].length; row += 1) {
+  const optionRowCount = Math.max(...optionRows.map((column) => column.length), 0);
+  for (let row = 0; row < optionRowCount; row += 1) {
     optionSheet.addRow(optionRows.map((column) => column[row] ?? ''));
   }
   optionSheet.columns = Array.from({ length: 9 }, () => ({ width: 18 }));

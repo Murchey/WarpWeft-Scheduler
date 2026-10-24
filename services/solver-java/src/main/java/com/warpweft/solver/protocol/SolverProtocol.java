@@ -13,6 +13,7 @@ import com.warpweft.solver.model.Entry;
 import com.warpweft.solver.model.Plan;
 import com.warpweft.solver.model.Room;
 import com.warpweft.solver.model.Slot;
+import com.warpweft.solver.model.SoftWeights;
 import com.warpweft.solver.model.SolverData;
 import com.warpweft.solver.rules.Rule;
 
@@ -26,7 +27,7 @@ import java.util.Set;
 public final class SolverProtocol {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String[] SCORE_KEYS = {
-        "subjectDistribution", "teacherContinuous", "teacherGaps", "teacherWorkloadBalance", "rules"
+        "subjectDistribution", "teacherContinuous", "teacherGaps", "teacherWorkloadBalance", "classGaps", "rules"
     };
 
     public static void run(String[] args) {
@@ -202,6 +203,14 @@ public final class SolverProtocol {
                 node.path("params")
             ));
         }
+        JsonNode soft = root.get("softConstraints");
+        if (soft != null && soft.isArray()) {
+            Map<String, Integer> weights = new HashMap<>();
+            for (JsonNode node : soft) {
+                weights.put(text(node, "kind", ""), integer(node, "weight", 0));
+            }
+            data.softWeights = SoftWeights.from(weights);
+        }
         for (JsonNode node : root.path("lockedEntries")) {
             final String planId = text(node, "coursePlanId", "");
             Entry entry = new Entry(
@@ -285,8 +294,8 @@ public final class SolverProtocol {
         return result;
     }
 
-    public static ObjectNode success(String protocolVersion, State state, long started) {
-        Scheduler.Score score = Scheduler.softScore(state);
+    public static ObjectNode success(String protocolVersion, State state, long started, SoftWeights weights) {
+        Scheduler.Score score = Scheduler.softScore(state, weights);
         ObjectNode result = baseResult(protocolVersion, "COMPLETED", List.of(), state.entries);
         result.put("softScore", score.total());
         ObjectNode breakdown = result.putObject("scoreBreakdown");
@@ -294,6 +303,7 @@ public final class SolverProtocol {
         breakdown.put("teacherContinuous", score.teacherContinuous());
         breakdown.put("teacherGaps", score.teacherGaps());
         breakdown.put("teacherWorkloadBalance", score.teacherWorkloadBalance());
+        breakdown.put("classGaps", score.classGaps());
         breakdown.put("rules", score.rulePenalty());
         result.put("explanation", "Java 21 求解器已生成可行课表");
         result.put("elapsedMs", (System.nanoTime() - started) / 1_000_000);

@@ -1,4 +1,4 @@
-﻿import { useState } from 'react';
+import { useState } from 'react';
 import type { StatsReport } from '../../../packages/statistics/src';
 import type { ActualStats } from '../../../packages/adjustments/src';
 import { EmptyState } from './runViews';
@@ -245,13 +245,15 @@ export function StatsPage({
                   <th>计划</th>
                   <th>已排</th>
                   <th>未排</th>
-                  <th>空档</th>
+                  <th>可用格</th>
+                  <th>剩余容量</th>
+                  <th>日内空档</th>
                 </tr>
               </thead>
               <tbody>
                 {report.classes.length === 0 ? (
                   <tr>
-                    <td className="table-empty" colSpan={5}>
+                    <td className="table-empty" colSpan={7}>
                       还没有班级数据。
                     </td>
                   </tr>
@@ -262,13 +264,19 @@ export function StatsPage({
                       <td>{row.planned}</td>
                       <td>{row.placed}</td>
                       <td className={row.missing ? 'is-danger' : ''}>{row.missing}</td>
+                      <td>{row.capacity}</td>
                       <td>{row.freeSlots}</td>
+                      <td className={row.dayGaps ? 'is-danger' : ''}>{row.dayGaps}</td>
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
           </div>
+          <p className="panel-note">
+            剩余容量 = 可用格 − 已排；计划课时少于可用格时必然大于 0，属于结构性空余，不是未排课时。
+            日内空档是同一班同一天第一节课和最后一节课之间空着的节数，可用「班级空档」软约束压低。
+          </p>
         </section>
       </div>
 

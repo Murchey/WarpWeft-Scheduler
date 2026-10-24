@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { CoursePlan, SchoolData } from './types';
+import type { CoursePlan, SchoolData, SlotKind } from './types';
 import { uid } from './utils';
 
 type Commit = (next: SchoolData, options?: { invalidate?: boolean; immediate?: boolean }) => void;
@@ -23,7 +23,7 @@ function PlanComposer({
   const [customTeacher, setCustomTeacher] = useState('');
   const [weeklyPeriods, setWeeklyPeriods] = useState(1);
   const [weeks, setWeeks] = useState<'all' | 'odd' | 'even'>('all');
-  const [planKind, setPlanKind] = useState<'morning' | 'regular' | 'evening' | 'makeup'>('regular');
+  const [planKind, setPlanKind] = useState<SlotKind>('regular');
   const [roomType, setRoomType] = useState(data.rooms[0]?.type ?? '');
   const [fixedSlotId, setFixedSlotId] = useState('');
   const toggleClass = (id: string) => {
@@ -123,7 +123,7 @@ function PlanComposer({
           <div className="composer-fields">
             <label>周课时<input type="number" min={1} value={weeklyPeriods} onChange={(event) => setWeeklyPeriods(Number(event.target.value))} /></label>
             <label>周次（选填）<select value={weeks} onChange={(event) => setWeeks(event.target.value as 'all' | 'odd' | 'even')}><option value="all">每周</option><option value="odd">单周</option><option value="even">双周</option></select></label>
-            <label>课程类型（选填）<select value={planKind} onChange={(event) => setPlanKind(event.target.value as 'morning' | 'regular' | 'evening' | 'makeup')}><option value="regular">常规</option><option value="morning">早读</option><option value="evening">晚自习</option><option value="makeup">补课</option></select></label>
+            <label>课程类型（选填）<select value={planKind} onChange={(event) => setPlanKind(event.target.value as SlotKind)}><option value="regular">常规</option><option value="morning">早读</option><option value="study">自习</option><option value="aftercare">课后服务</option><option value="evening">晚自习</option><option value="makeup">补课</option></select></label>
             <label>教室类型（选填）<input list="composer-room-types" value={roomType} onChange={(event) => setRoomType(event.target.value)} placeholder="不限 / 普通教室" /><datalist id="composer-room-types">{roomTypes.map((type) => <option key={type} value={type} />)}</datalist></label>
             <label>固定时间（选填）<select value={fixedSlotId} onChange={(event) => setFixedSlotId(event.target.value)}><option value="">不固定</option>{data.timeSlots.map((slot) => <option key={slot.id} value={slot.id}>{slot.label}</option>)}</select></label>
           </div>

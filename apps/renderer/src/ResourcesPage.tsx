@@ -14,12 +14,16 @@ import type { RuleImportance, RuleInstance, RuleKind, RuleScope, RuleTime } from
 const SLOT_KIND_MAP: Record<string, SlotKind> = {
   早读: 'morning', morning: 'morning',
   常规: 'regular', 普通: 'regular', regular: 'regular',
+  自习: 'study', study: 'study',
+  课后服务: 'aftercare', aftercare: 'aftercare',
   晚自习: 'evening', 晚修: 'evening', evening: 'evening',
   补课: 'makeup', makeup: 'makeup',
 };
 const SLOT_KIND_OPTIONS = [
   { value: 'morning', label: '早读' },
   { value: 'regular', label: '常规' },
+  { value: 'study', label: '自习' },
+  { value: 'aftercare', label: '课后服务' },
   { value: 'evening', label: '晚自习' },
   { value: 'makeup', label: '补课' },
 ];
@@ -617,7 +621,7 @@ function ResourcesPage({
           const kindText = text(v['类型'] ?? v['时段类型'] ?? v['kind']);
           const kind = kindText ? SLOT_KIND_MAP[kindText] : 'regular';
           if (kindText && !kind) {
-            issues.push('时间段 第' + row.row + '行时段类型无法识别：' + kindText + '（可填 早读/常规/晚自习/补课）');
+            issues.push('时间段 第' + row.row + '行时段类型无法识别：' + kindText + '（可填 早读/常规/自习/课后服务/晚自习/补课）');
             continue;
           }
           const label = text(v['名称'] ?? v['label']) || DAYS[day] + ' 第' + period + '节';
@@ -640,7 +644,7 @@ function ResourcesPage({
           const kindText = text(v['类型'] ?? v['时段类型'] ?? v['kind']);
           const kind = kindText ? SLOT_KIND_MAP[kindText] : 'regular';
           if (kindText && !kind) {
-            issues.push('时间段 第' + row.row + '行时段类型无法识别：' + kindText + '（可填 早读/常规/晚自习/补课）');
+            issues.push('时间段 第' + row.row + '行时段类型无法识别：' + kindText + '（可填 早读/常规/自习/课后服务/晚自习/补课）');
             continue;
           }
           periodRows.set(period, {
@@ -816,7 +820,7 @@ function ResourcesPage({
           const kindText = text(v['课程类型'] ?? v['时段类型'] ?? v['类型'] ?? v['kind']).trim();
           const planKind: SlotKind = kindText ? SLOT_KIND_MAP[kindText] : 'regular';
           if (kindText && !SLOT_KIND_MAP[kindText]) {
-            issues.push('教学计划 第' + row.row + '行时段类型无法识别：' + kindText + '（可填 早读/常规/晚自习/补课）');
+            issues.push('教学计划 第' + row.row + '行时段类型无法识别：' + kindText + '（可填 早读/常规/自习/课后服务/晚自习/补课）');
             continue;
           }
           const key = classItem.id + '|' + subjectItem.id + '|' + (teacherItem?.id ?? '') + '|' + weeks;

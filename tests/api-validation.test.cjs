@@ -148,6 +148,28 @@ test('API allows a teaching plan without a fixed teacher', () => {
   assert.equal(validateData(data), null);
 });
 
+test('API accepts study/aftercare kinds and validates soft constraints', () => {
+  const data = {
+    classes: [{ id: 'c1' }], teachers: [{ id: 't1' }], subjects: [{ id: 's1' }],
+    rooms: [{ id: 'r1', capacity: 30 }],
+    timeSlots: [{ id: 'slot-1', day: 1, period: 1, kind: 'aftercare' }],
+    coursePlans: [{ id: 'p1', classId: 'c1', teacherId: '', subjectId: 's1', weeklyPeriods: 1, kind: 'aftercare' }],
+    softConstraints: [{ kind: 'CLASS_GAPS', weight: 3 }],
+  };
+  assert.equal(validateData(data), null);
+  data.coursePlans[0].kind = 'study';
+  assert.equal(validateData(data), null);
+  data.coursePlans[0].kind = 'afterschool';
+  assert.match(validateData(data), /时段类型无效/);
+  data.coursePlans[0].kind = 'regular';
+  data.softConstraints = [{ kind: 'CLASS_GAPS', weight: -1 }];
+  assert.match(validateData(data), /权重必须在 0–5/);
+  data.softConstraints = [{ kind: 'NOPE', weight: 1 }];
+  assert.match(validateData(data), /软约束类型无效/);
+  data.softConstraints = [{ kind: 'CLASS_GAPS', weight: 1 }, { kind: 'CLASS_GAPS', weight: 2 }];
+  assert.match(validateData(data), /软约束类型重复/);
+});
+
 test('orphan cleanup drops deleted class names from teacher bindings', () => {
   const data = {
     classes: [{ id: 'c1', name: '一班' }],

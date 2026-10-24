@@ -1,4 +1,5 @@
 import type { ScheduleEntry, SchoolData, TimeSlot } from './types';
+import { slotKindAcceptsPlan } from '../../../packages/inspection/src.ts';
 
 export interface DropDecision {
   ok: boolean;
@@ -65,7 +66,7 @@ export function checkMove(entry: ScheduleEntry, slot: TimeSlot, ctx: DropContext
       ? { ok: true, reason: '固定时间原位置' }
       : { ok: false, reason: '课程固定在其它时间' };
   }
-  if (slotKindOf(slot) !== (plan?.kind ?? 'regular')) {
+  if (!slotKindAcceptsPlan(slotKindOf(slot), plan?.kind)) {
     return { ok: false, reason: '时段类型与课程不匹配' };
   }
   if (teacherUnavailable(ctx.data, entry.teacherId, slot.id)) {

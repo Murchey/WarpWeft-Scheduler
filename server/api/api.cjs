@@ -16,6 +16,8 @@ const {
 
 const MAX_BODY = 5 * 1024 * 1024;
 const MAX_JOBS = 100;
+const SLOT_KIND_VALUES = ['morning', 'regular', 'study', 'aftercare', 'evening', 'makeup'];
+const SOFT_RULE_KINDS = ['SUBJECT_DISTRIBUTION', 'TEACHER_CONTINUOUS', 'TEACHER_GAPS', 'TEACHER_WORKLOAD_BALANCE', 'CLASS_GAPS'];
 const MAX_LOGS = 500;
 const CLIENT_TTL_MS = 90_000;
 const CLIENT_PRUNE_MS = 30_000;
@@ -205,8 +207,8 @@ function validateData(data) {
   }
   for (const slot of data.timeSlots) {
     if (!(Number(slot.day) > 0) || !(Number(slot.period) > 0)) return '时间段「' + (slot.label || slot.id) + '」的星期和节次必须大于 0';
-    if (slot.kind !== undefined && slot.kind !== null && !['morning', 'regular', 'evening', 'makeup'].includes(slot.kind)) {
-      return '时间段「' + (slot.label || slot.id) + '」的时段类型无效（只能是 早读/常规/晚自习/补课）';
+    if (slot.kind !== undefined && slot.kind !== null && !SLOT_KIND_VALUES.includes(slot.kind)) {
+      return '时间段「' + (slot.label || slot.id) + '」的时段类型无效（只能是 早读/常规/自习/课后服务/晚自习/补课）';
     }
     if (slot.start !== undefined && slot.start !== null && slot.start !== '' && !/^\d{1,2}:\d{2}$/.test(String(slot.start))) {
       return '时间段「' + (slot.label || slot.id) + '」的开始时间无效（应为 HH:MM）';
@@ -230,10 +232,25 @@ function validateData(data) {
     if (plan.weeks !== undefined && plan.weeks !== null && !['all', 'odd', 'even'].includes(plan.weeks)) {
       return '教学计划「' + planLabel(plan) + '」的周次无效（只能是 每周/单周/双周）。';
     }
-    if (plan.kind !== undefined && plan.kind !== null && !['morning', 'regular', 'evening', 'makeup'].includes(plan.kind)) {
-      return '教学计划「' + planLabel(plan) + '」的时段类型无效（只能是 早读/常规/晚自习/补课）。';
+    if (plan.kind !== undefined && plan.kind !== null && !SLOT_KIND_VALUES.includes(plan.kind)) {
+      return '教学计划「' + planLabel(plan) + '」的时段类型无效（只能是 早读/常规/自习/课后服务/晚自习/补课）。';
     }
     if (!(Number(plan.weeklyPeriods) > 0)) return '教学计划「' + planLabel(plan) + '」的周课时必须大于 0。';
+  }
+  if (data.softConstraints !== undefined) {
+    if (!Array.isArray(data.softConstraints)) return '软约束必须是数组。';
+    const seenSoftKinds = new Set();
+    for (const item of data.softConstraints) {
+      if (!item || typeof item !== 'object') return '软约束条目格式无效。';
+      if (!SOFT_RULE_KINDS.includes(item.kind)) {
+        return '软约束类型无效：「' + String(item.kind ?? '') + '」；只能是 学科分散/教师连续/教师空档/教师工作量均衡/班级空档。';
+      }
+      if (seenSoftKinds.has(item.kind)) return '软约束类型重复：' + item.kind + '；每种软约束只能配置一次。';
+      seenSoftKinds.add(item.kind);
+      if (typeof item.weight !== 'number' || !Number.isFinite(item.weight) || item.weight < 0 || item.weight > 5) {
+        return '软约束「' + item.kind + '」的权重必须在 0–5 之间。';
+      }
+    }
   }
   const homeroomByTeacher = new Map();
   const subjectNameLowerById = new Map(data.subjects.map((item) => [item.id, String(item.name ?? '').trim().toLowerCase()]));

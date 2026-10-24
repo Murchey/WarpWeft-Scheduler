@@ -15,10 +15,17 @@ import java.util.Set;
 import java.util.TreeSet;
 
 public final class RuleEvaluator {
+    public static boolean kindMatches(String planKind, String slotKind) {
+        if (planKind == null ? slotKind == null : planKind.equals(slotKind)) return true;
+        String plan = planKind == null ? "regular" : planKind;
+        String slot = slotKind == null ? "regular" : slotKind;
+        return ("study".equals(plan) || "aftercare".equals(plan)) && "regular".equals(slot);
+    }
+
     public static boolean canPlace(State state, Plan plan, Slot slot, Room room) {
-        // A morning plan only fits morning slots; regular plans never fill
-        // 早读/晚自习 unless the plan itself is declared as that kind.
-        if (!plan.kind().equals(slot.kind())) return false;
+        // A plan only fits a matching slot kind. 自习/课后服务 additionally
+        // accept regular slots so they can fill the existing day grid.
+        if (!kindMatches(plan.kind(), slot.kind())) return false;
         if (state.unavailable.contains(plan.teacherId() + "|" + slot.id())) return false;
         if (room.capacity() < state.classes.get(plan.classId()).size()) return false;
         if (plan.roomType() != null && !plan.roomType().isBlank() && !plan.roomType().equals(room.type())) return false;

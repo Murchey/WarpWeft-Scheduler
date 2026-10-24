@@ -34,9 +34,10 @@ import { EmptyState, RunProgressView } from './runViews';
 import { findClass, findRoom, findSubject, findTeacher, missingPlans, planOf, planSubjectName } from './selectors';
 import { RunsPage } from './RunsPage';
 import { InspectionPage } from './InspectionPage';
-import { KIND_LABELS, inspectTimetable, reportRows, weekMask, weeksOverlap } from '../../../packages/inspection/src';
+import { KIND_LABELS, inspectTimetable, reportRows, slotKindAcceptsPlan, weekMask, weeksOverlap } from '../../../packages/inspection/src';
 import type { InspectionRefs, InspectionReport } from '../../../packages/inspection/src';
 import { StatsPage } from './StatsPage';
+import { BASE_SOFT_CONSTRAINTS } from './softConstraints';
 import { AdjustmentsPage } from './AdjustmentsPage';
 import { TodayPanel } from './TodayPanel';
 import { buildStats, classRowsForExport, subjectRowsForExport, teacherRowsForExport } from '../../../packages/statistics/src';
@@ -158,12 +159,7 @@ function toSolverInput(
     electiveGroups: data.electiveGroups ?? [],
     hardConstraints: ['NO_CLASS_CONFLICT', 'NO_TEACHER_CONFLICT', 'ROOM_CAPACITY'],
     rules: data.rules ?? [],
-    softConstraints: data.softConstraints ?? [
-      { kind: 'SUBJECT_DISTRIBUTION', weight: 3 },
-      { kind: 'TEACHER_CONTINUOUS', weight: 2 },
-      { kind: 'TEACHER_GAPS', weight: 1 },
-      { kind: 'TEACHER_WORKLOAD_BALANCE', weight: 2 },
-    ],
+    softConstraints: data.softConstraints ?? BASE_SOFT_CONSTRAINTS,
     timeLimitSeconds: timeLimit,
     randomSeed: 1,
   };
@@ -235,7 +231,7 @@ function preflight(inputData: SchoolData): string[] {
       issues.push((findClass(data, plan.classId)?.name ?? '未知班级') + ' 的教学计划引用了不存在的学科');
     }
     const planKind = plan.kind ?? 'regular';
-    if (!data.timeSlots.some((slot) => (slot.kind ?? 'regular') === planKind)) {
+    if (!data.timeSlots.some((slot) => slotKindAcceptsPlan(slot.kind, planKind))) {
       issues.push(
         planSubjectName(data, plan) + ' 是「' + (KIND_LABELS[planKind] ?? planKind) + '」计划，但没有对应类型的时段',
       );
@@ -1467,6 +1463,7 @@ function App() {
             onApplyLongResult={applyLongResult}
             onNotice={setNotice}
             onError={setError}
+            commit={commit}
           />
         ) : null}
         {tab === '课表预览' ? (
@@ -2469,7 +2466,9 @@ function TimetablePage({
   const periods = Array.from(new Set(data.timeSlots.map((slot) => slot.period))).sort((a, b) => a - b);
   const kindOfSlot = (slotId: string) => data.timeSlots.find((slot) => slot.id === slotId)?.kind ?? 'regular';
   const kindOfPeriod = (period: number) => data.timeSlots.find((slot) => slot.period === period)?.kind ?? 'regular';
-  const hasCustomKinds = data.timeSlots.some((slot) => (slot.kind ?? 'regular') !== 'regular');
+  const kindOfEntry = (entry: ScheduleEntry) => planOf(data, entry)?.kind ?? kindOfSlot(entry.slotId);
+  const hasCustomSlotKinds = data.timeSlots.some((slot) => (slot.kind ?? 'regular') !== 'regular');
+  const hasCustomKinds = hasCustomSlotKinds || data.coursePlans.some((plan) => (plan.kind ?? 'regular') !== 'regular');
   const entities = view === 'class' ? data.classes : view === 'teacher' ? data.teachers : data.rooms;
   // Date overlay: show what actually happens on one date (base + adjustments).
   const baseEntries: ScheduleEntry[] = result
@@ -2815,7 +2814,7 @@ function TimetablePage({
       {viewFreeSlots === 0 ? (
         <div className="tt-warning">
           <b>本视图已排满</b>
-          <span>没有空档可用于移动。可在基础资料增加时间段或教师，或使用交换课程。</span>
+          <span>没有剩余时间格可用于移动。可在基础资料增加时间段或教师，或使用交换课程。</span>
         </div>
       ) : null}
       {missing.length ? (
@@ -2873,7 +2872,7 @@ function TimetablePage({
                 const previousKind = periodIndex > 0 ? kindOfPeriod(periods[periodIndex - 1]) : null;
                 return (
                   <React.Fragment key={period}>
-                    {hasCustomKinds && periodKind !== previousKind ? (
+                    {hasCustomSlotKinds && periodKind !== previousKind ? (
                       <tr className={'tt-kind-row is-' + periodKind}>
                         <th colSpan={days.length + 1}>
                           <span>{KIND_LABELS[periodKind] ?? periodKind}</span>
@@ -2938,6 +2937,7 @@ function TimetablePage({
                           <>
                           {(view === 'class' ? cellEntries.filter((entry) => !entry.groupId) : cellEntries).map((entry) => {
                             const plan = planOf(data, entry);
+                            const entryPlanKind = plan?.kind ?? kindOfSlot(entry.slotId);
                             const electiveGroup = groupOfEntry(entry);
                             const electiveBlock = blockOfEntry(entry);
                             const isConflict = conflicts.has(entry.id);
@@ -3001,8 +3001,9 @@ function TimetablePage({
                                       ? className + ' · ' + room
                                       : className + ' · ' + teacher}
                                 </span>
-                                {entry.source === 'MANUAL' || isConflict || weeksOf(entry) !== 'all' || entry.groupId ? (
+                                {entry.source === 'MANUAL' || isConflict || weeksOf(entry) !== 'all' || entry.groupId || entryPlanKind !== kindOfSlot(entry.slotId) ? (
                                   <span className="tt-card-badges">
+                                    {entryPlanKind !== kindOfSlot(entry.slotId) ? <em>{KIND_LABELS[entryPlanKind] ?? entryPlanKind}</em> : null}
                                     {weeksOf(entry) === 'odd' ? <em>单周</em> : weeksOf(entry) === 'even' ? <em>双周</em> : null}
                                     {entry.groupId ? <em>走班{electiveBlock ? '·' + electiveBlock.name : ''}</em> : null}
                                     {entry.source === 'MANUAL' ? <em>手工</em> : null}
@@ -3088,14 +3089,14 @@ function TimetablePage({
         <span className="tt-footer-note">
           {hasCustomKinds ? (
             <>
-              {['morning', 'regular', 'evening', 'makeup'].map((kind) => {
-                const count = viewEntries.filter((entry) => kindOfSlot(entry.slotId) === kind).length;
+              {['morning', 'regular', 'study', 'aftercare', 'evening', 'makeup'].map((kind) => {
+                const count = viewEntries.filter((entry) => kindOfEntry(entry) === kind).length;
                 if (count === 0 && kind !== 'regular') return null;
                 return (KIND_LABELS[kind] ?? kind) + ' ' + count + ' · ';
               })}
             </>
           ) : null}
-          本视图空档 {viewFreeSlots} 个 · 拖动课程可交换位置 · 锁定后重新排课保留原时间
+          本视图剩余容量 {viewFreeSlots} 格 · 拖动课程可交换位置 · 锁定后重新排课保留原时间
         </span>
       </div>
       {immersive ? (

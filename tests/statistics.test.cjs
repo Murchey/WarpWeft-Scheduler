@@ -79,6 +79,7 @@ test('class rows expose free slots and per-day placement', async () => {
   assert.equal(class1.missing, 0);
   assert.equal(class1.capacity, 4);
   assert.equal(class1.freeSlots, 1);
+  assert.equal(class1.dayGaps, 0);
   assert.deepEqual(
     class1.byDay.map((row) => [row.day, row.placed]),
     [
@@ -109,7 +110,26 @@ test('export rows keep the 计划/已排 columns distinct', async () => {
   assert.deepEqual(Object.keys(teacherRows[0]), ['教师', '任教学科', '计划周课时', '已排课时', '走班课时', '未排课时', '可用时段', '占用率']);
   assert.equal(teacherRows[0].占用率, '66.7%');
   assert.equal(subjectRowsForExport(report).length, 2);
-  assert.deepEqual(Object.keys(classRowsForExport(report)[0]), ['班级', '年级', '计划周课时', '已排课时', '未排课时', '可用时间格', '空档']);
+  assert.deepEqual(Object.keys(classRowsForExport(report)[0]), ['班级', '年级', '计划周课时', '已排课时', '未排课时', '可用时间格', '剩余容量', '日内空档']);
+});
+
+test('day gaps count only free periods between the first and last regular lesson', async () => {
+  const { buildStats } = await loadStats();
+  const input = baseInput();
+  input.timeSlots = [
+    { id: 'd1-p1', day: 1, period: 1, label: '周一 第1节' },
+    { id: 'd1-p2', day: 1, period: 2, label: '周一 第2节' },
+    { id: 'd1-p3', day: 1, period: 3, label: '周一 第3节' },
+  ];
+  input.coursePlans = [{ id: 'p1', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyPeriods: 2 }];
+  input.entries = [
+    { id: 'e1', coursePlanId: 'p1', classId: 'c1', teacherId: 't1', roomId: 'r1', slotId: 'd1-p1' },
+    { id: 'e2', coursePlanId: 'p1', classId: 'c1', teacherId: 't1', roomId: 'r1', slotId: 'd1-p3' },
+  ];
+  const report = buildStats(input);
+  const class1 = report.classes.find((row) => row.id === 'c1');
+  assert.equal(class1.dayGaps, 1);
+  assert.equal(class1.freeSlots, 1);
 });
 
 test('odd/even plans are halved in the average weekly load', async () => {

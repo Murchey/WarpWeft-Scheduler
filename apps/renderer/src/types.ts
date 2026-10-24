@@ -37,7 +37,7 @@ export interface Room {
   type: string;
 }
 
-export type SlotKind = 'morning' | 'regular' | 'evening' | 'makeup';
+export type SlotKind = 'morning' | 'regular' | 'study' | 'aftercare' | 'evening' | 'makeup';
 
 export interface ElectiveBlock {
   id: string;
@@ -60,7 +60,7 @@ export interface TimeSlot {
   day: number;
   period: number;
   label: string;
-  /** morning = 早读, regular = 常规, evening = 晚自习, makeup = 补课. */
+  /** morning = 早读, regular = 常规, study = 自习, aftercare = 课后服务, evening = 晚自习, makeup = 补课. */
   kind?: SlotKind;
   /** HH:MM. Without it the "current period" cannot be computed. */
   start?: string;
@@ -150,12 +150,15 @@ export interface SolverInput {
       | 'SUBJECT_DISTRIBUTION'
       | 'TEACHER_CONTINUOUS'
       | 'TEACHER_GAPS'
-      | 'TEACHER_WORKLOAD_BALANCE';
+      | 'TEACHER_WORKLOAD_BALANCE'
+      | 'CLASS_GAPS';
     weight: number;
   }[];
   timeLimitSeconds: number;
   randomSeed: number;
 }
+
+export type SoftRuleKind = SolverInput['softConstraints'][number]['kind'];
 
 export interface SchoolData {
   school: School;

@@ -135,7 +135,7 @@ export function TodayPanel({
                     </span>
                     <span className="today-lessons">
                       {item.lessons.length === 0 ? (
-                        <em>空档</em>
+                        <em>无课</em>
                       ) : (
                         item.lessons.map((entry) => {
                           const base = candidate.entries.find((candidateEntry) => candidateEntry.id === entry.id);

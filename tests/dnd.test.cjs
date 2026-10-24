@@ -1,4 +1,4 @@
-﻿const test = require('node:test');
+const test = require('node:test');
 const assert = require('node:assert/strict');
 
 async function loadDnd() {
@@ -37,6 +37,23 @@ test('moving into an empty compatible slot is allowed', async () => {
   const { checkMove } = await loadDnd();
   const { data, entries, timeSlots } = base();
   assert.equal(checkMove(entries[0], timeSlots[3], ctx(data, entries)).ok, true);
+});
+
+test('study and aftercare plans can move into regular slots', async () => {
+  const { checkMove } = await loadDnd();
+  const { data, entries, timeSlots } = base();
+  data.coursePlans[0] = { ...data.coursePlans[0], kind: 'study' };
+  assert.equal(checkMove(entries[0], timeSlots[3], ctx(data, entries)).ok, true);
+  data.coursePlans[0] = { ...data.coursePlans[0], kind: 'aftercare' };
+  assert.equal(checkMove(entries[0], timeSlots[3], ctx(data, entries)).ok, true);
+});
+
+test('regular plans cannot move into an aftercare slot', async () => {
+  const { checkMove } = await loadDnd();
+  const { data, entries, timeSlots } = base();
+  const aftercare = { id: 's5', day: 2, period: 2, label: '周二 课后服务', kind: 'aftercare' };
+  const data2 = { ...data, timeSlots: [...timeSlots, aftercare] };
+  assert.match(checkMove(entries[0], aftercare, ctx(data2, entries)).reason, /时段类型与课程不匹配/);
 });
 
 test('class, teacher, room and slot-kind clashes explain themselves', async () => {

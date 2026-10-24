@@ -25,7 +25,14 @@ test('import template uses the new headers and required position notes', async (
   assert.ok(notes.some((row) => row[0] === '名称' && row[1] === '是' && String(row[3]).includes('七年级1班')));
   assert.ok(notes.some((row) => row[0] === '【教学计划】'));
   assert.ok(notes.some((row) => row[0] === '每周课时' && row[1] === '是'));
+  assert.ok(notes.some((row) => row[0] === '课程类型' && String(row[2]).includes('自习') && String(row[2]).includes('课后服务')));
   assert.equal(notes.some((row) => row.some((cell) => /\bA2\b/.test(String(cell)))), false);
+
+  const optionRows = XLSX.utils.sheet_to_json(workbook.Sheets['_选项'], { header: 1 });
+  const kindOptions = optionRows.slice(1).map((row) => row[8]).filter(Boolean);
+  assert.ok(kindOptions.includes('常规'));
+  assert.ok(kindOptions.includes('自习'));
+  assert.ok(kindOptions.includes('课后服务'));
 });
 
 test('simplified template omits the room sheet and room type column', async () => {
