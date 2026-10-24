@@ -41,7 +41,7 @@ function PreparePage({
     { id: 'teachers', label: '教师', english: 'TEACHERS', count: String(data.teachers.length) },
     { id: 'subjects', label: '学科', english: 'SUBJECTS', count: String(data.subjects.length) },
     { id: 'rooms', label: '教室', english: 'ROOMS', count: String(data.rooms.length) },
-    { id: 'timeSlots', label: '时间段', english: 'TIME SLOTS', count: String(data.timeSlots.length) },
+    { id: 'timeSlots', label: '周时间段', english: 'TIME SLOTS', count: String(data.timeSlots.length) },
     { id: 'semester', label: '学期周次', english: 'SEMESTER', count: data.semester ? '已设置' : '未设置' },
     { id: 'plans', label: '教学计划', english: 'COURSE PLANS', count: String(data.coursePlans.length) },
     { id: 'electives', label: '走班组', english: 'ELECTIVES', count: String((data.electiveGroups ?? []).length) },

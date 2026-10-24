@@ -366,3 +366,13 @@ node scripts/bench-solver.cjs --classes 24,96,120 --time-limit 30
 
 **测试**：新增/更新 `tests/java-slots.test.cjs`、`tests/java-soft.test.cjs`、`tests/inspection.test.cjs`、`tests/dnd.test.cjs`、`tests/import-export.test.cjs`、`tests/statistics.test.cjs`、`tests/api-validation.test.cjs`。
 
+---
+
+## 17. 周时间段模板：设置一天，套用到多星期
+
+- 「排课准备 → 周时间段」顶部新增三步模板：选择模板日 → 勾选目标星期 → 选择“跳过已有节次”或“覆盖同节次”。
+- 套用会复制模板日的节次、时段类型、开始时间、时长和名称；名称中的“周一/星期一”会改写为目标星期，自定义名称保持不变。
+- 目标日多出的节次不会被删除；覆盖模式保留目标时间段 id，固定时间引用仍然有效。
+- 原“批量生成时间段”保留为次级功能，改名为「快速生成空白节次」，用于先搭出模板日的空节次。
+- 纯逻辑在 `apps/renderer/src/slotTemplate.ts`，新增 `tests/slot-template.test.cjs` 5 条测试。
+

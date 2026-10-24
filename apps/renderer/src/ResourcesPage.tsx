@@ -7,6 +7,7 @@ import { ResourceWorkspace } from './ResourceWorkspace';
 import { download, exportMessage } from './download';
 import { messageOf, uid } from './utils';
 import { splitClassNames } from './teacherAssignment';
+import { applyDayTemplate, planDayTemplate, weekdayLabel } from './slotTemplate';
 import { isValidSemester, parseDateInput } from '../../../packages/semester/src';
 import { IMPORTANCE_LABELS, RULE_DEFINITIONS } from '../../../packages/constraints/src';
 import type { RuleImportance, RuleInstance, RuleKind, RuleScope, RuleTime } from '../../../packages/constraints/src';
@@ -27,6 +28,14 @@ const SLOT_KIND_OPTIONS = [
   { value: 'evening', label: '晚自习' },
   { value: 'makeup', label: '补课' },
 ];
+const SLOT_KIND_LABELS: Record<SlotKind, string> = {
+  morning: '早读',
+  regular: '常规',
+  study: '自习',
+  aftercare: '课后服务',
+  evening: '晚自习',
+  makeup: '补课',
+};
 
 const RULE_DAY_NAMES: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 7, 天: 7 };
 const RULE_IMPORTANCE: Record<string, RuleImportance> = { 必须: 'must', 尽量: 'prefer', 避免: 'avoid', must: 'must', prefer: 'prefer', avoid: 'avoid' };
@@ -92,6 +101,9 @@ function ResourcesPage({
   const [batchDays, setBatchDays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [batchFrom, setBatchFrom] = useState(1);
   const [batchTo, setBatchTo] = useState(2);
+  const [templateSourceDay, setTemplateSourceDay] = useState(1);
+  const [templateDays, setTemplateDays] = useState<number[]>([2, 3, 4, 5]);
+  const [templateMode, setTemplateMode] = useState<'skip' | 'overwrite'>('skip');
   const [workspace, setWorkspace] = useState<null | 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots'>(null);
   const [classPicker, setClassPicker] = useState<{ id: string; selected: string[] } | null>(null);
   const [templateStage, setTemplateStage] = useState<'idle' | 'generating' | 'saving'>('idle');
@@ -303,6 +315,29 @@ function ResourcesPage({
     }
     commit({ ...data, timeSlots: [...data.timeSlots, ...additions] }, { invalidate: true });
     setNotice('已批量新增 ' + additions.length + ' 个时间段。');
+  };
+
+  const applyDayTemplateToDays = () => {
+    const plan = planDayTemplate(data.timeSlots, templateSourceDay, templateDays, templateMode);
+    if (plan.sourceSlots.length === 0) {
+      setError(weekdayLabel(templateSourceDay) + '还没有时间段，请先设置模板日');
+      return;
+    }
+    if (plan.targetDays.length === 0) {
+      setError('请至少勾选一个要套用的星期');
+      return;
+    }
+    if (plan.additions + plan.overwrites === 0) {
+      setNotice('所选星期的同节次时间段都已存在，没有需要套用的内容。');
+      return;
+    }
+    const result = applyDayTemplate(data.timeSlots, templateSourceDay, templateDays, templateMode, () => uid('slot'));
+    commit({ ...data, timeSlots: result.slots }, { invalidate: true });
+    setNotice(
+      '已将 ' + weekdayLabel(templateSourceDay) + ' 的时间段套用到 ' +
+      result.targetDays.map((day) => weekdayLabel(day)).join('、') +
+      '：新增 ' + result.additions + ' 个，覆盖 ' + result.overwrites + ' 个，跳过 ' + result.skips + ' 个。',
+    );
   };
 
   const importWorkbookFile = async (file: File) => {
@@ -1232,11 +1267,153 @@ function ResourcesPage({
       { key: 'duration', label: '分钟', type: 'number', width: '10%' },
       { key: 'label', label: '显示名称', width: '30%' },
     ];
+    const templatePlan = planDayTemplate(data.timeSlots, templateSourceDay, templateDays, templateMode);
+    const sourceSlots = templatePlan.sourceSlots;
+    const targetDayText = templatePlan.targetDays.map((day) => weekdayLabel(day)).join('、');
+    const pendingTemplateChanges = templatePlan.additions + templatePlan.overwrites;
     return (
       <div className="resource-single resource-stack">
-        <section className="section-panel slot-batch">
-          <div className="panel-head"><SectionHeading english="BATCH TIME SLOTS" title="批量生成时间段" /><span className="status-tag muted">多选</span></div>
-          <p className="panel-note">勾选星期并设置节次范围，一次生成整周时间段；已存在的节次会自动跳过。</p>
+        <section className="section-panel slot-template">
+          <div className="panel-head">
+            <SectionHeading english="WEEKLY TIME TEMPLATE" title="周时间段模板" />
+            <span className="status-tag">设置一天 · 套用多天</span>
+          </div>
+          <p className="panel-note slot-template-lead">
+            周一到周日通常使用同一套节次。先设置好其中一天，再勾选其他星期，一键把当天的节次、时段类型、开始时间、时长和名称复制过去。
+          </p>
+          <div className="slot-template-steps">
+            <div className="slot-template-step">
+              <span className="slot-template-step-no">1</span>
+              <div className="slot-template-step-body">
+                <label className="slot-template-field">
+                  <span>选择模板日</span>
+                  <select
+                    value={templateSourceDay}
+                    onChange={(event) => {
+                      const nextSource = Number(event.target.value);
+                      setTemplateSourceDay(nextSource);
+                      setTemplateDays((current) => current.filter((day) => day !== nextSource));
+                    }}
+                  >
+                    {DAYS.slice(1).map((label, index) => {
+                      const day = index + 1;
+                      const count = data.timeSlots.filter((slot) => slot.day === day).length;
+                      return <option key={day} value={day}>{label}（{count} 节）</option>;
+                    })}
+                  </select>
+                </label>
+                <div className="slot-template-chips">
+                  {sourceSlots.length > 0 ? sourceSlots.map((slot) => (
+                    <span className="slot-template-chip" key={slot.id} title={slot.label}>
+                      <b>第{slot.period}节</b>
+                      <em>{SLOT_KIND_LABELS[slot.kind ?? 'regular']}</em>
+                      <small>{slot.start ? slot.start + (slot.duration ? ' · ' + slot.duration + ' 分钟' : '') : '未填时间'}</small>
+                    </span>
+                  )) : (
+                    <span className="slot-template-empty">这一天还没有时间段，请先在下方表格新增，或用「快速生成空白节次」。</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="slot-template-step">
+              <span className="slot-template-step-no">2</span>
+              <div className="slot-template-step-body">
+                <div className="slot-template-step-head">
+                  <span className="slot-template-field-label">勾选要套用的星期 <b>{templatePlan.targetDays.length} 天</b></span>
+                  <div className="slot-template-actions">
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => setTemplateDays([1, 2, 3, 4, 5].filter((day) => day !== templateSourceDay))}
+                    >
+                      工作日
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => setTemplateDays([1, 2, 3, 4, 5, 6, 7].filter((day) => day !== templateSourceDay))}
+                    >
+                      全选
+                    </button>
+                    <button type="button" className="ghost-button" onClick={() => setTemplateDays([])}>清空</button>
+                  </div>
+                </div>
+                <div className="slot-template-days">
+                  {DAYS.slice(1).map((label, index) => {
+                    const day = index + 1;
+                    const isSource = day === templateSourceDay;
+                    const active = isSource || templateDays.includes(day);
+                    return (
+                      <label
+                        key={day}
+                        className={'slot-template-day' + (active ? ' active' : '') + (isSource ? ' is-source' : '')}
+                        title={isSource ? '模板日：设置好后勾选其他星期' : undefined}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={active}
+                          disabled={isSource}
+                          onChange={() => setTemplateDays((current) => current.includes(day) ? current.filter((item) => item !== day) : [...current, day])}
+                        />
+                        <b>{label}</b>
+                        {isSource ? <small>模板</small> : null}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="slot-template-step">
+              <span className="slot-template-step-no">3</span>
+              <div className="slot-template-step-body">
+                <span className="slot-template-field-label">目标日已有同节次时</span>
+                <div className="slot-template-modes">
+                  <label className={templateMode === 'skip' ? 'slot-template-mode active' : 'slot-template-mode'}>
+                    <input type="radio" name="slot-template-mode" checked={templateMode === 'skip'} onChange={() => setTemplateMode('skip')} />
+                    <span><b>跳过已有节次</b><small>只补齐缺少的节次，不改动目标日已有内容</small></span>
+                  </label>
+                  <label className={templateMode === 'overwrite' ? 'slot-template-mode active' : 'slot-template-mode'}>
+                    <input type="radio" name="slot-template-mode" checked={templateMode === 'overwrite'} onChange={() => setTemplateMode('overwrite')} />
+                    <span><b>覆盖同节次</b><small>用模板日的时间、类型和名称替换目标日</small></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="slot-template-footer">
+            <div className="slot-template-summary">
+              <div className="slot-template-counts">
+                <span><b>{templatePlan.additions}</b> 新增</span>
+                <span><b>{templatePlan.overwrites}</b> 覆盖</span>
+                <span><b>{templatePlan.skips}</b> 跳过</span>
+              </div>
+              <small>
+                {templatePlan.targetDays.length === 0
+                  ? '请至少勾选一个目标星期。'
+                  : sourceSlots.length === 0
+                    ? '模板日还没有时间段，请先设置模板日。'
+                    : pendingTemplateChanges === 0
+                      ? '所选星期的同节次都已经存在；如需更新，请切换为「覆盖同节次」。'
+                      : '将 ' + weekdayLabel(templateSourceDay) + ' 的 ' + sourceSlots.length + ' 个节次套用到 ' + targetDayText + '；目标日多出的节次不会删除。'}
+              </small>
+            </div>
+            <button
+              type="button"
+              className="mini-button slot-template-apply"
+              onClick={applyDayTemplateToDays}
+              disabled={sourceSlots.length === 0 || templatePlan.targetDays.length === 0 || pendingTemplateChanges === 0}
+            >
+              套用到所选星期
+            </button>
+          </div>
+        </section>
+
+        <section className="section-panel slot-batch slot-batch-secondary">
+          <div className="panel-head"><SectionHeading english="QUICK BLANK SLOTS" title="快速生成空白节次" /><span className="status-tag muted">可选</span></div>
+          <p className="panel-note">模板日还没有节次时，先在这里按节次范围生成空白时间段（默认常规、未填时间）；生成后再回到上方套用到其他星期。已存在的节次会自动跳过。</p>
           <div className="slot-batch-form">
             <div className="slot-day-picker">
               {DAYS.slice(1).map((label, index) => {
@@ -1255,11 +1432,12 @@ function ResourcesPage({
             </div>
             <label className="slot-range">起始节次<input type="number" min={1} max={12} value={batchFrom} onChange={(event) => setBatchFrom(Number(event.target.value))} /></label>
             <label className="slot-range">结束节次<input type="number" min={1} max={12} value={batchTo} onChange={(event) => setBatchTo(Number(event.target.value))} /></label>
-            <button type="button" className="mini-button" onClick={addBatchSlots}>生成时间段</button>
+            <button type="button" className="mini-button" onClick={addBatchSlots}>生成空白节次</button>
           </div>
         </section>
+
         <EditableTable<TimeSlot>
-          title="时间段"
+          title="周时间段"
           english="TIME SLOTS"
           rows={data.timeSlots}
           columns={columns}
@@ -1273,7 +1451,7 @@ function ResourcesPage({
         />
         {workspace === 'timeSlots' ? (
           <ResourceWorkspace<TimeSlot>
-            title="时间段"
+            title="周时间段"
             english="TIME SLOTS"
             rows={data.timeSlots}
             columns={columns}
