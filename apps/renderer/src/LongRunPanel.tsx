@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   cancelLongJob,
   deleteLongJob,
@@ -256,10 +256,7 @@ export function LongRunPanel({
       try {
         const current = inputFactory(target?.timeLimitSeconds || 3600);
         if (target?.snapshotId && target.snapshotId !== snapshotIdOf(current)) {
-          const proceed = window.confirm(
-            '工作区的班级、教师、时间段或教学计划已经变化。继续该任务会从旧快照继续，不会自动读取你刚调整的课时。\n\n建议取消后重新开始长时任务。仍要继续旧任务吗？',
-          );
-          if (!proceed) return;
+          onNotice('已继续旧长时任务，使用启动时的数据快照；如需反映最新调整，请用当前数据重新开始。');
         }
         await resumeLongJob(id);
         await loadJob(id);
@@ -310,11 +307,29 @@ export function LongRunPanel({
     let changed = false;
     try {
       const current = inputFactory(job.timeLimitSeconds || 3600);
-      changed = job.snapshotId ? job.snapshotId !== snapshotIdOf(current) : job.inputSummary.plans !== (current.coursePlans?.length ?? 0);
+      const summary = {
+        timeSlots: current.timeSlots.length,
+        classes: current.classes.length,
+        teachers: current.teachers.length,
+        rooms: current.rooms.length,
+        plans: current.coursePlans?.length ?? 0,
+        locked: current.lockedEntries?.length ?? 0,
+      };
+      const summaryChanged = Object.entries(summary).some(
+        ([key, value]) => (job.inputSummary as unknown as Record<string, number>)[key] !== value,
+      );
+      // Snapshot ids from older jobs were generated with a timestamp. Only
+      // warn when the workspace summary actually changed, never on that false
+      // positive; the user can still immediately load the old best result.
+      changed = job.snapshotId
+        ? summaryChanged && job.snapshotId !== snapshotIdOf(current)
+        : summaryChanged;
     } catch {
       changed = false;
     }
-    if (changed && !window.confirm('该长时任务基于较早的工作区数据（课时、班级、教师或计划已变化）。载入旧最佳课表不会反映你刚做的调整，建议重新开始长时任务。仍要载入吗？')) return;
+    if (changed) {
+      onNotice('已载入旧最佳课表；检测到班级、教师或计划数量有变化。如需反映最新调整，请用当前数据重新开始长时任务。');
+    }
     onApplyResult(job);
   };
 

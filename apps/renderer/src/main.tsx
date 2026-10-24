@@ -139,7 +139,9 @@ function toSolverInput(
   return {
     protocolVersion: '1.0',
     dataSchemaVersion: DATA_SCHEMA_VERSION,
-    dataSnapshotVersion: 'local-' + Date.now(),
+    // Must be stable for the same workspace. A timestamp here made every
+    // long-job snapshot look stale, even when nothing had changed.
+    dataSnapshotVersion: 'local-' + (data.updatedAt || 'workspace'),
     timeSlots: effectiveData.timeSlots,
     classes: effectiveData.classes.map((item) => ({
       id: item.id,
@@ -755,7 +757,7 @@ function App() {
         汇总: [
           { 项目: '学校', 值: data.school.name },
           { 项目: '生成时间', 值: new Date(report.generatedAt).toLocaleString('zh-CN') },
-          { 项目: '结论', 值: report.ok ? '可以发布' : '不可发布' },
+          { 项目: '结论', 值: report.ok ? '可以保存正式版' : '不可保存正式版' },
           { 项目: '已排课时', 值: report.summary.placed },
           { 项目: '未排课时', 值: report.summary.unplaced },
           { 项目: '硬冲突', 值: report.summary.hard },
@@ -1172,39 +1174,28 @@ function App() {
     applyResult(previous);
   };
 
-  const publishVersion = (settings: TimetableExportSettings, outcome: ExportResult) => {
+  const saveOfficialFile = (settings: TimetableExportSettings, outcome: ExportResult) => {
     if (!data || !result) return;
     const createdAt = new Date().toISOString();
-    const version = {
-      id: uid('version'),
-      createdAt,
-      name: settings.title || '班级课表',
-      title: settings.title || '班级课表',
-      schoolName: settings.schoolName || data.school.name,
-      fileName: timetableFileName(data, settings),
-      filePath: outcome.path ?? null,
-      result,
-      note: '手动发布',
-    };
+    const fileName = timetableFileName(data, settings);
     const audit = {
       id: uid('audit'),
       at: createdAt,
-      action: 'PUBLISH',
-      detail: `发布课表 ${version.id} · ${version.fileName}${version.filePath ? ' · ' + version.filePath : ''}`,
+      action: 'SAVE_OFFICIAL',
+      detail: `保存正式版课表 · ${fileName}${outcome.path ? ' · ' + outcome.path : ''}`,
     };
     commit(
       {
         ...data,
         published: result,
-        publishedVersions: [...(data.publishedVersions ?? []), version],
         auditLog: [...(data.auditLog ?? []), audit],
       },
       { immediate: true },
     );
-    setNotice('已发布正式版：' + version.fileName + (version.filePath ? '（' + version.filePath + '）' : ''));
+    setNotice('已保存正式版：' + fileName + (outcome.path ? '（' + outcome.path + '）' : ''));
   };
 
-  const publish = () => {
+  const saveOfficial = () => {
     if (!data || !result) return;
     if (report && !report.ok) {
       setError(
@@ -1220,40 +1211,9 @@ function App() {
     setExportOpen('publish');
   };
 
-  const renameVersion = (id: string) => {
-    if (!data) return;
-    const current = (data.publishedVersions ?? []).find((version) => version.id === id);
-    if (!current) return;
-    const next = window.prompt('版本名称', current.name ?? current.title ?? '班级课表');
-    if (!next || !next.trim()) return;
-    commit({
-      ...data,
-      publishedVersions: (data.publishedVersions ?? []).map((version) => (version.id === id ? { ...version, name: next.trim() } : version)),
-    }, { immediate: true });
-    setNotice('版本名称已更新为「' + next.trim() + '」');
-  };
-
-  const revealVersion = async (path?: string | null) => {
-    if (!path) {
-      setError('该版本没有记录本地文件路径：浏览器下载由下载目录管理，桌面端保存时才会记录路径。');
-      return;
-    }
-    const bridge = (window as unknown as { warpweft?: { showItemInFolder?: (value: string) => void } }).warpweft;
-    if (bridge?.showItemInFolder) {
-      bridge.showItemInFolder(path);
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(path);
-      setNotice('已复制文件路径：' + path);
-    } catch {
-      setNotice('文件路径：' + path);
-    }
-  };
-
   const clearCandidate = () => {
     if (!data) return;
-    if (!window.confirm('清空候选课表？已发布版本不受影响。')) return;
+    if (!window.confirm('清空候选课表？已保存的正式版不受影响。')) return;
     setResult(null);
     setSelectedEntryId('');
     setHistory([]);
@@ -1279,7 +1239,7 @@ function App() {
 
   const quickExportTimetable = (view: 'class' | 'teacher', entityId: string, weekNo: number | null) => {
     if (!data || !(result ?? data.published)) {
-      setError('还没有可导出的课表，请先排课或发布课表。');
+      setError('还没有可导出的课表，请先排课或保存正式版。');
       return;
     }
     const settings: TimetableExportSettings = {
@@ -1362,7 +1322,7 @@ function App() {
         return false;
       }
       setNotice(message.text);
-      if (exportOpen === 'publish') publishVersion(settings, outcome);
+      if (exportOpen === 'publish') saveOfficialFile(settings, outcome);
       return true;
     } catch (cause) {
       setError('导出课表失败：' + messageOf(cause));
@@ -1574,15 +1534,11 @@ function App() {
             onPrint={() => window.print()}
             onTimetable={() => setTab('课表预览')}
             onRun={() => setTab('排课任务')}
-            onPublish={publish}
             onClear={clearCandidate}
-            onExportTimetable={openTimetableExport}
+            onSaveOfficial={saveOfficial}
             adjustmentDays={adjustmentDays}
             onViewAdjustment={viewAdjustedDate}
             onExportAdjustment={(date) => openAdjustedExport(date)}
-            versions={data.publishedVersions ?? []}
-            onRenameVersion={renameVersion}
-            onRevealVersion={(path) => void revealVersion(path)}
           />
         ) : null}
         {tab === '统计报表' ? (
@@ -2682,7 +2638,7 @@ function TimetablePage({
           <button
             className={'tt-btn ' + (report && !report.ok ? 'tt-btn-primary' : 'tt-btn-quiet')}
             onClick={onInspect}
-            title="打开最终课表报告（发布门禁）"
+            title="打开最终课表报告（保存正式版门禁）"
           >
             检测{report ? (report.ok ? '通过' : ' · ' + report.summary.hard + ' 项') : '报告'}
           </button>
@@ -2755,7 +2711,7 @@ function TimetablePage({
             </div>
           ) : null;
         })() : null}
-        <label className="tt-week-overlay" title="把所选日期的调课/代课/停课叠加到课表上查看">
+        <label className="tt-week-overlay" title="选择日期后，查看该日期叠加调课/代课/停课后的实际课表；只读，不修改数据">
           <input
             type="checkbox"
             checked={Boolean(overlayDate)}
@@ -2766,7 +2722,8 @@ function TimetablePage({
               setSwapMode(false);
             }}
           />
-          叠加日期调整
+          查看某天实际课表
+          <span className="tt-overlay-hint">叠加调课/代课/停课</span>
         </label>
         {overlayDate ? (
           <input

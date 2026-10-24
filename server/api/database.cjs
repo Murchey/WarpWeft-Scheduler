@@ -13,7 +13,7 @@ function emptyWorkspace() {
       { kind: 'TEACHER_CONTINUOUS', weight: 2 },
       { kind: 'TEACHER_GAPS', weight: 1 },
       { kind: 'TEACHER_WORKLOAD_BALANCE', weight: 2 },
-    ], candidate: null, published: null, publishedVersions: [], auditLog: [],
+    ], candidate: null, published: null, auditLog: [],
   };
 }
 

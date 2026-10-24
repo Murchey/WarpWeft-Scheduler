@@ -73,7 +73,7 @@ export function TimetableExportDialog({
     <div className="export-overlay" role="dialog" aria-modal="true" aria-label="导出课表">
       <div className="export-dialog">
         <header className="export-head">
-          <SectionHeading english="EXPORT & LAYOUT" title={mode === 'publish' ? '导出并发布' : '导出课表'} />
+          <SectionHeading english="EXPORT & LAYOUT" title={mode === 'publish' ? '保存正式版' : '导出课表'} />
           <button type="button" className="resource-workspace-close" onClick={onClose} aria-label="关闭">×</button>
         </header>
         <p className="panel-note">使用选定的纵向/横向课表模板导出，保留模板的字体、边框与页面布局（自动调整为 1 页宽）；不附加软件元数据。</p>

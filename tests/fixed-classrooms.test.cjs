@@ -57,15 +57,13 @@ test('regular lessons move to the class homeroom; special rooms stay', async () 
   assert.equal(byId.get('e3').roomId, 'r2');
 });
 
-test('normalization keeps the input untouched and walks published versions', async () => {
+test('normalization keeps the input untouched and normalizes the published timetable', async () => {
   const { withFixedClassRooms } = await loadFixedRooms();
   const { data, result } = fixture();
   data.published = result;
-  data.publishedVersions = [{ id: 'v1', createdAt: 't', result }];
   const fixed = withFixedClassRooms(data);
   assert.equal(data.candidate.entries[0].roomId, 'r2');
   assert.equal(fixed.published.entries[0].roomId, 'r1');
-  assert.equal(fixed.publishedVersions[0].result.entries[0].roomId, 'r1');
 });
 
 test('full room mode leaves the solver room assignment untouched', async () => {

@@ -80,9 +80,5 @@ export function withFixedClassRooms(data: SchoolData): SchoolData {
     roomMode: roomed.roomMode ?? 'simplified',
     candidate: roomed.candidate ? withFixedClassRoomsResult(roomed, roomed.candidate) : roomed.candidate,
     published: roomed.published ? withFixedClassRoomsResult(roomed, roomed.published) : roomed.published,
-    publishedVersions: roomed.publishedVersions?.map((version) => ({
-      ...version,
-      result: withFixedClassRoomsResult(roomed, version.result),
-    })),
   };
 }

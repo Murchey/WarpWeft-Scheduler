@@ -1,9 +1,8 @@
-﻿import { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { CATEGORY_LABELS } from '../../../packages/inspection/src';
 import type { InspectionIssue, InspectionRefs, InspectionReport, UtilizationRow } from '../../../packages/inspection/src';
 import { EmptyState } from './runViews';
 import { SectionHeading } from './components';
-import type { SchoolData } from './types';
 
 type Filter = 'all' | 'hard' | 'must' | 'prefer';
 
@@ -90,15 +89,11 @@ export function InspectionPage({
   onPrint,
   onTimetable,
   onRun,
-  onPublish,
   onClear,
-  onExportTimetable,
   adjustmentDays,
   onViewAdjustment,
   onExportAdjustment,
-  versions,
-  onRenameVersion,
-  onRevealVersion,
+  onSaveOfficial,
   hasCandidate,
   published,
 }: {
@@ -109,15 +104,11 @@ export function InspectionPage({
   onPrint: () => void;
   onTimetable: () => void;
   onRun: () => void;
-  onPublish: () => void;
   onClear: () => void;
-  onExportTimetable: () => void;
   adjustmentDays: { date: string; label: string; count: number; summary: string }[];
   onViewAdjustment: (date: string) => void;
   onExportAdjustment: (date: string) => void;
-  versions: NonNullable<SchoolData['publishedVersions']>;
-  onRenameVersion: (id: string) => void;
-  onRevealVersion: (path?: string | null) => void;
+  onSaveOfficial: () => void;
   hasCandidate: boolean;
   published: boolean;
 }) {
@@ -140,7 +131,7 @@ export function InspectionPage({
     return (
       <EmptyState
         title="还没有可检测的候选课表"
-        message="先运行一次自动排课生成候选课表，检测报告会在这里生成；报告是发布门禁的依据。"
+        message="先运行一次自动排课生成候选课表，检测报告会在这里生成；报告是保存正式版的依据。"
         action={
           <button className="action-button" onClick={onRun}>
             去运行排课 <span>↗</span>
@@ -185,22 +176,19 @@ export function InspectionPage({
           <span className={'status-tag ' + (report.ok ? '' : 'danger')}>{report.ok ? '检测通过' : '检测未通过'}</span>
         </div>
         <p className="panel-note">
-          报告基于当前候选课表计算：硬冲突或「必须」规则违反会阻止发布；「尽量」规则只提示。生成于{' '}
+          报告基于当前候选课表计算：硬冲突或「必须」规则违反会阻止保存正式版；「尽量」规则只提示。生成于{' '}
           {new Date(report.generatedAt).toLocaleString('zh-CN')} · 用时 {report.elapsedMs} ms。
         </p>
         <div className="inspect-verdict">
           <div className="inspect-verdict-copy">
-            <b>{report.ok ? '可以保存为正式版' : '先处理阻断项再发布'}</b>
+            <b>{report.ok ? '可以保存为正式版' : '先处理阻断项再保存'}</b>
             <small>
               {report.ok
                 ? '没有硬冲突，也没有「必须」规则违反。'
-                : report.summary.hard + ' 项硬冲突、' + report.summary.must + ' 条「必须」规则违反会阻断发布。'}
+                : report.summary.hard + ' 项硬冲突、' + report.summary.must + ' 条「必须」规则违反会阻断保存正式版。'}
             </small>
           </div>
           <div className="inspect-verdict-actions">
-            <button className="ghost-button" onClick={onExportTimetable}>
-              导出课表（排版）
-            </button>
             <button className="ghost-button" onClick={onExportExcel}>
               导出检测报告
             </button>
@@ -213,8 +201,8 @@ export function InspectionPage({
             <button className="ghost-button" onClick={onClear}>
               清空候选
             </button>
-            <button className="action-button" onClick={report.ok ? onPublish : onTimetable}>
-              {report.ok ? (published ? '重新导出并发布' : '导出并保存为正式版') : '去调整课表'} <span>↗</span>
+            <button className="action-button" onClick={report.ok ? onSaveOfficial : onTimetable}>
+              {report.ok ? (published ? '重新导出并保存为正式版' : '导出并保存为正式版') : '去调整课表'} <span>↗</span>
             </button>
           </div>
         </div>
@@ -315,37 +303,6 @@ export function InspectionPage({
         </section>
       </div>
 
-      <section className="section-panel version-panel">
-        <div className="panel-head">
-          <SectionHeading english="PUBLISHED VERSIONS" title="已发布版本" />
-          <span className="status-tag muted">{versions.length} 个</span>
-        </div>
-        <p className="panel-note">每次发布都会导出按班级课表网格排版的 Excel，并记录文件名与保存路径；可在这里改名或打开所在文件夹。</p>
-        {versions.length === 0 ? (
-          <p className="panel-note">还没有正式版。检测通过后点击「导出并保存为正式版」。</p>
-        ) : (
-          <div className="version-list">
-            {versions
-              .slice()
-              .reverse()
-              .map((version) => (
-                <div className="version-row" key={version.id}>
-                  <div className="version-copy">
-                    <b>{version.name ?? version.title ?? version.id}</b>
-                    <small>
-                      {new Date(version.createdAt).toLocaleString('zh-CN')} · {version.fileName ?? '未记录文件名'}
-                    </small>
-                    <small className="version-path">{version.filePath ?? '浏览器导出：文件在下载目录，未记录绝对路径'}</small>
-                  </div>
-                  <div className="version-actions">
-                    <button type="button" className="ghost-button" onClick={() => onRenameVersion(version.id)}>重命名</button>
-                    <button type="button" className="ghost-button" onClick={() => onRevealVersion(version.filePath)}>打开所在文件夹</button>
-                  </div>
-                </div>
-              ))}
-          </div>
-        )}
-      </section>
     </div>
   );
 }
