@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+app_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 base_url="${WARPVEFT_BASE_URL:-http://127.0.0.1:${WARPVEFT_PORT:-4317}}"
 base_url="${base_url%/}"
 failures=0
@@ -73,6 +74,16 @@ else
   else
     fail "/api/data"
   fi
+fi
+
+if [ -f "$app_dir/warpweft-build.json" ]; then
+  if node "$app_dir/linux_server/verify-manifest.cjs" "$health_file" "$app_dir"; then
+    :
+  else
+    fail "build manifest / package files do not match the running server"
+  fi
+else
+  echo "[skip] build manifest (older package without warpweft-build.json)"
 fi
 
 if [ "$failures" -gt 0 ]; then

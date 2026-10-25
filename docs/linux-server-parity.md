@@ -47,3 +47,24 @@
 - Nginx 代理后，`/api/server/clients` 显示真实客户端 IP；伪造 XFF 不应从直连客户端获得信任。
 - 客户端 B 不能看到/操作客户端 A 的长时任务。
 - Linux 包解压后可直接 `node linux_server/server.cjs` 启动；`install.sh` 安装后 systemd 单元、数据目录和 Nginx 反代按 `guideline.md` 工作。
+
+---
+
+## 5. 本轮一致性保障（2026-10）
+
+Linux 入口和桌面入口继续共用 `server/api/api.cjs`，没有另写一套 API。本轮补上了可执行的对照与打包校验：
+
+- **运行时对照测试**：`tests/server-parity.test.cjs` 同时启动桌面式 `startApi` 与 Linux `startFromEnv`（关闭 Linux 登录做等价比较），比较 `/api/health` 的 `appVersion`、`schemaVersion`、`solverProtocol`、`capabilities`、配额配置，以及 `/` 构建页面和空工作区数据。两边必须完全一致。
+- **构建清单**：`npm run dist:linux` 会在包根写入 `warpweft-build.json`，记录版本、schema、capabilities、渲染资源数量，以及 `dist/index.html`、`server/api/api.cjs`、`linux_server/server.cjs`、`data-schema.json`、Solver jar 的 SHA-256。
+- **安装后自检**：`linux_server/verify.sh` 在 health/schema 检查后调用 `verify-manifest.cjs`，把运行中的 `appVersion` / `schemaVersion` / `solverProtocol` / `capabilities` 与构建清单对比，并校验五个关键文件及 renderer 资源哈希；半覆盖升级、只替换 UI 或只替换 API 会直接失败。
+- **构建资源检查**：`scripts/build-linux-server.cjs` 会解析 `dist/index.html` 的本地 `src`/`href`，确认引用的 JS/CSS/图标都进入包内，避免“服务能启动但页面白屏”。
+- **最新包**：`dist/linux-server/warpweft-linux-server-0.1.0.tar.gz` 已按当前 `dist`、`data-schema.json`、Solver jar 重新构建；解压后启动并用 `WARPVEFT_BASE_URL=http://127.0.0.1:4321 bash linux_server/verify.sh` 实测通过。
+
+### 仍然保留的平台差异（不是能力缺失）
+
+- Linux 默认启用账号登录和管理员用户管理；Electron 单机版不启用登录，只保存本地工作区。
+- 桌面版有系统文件选择/打开文件夹；Linux 浏览器使用普通下载/目录选择器，受浏览器安全边界限制。
+- 数据目录：桌面版可在界面选择工作区；Linux 固定在 `WARPVEFT_DATA_DIR`（默认 `/var/lib/warpweft`）。
+- 登录、用户管理、桌面 bridge 不进入“能力一致性”比较；其余 API、schema、capabilities、静态 UI 和 Solver 路径必须一致。
+
+**验证**：`node --test tests/server-parity.test.cjs tests/linux-manifest.test.cjs` 2 条通过；Linux 包解压启动后 `verify.sh` 全部检查通过，`build manifest matches health, schema and package hashes`。

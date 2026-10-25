@@ -6,6 +6,7 @@ const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 const skipBuild = process.argv.includes('--skip-build');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const schema = JSON.parse(fs.readFileSync(path.join(root, 'data-schema.json'), 'utf8'));
 const version = pkg.version || '0.0.0';
 const outputDir = path.join(root, 'dist', 'linux-server');
 const stageParent = path.join(root, 'build', 'linux-server');
@@ -28,6 +29,29 @@ function copy(source, target) {
   const dst = path.join(stage, target);
   fs.mkdirSync(path.dirname(dst), { recursive: true });
   fs.cpSync(path.join(root, source), dst, { recursive: true });
+}
+
+function sha256(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function verifyRendererAssets(distDir) {
+  const indexPath = path.join(distDir, 'index.html');
+  if (!fs.existsSync(indexPath)) throw new Error('构建产物缺少 dist/index.html');
+  const html = fs.readFileSync(indexPath, 'utf8');
+  const refs = Array.from(html.matchAll(/(?:src|href)="([^"]+)"/g), (match) => match[1])
+    .filter((ref) => ref && !/^(?:https?:|data:|#|\/\/)/i.test(ref));
+  const hashes = {};
+  for (const ref of refs) {
+    const clean = ref.split('?')[0].split('#')[0];
+    const target = path.resolve(distDir, clean.replace(/^\/+/, ''));
+    if (!target.startsWith(path.resolve(distDir) + path.sep)) {
+      throw new Error('renderer 资源路径越界：' + ref);
+    }
+    if (!fs.existsSync(target)) throw new Error('renderer 资源缺失：' + ref);
+    hashes[clean] = sha256(target);
+  }
+  return { count: refs.length, hashes };
 }
 
 function copyRenderer(source, target) {
@@ -87,6 +111,26 @@ const runtimePackage = {
   main: 'linux_server/server.cjs',
 };
 fs.writeFileSync(path.join(stage, 'package.json'), JSON.stringify(runtimePackage, null, 2) + '\n', 'utf8');
+
+const renderer = verifyRendererAssets(path.join(stage, 'dist'));
+const manifest = {
+  appVersion: version,
+  schemaVersion: Number(schema.version) || 1,
+  solverProtocol: schema.solverProtocol || '1.0',
+  capabilities: Array.isArray(schema.features) ? schema.features : [],
+  builtAt: new Date().toISOString(),
+  assetCount: renderer.count,
+  assetHashes: renderer.hashes,
+  hashes: {
+    rendererIndex: sha256(path.join(stage, 'dist', 'index.html')),
+    serverApi: sha256(path.join(stage, 'server', 'api', 'api.cjs')),
+    serverEntry: sha256(path.join(stage, 'linux_server', 'server.cjs')),
+    dataSchema: sha256(path.join(stage, 'data-schema.json')),
+    solverJar: sha256(path.join(stage, 'resources', 'solver', 'warpweft-solver.jar')),
+  },
+};
+fs.writeFileSync(path.join(stage, 'warpweft-build.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+console.log('[linux-server] renderer assets: ' + renderer.count + ', schema v' + manifest.schemaVersion);
 
 fs.mkdirSync(outputDir, { recursive: true });
 fs.rmSync(tarPath, { force: true });

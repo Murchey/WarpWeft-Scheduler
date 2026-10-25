@@ -113,7 +113,7 @@ npm run build:solver
 npm run dist:linux
 ```
 
-Linux 部署包包含 systemd 单元、安装/卸载/验证脚本和 Nginx 示例，不需要在服务器上安装 Electron 或执行 `npm install`。完整安装、TLS、备份和排障步骤见 [guideline.md](guideline.md)，本地服务端/UI 对照见 [docs/linux-server-parity.md](docs/linux-server-parity.md)。
+Linux 部署包包含 systemd 单元、安装/卸载/验证脚本和 Nginx 示例，不需要在服务器上安装 Electron 或执行 `npm install`。完整安装、TLS、备份和排障步骤见 [guideline.md](guideline.md)，本地服务端/UI 对照见 [docs/linux-server-parity.md](docs/linux-server-parity.md)。安装后 `sudo bash /opt/warpweft/linux_server/verify.sh` 会同时核对运行中服务与安装包清单（版本、schema、capabilities、渲染资源、API/Server/Solver 哈希），避免 Linux 包与本地 UI/API 版本不一致。
 
 ## 数据与打包
 
