@@ -5,6 +5,15 @@ const { startApi } = require('../../server/api/api.cjs');
 
 const rootDir = path.resolve(__dirname, '../..');
 const appIcon = app.isPackaged ? path.join(process.resourcesPath, 'icon.png') : path.join(rootDir, 'assets', 'icon.png');
+
+// WarpWeft only talks to its own local/LAN/cloud server. A system proxy that
+// intercepts TLS (common with local Clash/V2Ray-style tools) makes Chromium
+// reject an IP-address certificate with ERR_CERT_COMMON_NAME_INVALID. Connect
+// directly by default; set WARPVEFT_USE_SYSTEM_PROXY=1 to opt back in.
+if (process.env.WARPVEFT_USE_SYSTEM_PROXY !== '1') {
+  app.commandLine.appendSwitch('no-proxy-server');
+}
+
 app.setAppUserModelId('com.warpweft.scheduler');
 let server;
 let workspaceDir = null;

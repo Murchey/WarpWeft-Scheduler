@@ -472,6 +472,9 @@ function App() {
     return saved === 'single' || saved === 'lan-server' || saved === 'lan-client' || saved === 'cloud' ? saved : null;
   });
   const [modeSettingsOpen, setModeSettingsOpen] = useState(false);
+  // Saving the same run mode with a different endpoint must still re-run
+  // bootstrap; otherwise "链接云端" silently keeps using the old URL.
+  const [modeRevision, setModeRevision] = useState(0);
   const [data, setData] = useState<SchoolData | null>(null);
   const [loadError, setLoadError] = useState('');
   const [result, setResult] = useState<SolverOutput | null>(null);
@@ -671,7 +674,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [runMode, loadWorkspace]);
+  }, [runMode, modeRevision, loadWorkspace]);
 
   const handleLogin = async (username: string, password: string) => {
     setAuthBusy(true);
@@ -716,6 +719,11 @@ function App() {
     setRunMode(nextMode);
     setModeSettingsOpen(false);
     setApiOnline(null);
+    setAuthUser(null);
+    setData(null);
+    setResult(null);
+    setAuthError('');
+    setModeRevision((value) => value + 1);
     if (nextMode === 'lan-server') setTab('服务端');
     else if (tab === '服务端') setTab('工作台');
   };
