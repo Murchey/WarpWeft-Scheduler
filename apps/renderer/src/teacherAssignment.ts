@@ -74,22 +74,51 @@ function listSubjects(teacher: Teacher): string[] {
  * Resolve plans that intentionally leave the teacher blank. The result is used
  * only for one solve; the source plan keeps its blank teacher so the user can
  * still treat the teacher as a soft condition.
+ *
+ * The assignment is capacity-aware: a teacher is skipped when their weekly
+ * load would exceed either their available time slots or a "教师每日上限"
+ * rule, and teachers who already teach the class are preferred so a class does
+ * not end up with a different teacher for every lesson.
  */
 export function assignMissingTeachers(data: SchoolData): {
   plans: CoursePlan[];
   assigned: number;
   unresolved: number;
+  unresolvedReasons: { planId: string; reason: string }[];
 } {
   const subjectName = new Map(data.subjects.map((subject) => [subject.id, subject.name.trim()]));
   const classGrade = new Map(data.classes.map((klass) => [klass.id, gradeNumber(klass.grade)]));
+  const slotsByKey = data.timeSlots.length;
+  const dayCount = new Set(data.timeSlots.map((slot) => slot.day)).size || 5;
   const load = new Map<string, number>();
+  const classLoad = new Map<string, number>();
   for (const teacher of data.teachers) load.set(teacher.id, 0);
   for (const plan of data.coursePlans) {
-    if (plan.teacherId) load.set(plan.teacherId, (load.get(plan.teacherId) ?? 0) + Number(plan.weeklyPeriods || 0));
+    if (!plan.teacherId) continue;
+    load.set(plan.teacherId, (load.get(plan.teacherId) ?? 0) + Number(plan.weeklyPeriods || 0));
+    const key = plan.teacherId + '|' + plan.classId;
+    classLoad.set(key, (classLoad.get(key) ?? 0) + Number(plan.weeklyPeriods || 0));
   }
+
+  /** Weekly capacity: available slots and (when a rule exists) daily cap × days. */
+  const weeklyLimit = (teacherId: string): number => {
+    let maxDaily: number | null = null;
+    for (const rule of data.rules ?? []) {
+      if (!rule.enabled || rule.kind !== 'TEACHER_MAX_DAILY') continue;
+      const scope = rule.scope;
+      if (scope.type !== 'all' && !(scope.type === 'teacher' && scope.teacherId === teacherId)) continue;
+      const value = Number(rule.params?.maxPerDay ?? 0);
+      if (value >= 1) maxDaily = maxDaily === null ? value : Math.min(maxDaily, value);
+    }
+    const unavailable = (data.unavailableSlots ?? []).filter((item) => item.teacherId === teacherId).length;
+    const available = slotsByKey > 0 ? Math.max(0, slotsByKey - unavailable) : Number.POSITIVE_INFINITY;
+    const byDaily = maxDaily === null ? Number.POSITIVE_INFINITY : maxDaily * dayCount;
+    return Math.min(available, byDaily);
+  };
 
   let assigned = 0;
   let unresolved = 0;
+  const unresolvedReasons: { planId: string; reason: string }[] = [];
   const plans = data.coursePlans.map((plan) => ({ ...plan }));
 
   // First pass: every homeroom teacher gets one lesson in their own class when
@@ -106,8 +135,11 @@ export function assignMissingTeachers(data: SchoolData): {
       return subjects.includes(subjectName.get(plan.subjectId) ?? '');
     });
     if (index < 0) continue;
+    const periods = Number(plans[index].weeklyPeriods || 0);
+    if ((load.get(teacher.id) ?? 0) + periods > weeklyLimit(teacher.id)) continue;
     plans[index] = { ...plans[index], teacherId: teacher.id };
-    load.set(teacher.id, (load.get(teacher.id) ?? 0) + Number(plans[index].weeklyPeriods || 0));
+    load.set(teacher.id, (load.get(teacher.id) ?? 0) + periods);
+    classLoad.set(teacher.id + '|' + klass.id, (classLoad.get(teacher.id + '|' + klass.id) ?? 0) + periods);
     assigned += 1;
   }
 
@@ -124,18 +156,29 @@ export function assignMissingTeachers(data: SchoolData): {
       if (grades.length > 0 && grade !== null && !grades.includes(grade)) return false;
       return true;
     });
-    if (candidates.length === 0) {
+    const periods = Number(plan.weeklyPeriods || 0);
+    const withCapacity = candidates.filter((teacher) => (load.get(teacher.id) ?? 0) + periods <= weeklyLimit(teacher.id));
+    if (withCapacity.length === 0) {
       unresolved += 1;
+      unresolvedReasons.push({
+        planId: plan.id,
+        reason: candidates.length === 0 ? '没有符合学科/年级/负责班级条件的教师' : '符合条件的教师周课时或可用时段已满',
+      });
       continue;
     }
-    const chosen = candidates.slice().sort((a, b) => {
+    const chosen = withCapacity.slice().sort((a, b) => {
+      // Prefer continuity: a teacher already teaching this class.
+      const continuity = Number((classLoad.get(b.id + '|' + plan.classId) ?? 0) > 0)
+        - Number((classLoad.get(a.id + '|' + plan.classId) ?? 0) > 0);
+      if (continuity !== 0) return continuity;
       const difference = (load.get(a.id) ?? 0) - (load.get(b.id) ?? 0);
       return difference !== 0 ? difference : a.id.localeCompare(b.id);
     })[0];
-    load.set(chosen.id, (load.get(chosen.id) ?? 0) + Number(plan.weeklyPeriods || 0));
+    load.set(chosen.id, (load.get(chosen.id) ?? 0) + periods);
+    classLoad.set(chosen.id + '|' + plan.classId, (classLoad.get(chosen.id + '|' + plan.classId) ?? 0) + periods);
     assigned += 1;
     plans[index] = { ...plan, teacherId: chosen.id };
   }
-  return { plans, assigned, unresolved };
+  return { plans, assigned, unresolved, unresolvedReasons };
 }
 

@@ -2,6 +2,7 @@ package com.warpweft.solver.engine;
 
 import com.warpweft.solver.model.ClassInfo;
 import com.warpweft.solver.model.Entry;
+import com.warpweft.solver.model.Plan;
 import com.warpweft.solver.model.Room;
 import com.warpweft.solver.model.Slot;
 import com.warpweft.solver.rules.Rule;
@@ -24,6 +25,13 @@ public final class State {
     public final Map<String, Integer> classSlot = new HashMap<>();
     public final Map<String, Integer> teacherSlot = new HashMap<>();
     public final Map<String, Integer> roomSlot = new HashMap<>();
+    /** Fixed-time reservations: a pending fixed lesson keeps its slot away from free lessons. */
+    private final Map<String, Integer> reservedClassSlot = new HashMap<>();
+    private final Map<String, Integer> reservedTeacherSlot = new HashMap<>();
+    /** planId|slotId → reserved week mask, kept so a fixed lesson can consume its own reservation. */
+    private final Map<String, Integer> reservationByPlanSlot = new HashMap<>();
+    /** subjectId → morning/afternoon preference. */
+    public final Map<String, String> subjectPreference = new HashMap<>();
     final Map<String, Integer> teacherLoad = new HashMap<>();
     // Incremental counters, bucketed by week parity: key|…|mask. A candidate
     // whose week mask overlaps several buckets sums the matching buckets only.
@@ -52,21 +60,102 @@ public final class State {
     }
 
     State(Map<String, Slot> sourceSlots, Map<String, Room> sourceRooms, Map<String, ClassInfo> sourceClasses,
-          Set<String> sourceUnavailable, List<Rule> sourceRules, Map<String, List<String>> sourceGroups) {
+          Set<String> sourceUnavailable, List<Rule> sourceRules, Map<String, List<String>> sourceGroups,
+          Map<String, String> sourceSubjectPreference) {
         slots.putAll(sourceSlots);
         rooms.putAll(sourceRooms);
         classes.putAll(sourceClasses);
         unavailable.addAll(sourceUnavailable);
         rules.addAll(sourceRules);
         groupClasses.putAll(sourceGroups);
+        subjectPreference.putAll(sourceSubjectPreference);
+    }
+
+    State(Map<String, Slot> sourceSlots, Map<String, Room> sourceRooms, Map<String, ClassInfo> sourceClasses,
+          Set<String> sourceUnavailable, List<Rule> sourceRules, Map<String, List<String>> sourceGroups) {
+        this(sourceSlots, sourceRooms, sourceClasses, sourceUnavailable, sourceRules, sourceGroups, Map.of());
     }
 
     /** Deep copy used by the ruin-and-recreate loop. */
     State copy() {
-        State copy = new State(slots, rooms, classes, unavailable, rules, groupClasses);
+        State copy = new State(slots, rooms, classes, unavailable, rules, groupClasses, subjectPreference);
         copy.pairedPlans.addAll(pairedPlans);
+        copy.reservedClassSlot.putAll(reservedClassSlot);
+        copy.reservedTeacherSlot.putAll(reservedTeacherSlot);
+        copy.reservationByPlanSlot.putAll(reservationByPlanSlot);
         for (Entry entry : entries) copy.add(entry);
         return copy;
+    }
+
+    /**
+     * Keep a slot for a fixed lesson that is not placed yet. Free lessons must
+     * not take it; the fixed lesson clears the reservation when it is placed.
+     */
+    void reserveFixed(Plan plan, String slotId) {
+        int mask = weekMask(plan.weeks());
+        String key = plan.id() + "|" + slotId;
+        Integer current = reservationByPlanSlot.get(key);
+        int next = current == null ? mask : current | mask;
+        int added = current == null ? next : next & ~current;
+        reservationByPlanSlot.put(key, next);
+        addMask(reservedClassSlot, plan.classId() + "|" + slotId, added);
+        addMask(reservedTeacherSlot, plan.teacherId() + "|" + slotId, added);
+    }
+
+    /** Drop a reservation, e.g. before placing the fixed lesson itself. */
+    void releaseReservation(Plan plan, String slotId) {
+        String key = plan.id() + "|" + slotId;
+        Integer mask = reservationByPlanSlot.remove(key);
+        if (mask == null) return;
+        removeMask(reservedClassSlot, plan.classId() + "|" + slotId, mask);
+        removeMask(reservedTeacherSlot, plan.teacherId() + "|" + slotId, mask);
+    }
+
+    /** True when a pending fixed lesson owns this class slot for overlapping weeks. */
+    public boolean classSlotReserved(String classId, String slotId, int mask) {
+        Integer classMask = reservedClassSlot.get(classId + "|" + slotId);
+        return classMask != null && (classMask & mask) != 0;
+    }
+
+    /** True when a pending fixed lesson owns this teacher slot for overlapping weeks. */
+    public boolean teacherSlotReserved(String teacherId, String slotId, int mask) {
+        Integer teacherMask = reservedTeacherSlot.get(teacherId + "|" + slotId);
+        return teacherMask != null && (teacherMask & mask) != 0;
+    }
+
+    /** True when a pending fixed lesson owns this class/teacher slot for overlapping weeks. */
+    public boolean reservationBlocks(String classId, String teacherId, String slotId, int mask) {
+        return classSlotReserved(classId, slotId, mask) || teacherSlotReserved(teacherId, slotId, mask);
+    }
+
+    /** Last period that still counts as morning on this weekday. */
+    public int morningCutoff(int day) {
+        int min = Integer.MAX_VALUE;
+        int max = 0;
+        for (Slot slot : slots.values()) {
+            if (slot.day() != day) continue;
+            min = Math.min(min, slot.period());
+            max = Math.max(max, slot.period());
+        }
+        if (max == 0) return 0;
+        return (min + max) / 2;
+    }
+
+    public String subjectPreferenceOf(String subjectId) {
+        return subjectPreference.getOrDefault(subjectId, "");
+    }
+
+    private static void addMask(Map<String, Integer> masks, String key, int mask) {
+        if (mask == 0) return;
+        masks.merge(key, mask, (current, added) -> current | added);
+    }
+
+    private static void removeMask(Map<String, Integer> masks, String key, int mask) {
+        Integer current = masks.get(key);
+        if (current == null) return;
+        int next = current & ~mask;
+        if (next == 0) masks.remove(key);
+        else masks.put(key, next);
     }
 
     public TreeSet<Integer> teacherPeriods(String teacherId, int day, int mask) {
@@ -207,6 +296,9 @@ public final class State {
         private final Map<String, Integer> classSubjectDayCount;
         private final Map<String, TreeSet<Integer>> teacherDayPeriods;
         private final Set<String> pairedPlans;
+        private final Map<String, Integer> reservedClassSlot;
+        private final Map<String, Integer> reservedTeacherSlot;
+        private final Map<String, Integer> reservationByPlanSlot;
 
         private Snapshot(State state) {
             entries = new ArrayList<>(state.entries);
@@ -222,6 +314,9 @@ public final class State {
                 teacherDayPeriods.put(item.getKey(), new TreeSet<>(item.getValue()));
             }
             pairedPlans = new HashSet<>(state.pairedPlans);
+            reservedClassSlot = new HashMap<>(state.reservedClassSlot);
+            reservedTeacherSlot = new HashMap<>(state.reservedTeacherSlot);
+            reservationByPlanSlot = new HashMap<>(state.reservationByPlanSlot);
         }
     }
 
@@ -244,6 +339,9 @@ public final class State {
             teacherDayPeriods.put(item.getKey(), new TreeSet<>(item.getValue()));
         }
         replace(pairedPlans, snapshot.pairedPlans);
+        replace(reservedClassSlot, snapshot.reservedClassSlot);
+        replace(reservedTeacherSlot, snapshot.reservedTeacherSlot);
+        replace(reservationByPlanSlot, snapshot.reservationByPlanSlot);
     }
 
     private static <T> void replace(Set<T> target, Set<T> source) {

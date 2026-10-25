@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { CoursePlan, SchoolData, SlotKind } from './types';
+import { FixedSlotsDialog } from './FixedSlotsDialog';
 import { uid } from './utils';
 
 type Commit = (next: SchoolData, options?: { invalidate?: boolean; immediate?: boolean }) => void;
@@ -25,7 +26,11 @@ function PlanComposer({
   const [weeks, setWeeks] = useState<'all' | 'odd' | 'even'>('all');
   const [planKind, setPlanKind] = useState<SlotKind>('regular');
   const [roomType, setRoomType] = useState(data.rooms[0]?.type ?? '');
-  const [fixedSlotId, setFixedSlotId] = useState('');
+  const [fixedSlotIds, setFixedSlotIds] = useState<string[]>([]);
+  const [consecutive, setConsecutive] = useState(0);
+  const [pairId, setPairId] = useState('');
+  const [fixedOpen, setFixedOpen] = useState(false);
+  const slotLabel = (slotId: string) => data.timeSlots.find((slot) => slot.id === slotId)?.label ?? slotId;
   const toggleClass = (id: string) => {
     setClassIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   };
@@ -36,6 +41,14 @@ function PlanComposer({
     }
     if (!Number.isFinite(weeklyPeriods) || weeklyPeriods < 1) {
       setError('周课时必须是大于 0 的整数');
+      return;
+    }
+    if (fixedSlotIds.length > Math.floor(weeklyPeriods)) {
+      setError('固定时间有 ' + fixedSlotIds.length + ' 节，超过周课时 ' + Math.floor(weeklyPeriods) + ' 节');
+      return;
+    }
+    if (consecutive !== 0 && (consecutive < 2 || consecutive > 4)) {
+      setError('连堂节数只能填 0 或 2–4');
       return;
     }
     let nextSubjects = data.subjects;
@@ -78,7 +91,9 @@ function PlanComposer({
       teacherId: nextTeacherId,
       weeklyPeriods: Math.floor(weeklyPeriods),
       roomType: roomType.trim(),
-      fixedSlotId,
+      ...(fixedSlotIds.length ? { fixedSlotIds } : {}),
+      ...(consecutive >= 2 ? { consecutive } : {}),
+      ...(pairId.trim() ? { pairId: pairId.trim() } : {}),
       weeks,
       kind: planKind,
     }));
@@ -125,7 +140,14 @@ function PlanComposer({
             <label>周次（选填）<select value={weeks} onChange={(event) => setWeeks(event.target.value as 'all' | 'odd' | 'even')}><option value="all">每周</option><option value="odd">单周</option><option value="even">双周</option></select></label>
             <label>课程类型（选填）<select value={planKind} onChange={(event) => setPlanKind(event.target.value as SlotKind)}><option value="regular">常规</option><option value="morning">早读</option><option value="study">自习</option><option value="aftercare">课后服务</option><option value="evening">晚自习</option><option value="makeup">补课</option></select></label>
             <label>教室类型（选填）<input list="composer-room-types" value={roomType} onChange={(event) => setRoomType(event.target.value)} placeholder="不限 / 普通教室" /><datalist id="composer-room-types">{roomTypes.map((type) => <option key={type} value={type} />)}</datalist></label>
-            <label>固定时间（选填）<select value={fixedSlotId} onChange={(event) => setFixedSlotId(event.target.value)}><option value="">不固定</option>{data.timeSlots.map((slot) => <option key={slot.id} value={slot.id}>{slot.label}</option>)}</select></label>
+            <label>固定时间（选填）
+              <button type="button" className="classes-trigger" onClick={() => setFixedOpen(true)} title="可多选；按勾选顺序固定每一节">
+                <span>{fixedSlotIds.length ? fixedSlotIds.map(slotLabel).join('；') : '不固定'}</span>
+                <em>选择</em>
+              </button>
+            </label>
+            <label>连堂节数（选填）<input type="number" min={0} max={4} value={consecutive} onChange={(event) => setConsecutive(Number(event.target.value) || 0)} placeholder="0 / 2–4" /></label>
+            <label>配对组（选填）<input value={pairId} onChange={(event) => setPairId(event.target.value)} placeholder="如 语数间周（单双周同格）" /></label>
           </div>
         </div>
         <div className="composer-actions">
@@ -133,6 +155,16 @@ function PlanComposer({
           <button type="button" className="action-button" onClick={submit}>创建 {classIds.length} 条计划 <span>→</span></button>
         </div>
       </div>
+      {fixedOpen ? (
+        <FixedSlotsDialog
+          title={'固定时间：新增 ' + classIds.length + ' 条计划'}
+          slots={data.timeSlots}
+          value={fixedSlotIds}
+          max={Math.floor(weeklyPeriods)}
+          onChange={setFixedSlotIds}
+          onClose={() => setFixedOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

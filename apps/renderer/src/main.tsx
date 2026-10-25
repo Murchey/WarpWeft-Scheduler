@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client';
 import { HeroUIProvider, Button, Card, CardBody, Chip, Progress, Select, SelectItem, Tabs, Tab } from '@heroui/react';
 import { validateInput } from '../../../packages/validation/src';
+import { consecutiveOf, fixedSlotIdsOf } from '../../../packages/contracts/src';
 import { exportCsv, exportWorkbook, readWorkbook } from '../../../packages/import-export/src';
 import { ApiError, cancelServerJob, clearAuthToken, createUser, DEFAULT_API_BASE, deleteServerClient, deleteUser, fetchHealth, fetchMe, fetchServerOverview, fetchUsers, getApiBase, getAuthToken, loadData, login, logout, registerUnauthorizedHandler, saveData, setAuthToken, solveSchedule, updateServerConfig, updateUser } from './api';
 import { DAYS, SectionHeading } from './components';
@@ -408,14 +409,48 @@ function preflight(inputData: SchoolData): string[] {
     (findClass(data, plan.classId)?.name ?? '未知班级') + ' / ' + planSubjectName(data, plan);
   const fixed = new Map<string, { id: string; label: string; weeks: string }[]>();
   for (const plan of data.coursePlans) {
-    if (!plan.fixedSlotId) continue;
+    const consecutive = consecutiveOf(plan);
+    if (consecutive >= 2 && consecutive > Number(plan.weeklyPeriods || 0)) {
+      issues.push(planText(plan) + ' 的连堂节数 ' + consecutive + ' 超过周课时 ' + plan.weeklyPeriods + ' 节');
+    }
+    const fixedSlotIds = fixedSlotIdsOf(plan);
+    if (fixedSlotIds.length === 0) continue;
+    if (fixedSlotIds.length > Number(plan.weeklyPeriods || 0)) {
+      issues.push(planText(plan) + ' 的固定时间有 ' + fixedSlotIds.length + ' 节，超过周课时 ' + plan.weeklyPeriods + ' 节');
+    }
     const weeks = plan.weeks ?? 'all';
-    for (const key of ['c:' + plan.classId + ':' + plan.fixedSlotId, 't:' + plan.teacherId + ':' + plan.fixedSlotId]) {
-      const prior = fixed.get(key) ?? [];
-      const clash = prior.find((item) => weeksOverlap(item.weeks, weeks));
-      if (clash) issues.push('固定时间冲突：「' + clash.label + '」与「' + planText(plan) + '」不能同时占用同一时间');
-      else prior.push({ id: plan.id, label: planText(plan), weeks });
-      fixed.set(key, prior);
+    for (const slotId of fixedSlotIds) {
+      for (const key of ['c:' + plan.classId + ':' + slotId, 't:' + plan.teacherId + ':' + slotId]) {
+        const prior = fixed.get(key) ?? [];
+        const clash = prior.find((item) => weeksOverlap(item.weeks, weeks));
+        if (clash) issues.push('固定时间冲突：「' + clash.label + '」与「' + planText(plan) + '」不能同时占用同一时间');
+        else prior.push({ id: plan.id, label: planText(plan), weeks });
+        fixed.set(key, prior);
+      }
+    }
+  }
+  const pairGroups = new Map<string, CoursePlan[]>();
+  for (const plan of data.coursePlans) {
+    if (!plan.pairId) continue;
+    pairGroups.set(plan.pairId, [...(pairGroups.get(plan.pairId) ?? []), plan]);
+  }
+  for (const [pairId, group] of pairGroups) {
+    if (group.length < 2) {
+      issues.push('配对组「' + pairId + '」只有 1 条计划，至少需要两条才能同格');
+      continue;
+    }
+    for (const plan of group) {
+      const overlap = group.some((other) => other.id !== plan.id
+        && other.classId === plan.classId
+        && weeksOverlap(other.weeks ?? 'all', plan.weeks ?? 'all'));
+      if (overlap) {
+        issues.push('配对组「' + pairId + '」在 ' + (findClass(data, plan.classId)?.name ?? plan.classId) + ' 的周次重叠，无法共用同一时段');
+        break;
+      }
+    }
+    const fixedKey = (plan: CoursePlan) => fixedSlotIdsOf(plan).join('|');
+    if (new Set(group.map(fixedKey)).size > 1) {
+      issues.push('配对组「' + pairId + '」的固定时间必须完全一致');
     }
   }
   return Array.from(new Set(issues));
@@ -1360,14 +1395,27 @@ function App() {
     }
     if (moving.slotId === targetSlotId) return;
     const movingPlan = planOf(data, moving);
-    if (movingPlan?.fixedSlotId && movingPlan.fixedSlotId !== targetSlotId) {
-      setError('该课程设置了固定时间，不能移动');
+    const movingFixed = fixedSlotIdsOf(movingPlan ?? {});
+    if (movingFixed.includes(moving.slotId)) {
+      setError('这一节固定在指定时间，不能移动');
+      return;
+    }
+    if (movingFixed.includes(targetSlotId)) {
+      setError('目标时段被同一门课的固定节次占用，不能移入');
+      return;
+    }
+    if (movingPlan?.pairId) {
+      setError('配对课程（单双周同格）不能单独移动');
       return;
     }
     if (target) {
       const targetPlan = planOf(data, target);
-      if (targetPlan?.fixedSlotId && targetPlan.fixedSlotId !== moving.slotId) {
-        setError('目标课程设置了固定时间，不能交换');
+      if (fixedSlotIdsOf(targetPlan ?? {}).includes(target.slotId)) {
+        setError('目标课程固定在指定时间，不能交换');
+        return;
+      }
+      if (targetPlan?.pairId) {
+        setError('目标课程是配对课程（单双周同格），不能单独交换');
         return;
       }
     }
@@ -3167,7 +3215,8 @@ function TimetablePage({
       : Math.max(0, expectedForView - viewLessonCount);
   const viewConflictCount = viewEntries.filter((entry) => conflicts.has(entry.id)).length;
   const viewFreeSlots = Math.max(0, data.timeSlots.length - viewLessonCount);
-  const canMove = Boolean(selected) && view === 'class' && !selected?.locked && !selectedPlan?.fixedSlotId && !selected?.groupId && !overlayDate;
+  const selectedFixed = selected ? fixedSlotIdsOf(selectedPlan ?? {}).includes(selected.slotId) : false;
+  const canMove = Boolean(selected) && view === 'class' && !selected?.locked && !selectedFixed && !selectedPlan?.pairId && !selected?.groupId && !overlayDate;
   const selectedGroup = selected ? groupOfEntry(selected) : undefined;
   const selectedBlock = selected ? blockOfEntry(selected) : undefined;
   const slotAt = (day: number, period: number) => data.timeSlots.find((slot) => slot.day === day && slot.period === period);
@@ -3411,9 +3460,10 @@ function TimetablePage({
               {!swapMode && canMove && moveTargets.length > 0 ? <span className="tt-move-hint">点击空白时间格移动（{moveTargets.length} 个可用）</span> : null}
               {!swapMode && canMove && moveTargets.length === 0 ? <span className="tt-move-hint is-muted" title="教师或教室在该时段已被占用；增加时间段或教师可释放空间">没有无冲突的移动目标</span> : null}
               {!swapMode && selected.locked ? <span className="tt-move-hint is-muted">已锁定，不可移动</span> : null}
-              {!swapMode && selectedPlan?.fixedSlotId && !selected.locked ? <span className="tt-move-hint is-muted">固定时间，不可移动</span> : null}
+              {!swapMode && selectedFixed && !selected.locked ? <span className="tt-move-hint is-muted">固定时间，不可移动</span> : null}
+              {!swapMode && selectedPlan?.pairId && !selected.locked ? <span className="tt-move-hint is-muted">配对课程（单双周同格），不能单独移动</span> : null}
               {!swapMode && selected.groupId ? <span className="tt-move-hint is-muted">走班课程由走班组统一安排，不能单独移动</span> : null}
-              {view === 'class' && !overlayDate && !selected.groupId && !selected.locked && !selectedPlan?.fixedSlotId ? <button className={'tt-btn' + (swapMode ? ' tt-btn-primary' : '')} onClick={() => setSwapMode((value) => !value)}>{swapMode ? '退出交换' : '交换课程'}</button> : null}
+              {view === 'class' && !overlayDate && !selected.groupId && !selected.locked && !selectedFixed && !selectedPlan?.pairId ? <button className={'tt-btn' + (swapMode ? ' tt-btn-primary' : '')} onClick={() => setSwapMode((value) => !value)}>{swapMode ? '退出交换' : '交换课程'}</button> : null}
               <button className="tt-btn tt-btn-primary" onClick={() => onToggleLock(selected.id)} disabled={Boolean(overlayDate) || Boolean(selected.groupId)} title={overlayDate ? '日期调整视图为只读' : selected.groupId ? '走班课程不能单独锁定' : undefined}>
                 {selected.locked ? '解锁课程' : '锁定课程'}
               </button>

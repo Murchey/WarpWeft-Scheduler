@@ -27,7 +27,8 @@ import java.util.Set;
 public final class SolverProtocol {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String[] SCORE_KEYS = {
-        "subjectDistribution", "teacherContinuous", "teacherGaps", "teacherWorkloadBalance", "classGaps", "rules"
+        "subjectDistribution", "teacherContinuous", "teacherGaps", "teacherWorkloadBalance",
+        "classGaps", "subjectTimePreference", "rules"
     };
 
     public static void run(String[] args) {
@@ -106,12 +107,29 @@ public final class SolverProtocol {
             teacherSubjects.put(teacherId, subjects);
         }
         Set<String> subjectIds = new HashSet<>();
-        for (JsonNode node : root.path("subjects")) subjectIds.add(text(node, "id", ""));
+        for (JsonNode node : root.path("subjects")) {
+            String subjectId = text(node, "id", "");
+            subjectIds.add(subjectId);
+            String preference = text(node, "preference", "");
+            if (!preference.isBlank()) data.subjectPreference.put(subjectId, preference);
+        }
         for (JsonNode node : root.path("coursePlans")) {
+            List<String> fixedSlotIds = new ArrayList<>();
+            JsonNode fixedArray = node.get("fixedSlotIds");
+            if (fixedArray != null && fixedArray.isArray()) {
+                for (JsonNode item : fixedArray) {
+                    String slotId = item.asText("");
+                    if (!slotId.isBlank() && !fixedSlotIds.contains(slotId)) fixedSlotIds.add(slotId);
+                }
+            }
+            String legacyFixed = text(node, "fixedSlotId", "");
+            if (fixedSlotIds.isEmpty() && !legacyFixed.isBlank()) fixedSlotIds.add(legacyFixed);
+            int consecutive = Math.max(0, Math.min(4, integer(node, "consecutive", 0)));
             Plan plan = new Plan(
                 text(node, "id", ""), text(node, "classId", ""), text(node, "subjectId", ""),
                 text(node, "teacherId", ""), integer(node, "weeklyPeriods", 0),
-                text(node, "roomType", ""), text(node, "fixedSlotId", ""), text(node, "weeks", "all"), text(node, "kind", "regular")
+                text(node, "roomType", ""), fixedSlotIds, text(node, "weeks", "all"), text(node, "kind", "regular"),
+                consecutive, text(node, "pairId", "")
             );
             if (plan.weeklyPeriods() <= 0) data.violations.add("教学计划 " + plan.id() + " 的周课时必须大于 0");
             if (!classIds.contains(plan.classId())) data.violations.add("教学计划 " + plan.id() + " 引用了不存在的班级");
@@ -121,8 +139,31 @@ public final class SolverProtocol {
                 data.violations.add("教学计划 " + plan.id() + " 的教师 " + plan.teacherId() + " 不负责班级 " + plan.classId());
             }
             if (!subjectIds.contains(plan.subjectId())) data.violations.add("教学计划 " + plan.id() + " 引用了不存在的学科");
-            if (!plan.fixedSlotId().isBlank() && !data.slots.containsKey(plan.fixedSlotId())) data.violations.add("教学计划 " + plan.id() + " 引用了不存在的固定时间");
+            for (String slotId : plan.fixedSlotIds()) {
+                if (!data.slots.containsKey(slotId)) data.violations.add("教学计划 " + plan.id() + " 引用了不存在的固定时间：" + slotId);
+            }
+            if (plan.fixedSlotIds().size() > plan.weeklyPeriods() && plan.weeklyPeriods() > 0) {
+                data.violations.add("教学计划 " + plan.id() + " 的固定时间数量超过周课时");
+            }
             data.plans.add(plan);
+        }
+        Map<String, List<Plan>> pairGroups = new HashMap<>();
+        for (Plan plan : data.plans) if (plan.paired()) pairGroups.computeIfAbsent(plan.pairId(), key -> new ArrayList<>()).add(plan);
+        for (Map.Entry<String, List<Plan>> entry : pairGroups.entrySet()) {
+            if (entry.getValue().size() < 2) continue;
+            for (int i = 0; i < entry.getValue().size(); i += 1) {
+                for (int j = i + 1; j < entry.getValue().size(); j += 1) {
+                    Plan a = entry.getValue().get(i);
+                    Plan b = entry.getValue().get(j);
+                    if (!a.classId().equals(b.classId())) continue;
+                    if ((weekMaskOf(a.weeks()) & weekMaskOf(b.weeks())) != 0) {
+                        data.violations.add("配对组 " + entry.getKey() + " 的周次重叠，无法共用同一时段");
+                    }
+                    if ((a.hasFixedSlots() || b.hasFixedSlots()) && !a.fixedSlotIds().equals(b.fixedSlotIds())) {
+                        data.violations.add("配对组 " + entry.getKey() + " 的固定时间必须完全一致");
+                    }
+                }
+            }
         }
         Map<String, List<String>> homeroomByTeacher = new HashMap<>();
         for (Map.Entry<String, String> entry : homeroomByClass.entrySet()) {
@@ -246,6 +287,12 @@ public final class SolverProtocol {
         return data;
     }
 
+    private static int weekMaskOf(String weeks) {
+        if ("odd".equals(weeks)) return 1;
+        if ("even".equals(weeks)) return 2;
+        return 3;
+    }
+
     private static String text(JsonNode node, String field, String fallback) {
         JsonNode value = node.get(field);
         return value == null || value.isNull() ? fallback : value.asText(fallback);
@@ -304,6 +351,7 @@ public final class SolverProtocol {
         breakdown.put("teacherGaps", score.teacherGaps());
         breakdown.put("teacherWorkloadBalance", score.teacherWorkloadBalance());
         breakdown.put("classGaps", score.classGaps());
+        breakdown.put("subjectTimePreference", score.subjectTimePreference());
         breakdown.put("rules", score.rulePenalty());
         result.put("explanation", "Java 21 求解器已生成可行课表");
         result.put("elapsedMs", (System.nanoTime() - started) / 1_000_000);

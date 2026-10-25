@@ -44,6 +44,9 @@ export interface CoursePlan {
   weeklyPeriods: number;
   roomType?: string;
   fixedSlotId?: string;
+  fixedSlotIds?: string[];
+  consecutive?: number;
+  pairId?: string;
 }
 
 export interface TimeSlot {
@@ -56,7 +59,7 @@ export interface TimeSlot {
 export interface RuleData {
   classes: { id: string; name: string; size?: number }[];
   teachers: { id: string; name: string }[];
-  subjects: { id: string; name: string }[];
+  subjects: { id: string; name: string; preference?: 'morning' | 'afternoon' }[];
   rooms: { id: string; name: string; type: string; capacity: number }[];
   timeSlots: TimeSlot[];
   coursePlans: CoursePlan[];

@@ -21,7 +21,7 @@ const {
 const MAX_BODY = 5 * 1024 * 1024;
 const MAX_JOBS = 100;
 const SLOT_KIND_VALUES = ['morning', 'regular', 'study', 'aftercare', 'evening', 'makeup'];
-const SOFT_RULE_KINDS = ['SUBJECT_DISTRIBUTION', 'TEACHER_CONTINUOUS', 'TEACHER_GAPS', 'TEACHER_WORKLOAD_BALANCE', 'CLASS_GAPS'];
+const SOFT_RULE_KINDS = ['SUBJECT_DISTRIBUTION', 'TEACHER_CONTINUOUS', 'TEACHER_GAPS', 'TEACHER_WORKLOAD_BALANCE', 'CLASS_GAPS', 'SUBJECT_TIME_PREFERENCE'];
 const MAX_LOGS = 500;
 const CLIENT_TTL_MS = 90_000;
 const CLIENT_PRUNE_MS = 30_000;
@@ -209,6 +209,12 @@ function validateData(data) {
   for (const room of data.rooms) {
     if (!(Number(room.capacity) > 0)) return '教室「' + room.name + '」的容量必须大于 0';
   }
+  for (const subject of data.subjects) {
+    if (subject.preference !== undefined && subject.preference !== null && subject.preference !== ''
+      && subject.preference !== 'morning' && subject.preference !== 'afternoon') {
+      return '学科「' + String(subject.name ?? subject.id) + '」的时段偏好无效（只能是 上午/下午/不限）。';
+    }
+  }
   for (const slot of data.timeSlots) {
     if (!(Number(slot.day) > 0) || !(Number(slot.period) > 0)) return '时间段「' + (slot.label || slot.id) + '」的星期和节次必须大于 0';
     if (slot.kind !== undefined && slot.kind !== null && !SLOT_KIND_VALUES.includes(slot.kind)) {
@@ -233,6 +239,27 @@ function validateData(data) {
     }
     if (!subjectIds.has(plan.subjectId)) return '教学计划「' + planLabel(plan) + '」引用了不存在的学科；请重新选择学科。';
     if (plan.fixedSlotId && !slotIds.has(plan.fixedSlotId)) return '教学计划「' + planLabel(plan) + '」引用了不存在的固定时间「' + slotLabel(plan.fixedSlotId) + '」。';
+    if (plan.fixedSlotIds !== undefined) {
+      if (!Array.isArray(plan.fixedSlotIds)) return '教学计划「' + planLabel(plan) + '」的固定时间必须是数组。';
+      const seenFixed = new Set();
+      for (const slotId of plan.fixedSlotIds) {
+        if (!slotIds.has(slotId)) return '教学计划「' + planLabel(plan) + '」引用了不存在的固定时间「' + slotLabel(slotId) + '」。';
+        if (seenFixed.has(slotId)) return '教学计划「' + planLabel(plan) + '」的固定时间重复：' + slotLabel(slotId) + '。';
+        seenFixed.add(slotId);
+      }
+      if (plan.fixedSlotIds.length > Number(plan.weeklyPeriods)) {
+        return '教学计划「' + planLabel(plan) + '」的固定时间有 ' + plan.fixedSlotIds.length + ' 节，超过周课时 ' + plan.weeklyPeriods + ' 节。';
+      }
+    }
+    if (plan.consecutive !== undefined && plan.consecutive !== null && plan.consecutive !== '') {
+      const consecutive = Number(plan.consecutive);
+      if (!Number.isInteger(consecutive) || consecutive < 0 || consecutive > 4) {
+        return '教学计划「' + planLabel(plan) + '」的连堂节数必须是 0–4 的整数。';
+      }
+    }
+    if (plan.pairId !== undefined && plan.pairId !== null && typeof plan.pairId !== 'string') {
+      return '教学计划「' + planLabel(plan) + '」的配对组必须是文本。';
+    }
     if (plan.weeks !== undefined && plan.weeks !== null && !['all', 'odd', 'even'].includes(plan.weeks)) {
       return '教学计划「' + planLabel(plan) + '」的周次无效（只能是 每周/单周/双周）。';
     }
@@ -241,13 +268,30 @@ function validateData(data) {
     }
     if (!(Number(plan.weeklyPeriods) > 0)) return '教学计划「' + planLabel(plan) + '」的周课时必须大于 0。';
   }
+  const pairGroups = new Map();
+  for (const plan of data.coursePlans) {
+    if (!plan.pairId) continue;
+    const list = pairGroups.get(plan.pairId) || [];
+    list.push(plan);
+    pairGroups.set(plan.pairId, list);
+  }
+  for (const [pairId, group] of pairGroups) {
+    for (const plan of group) {
+      const overlap = group.some((other) => other.id !== plan.id
+        && other.classId === plan.classId
+        && (other.weeks ?? 'all') === (plan.weeks ?? 'all'));
+      if (overlap) return '配对组「' + pairId + '」在班级「' + classLabel(plan.classId) + '」的周次重叠，无法共用同一时段。';
+    }
+    const fixedKey = (plan) => (Array.isArray(plan.fixedSlotIds) ? plan.fixedSlotIds : (plan.fixedSlotId ? [plan.fixedSlotId] : [])).join('|');
+    if (new Set(group.map(fixedKey)).size > 1) return '配对组「' + pairId + '」的固定时间必须完全一致。';
+  }
   if (data.softConstraints !== undefined) {
     if (!Array.isArray(data.softConstraints)) return '软约束必须是数组。';
     const seenSoftKinds = new Set();
     for (const item of data.softConstraints) {
       if (!item || typeof item !== 'object') return '软约束条目格式无效。';
       if (!SOFT_RULE_KINDS.includes(item.kind)) {
-        return '软约束类型无效：「' + String(item.kind ?? '') + '」；只能是 学科分散/教师连续/教师空档/教师工作量均衡/班级空档。';
+        return '软约束类型无效：「' + String(item.kind ?? '') + '」；只能是 学科分散/教师连续/教师空档/教师工作量均衡/班级空档/学科时段偏好。';
       }
       if (seenSoftKinds.has(item.kind)) return '软约束类型重复：' + item.kind + '；每种软约束只能配置一次。';
       seenSoftKinds.add(item.kind);

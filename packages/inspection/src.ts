@@ -8,6 +8,8 @@
  * solver was given, so the report never claims more than the engine promises.
  */
 
+import { fixedSlotIdsOf } from '../contracts/src.ts';
+
 export type InspectionSeverity = 'hard' | 'must' | 'prefer';
 
 export type InspectionCategory =
@@ -15,6 +17,8 @@ export type InspectionCategory =
   | 'TEACHER_CONFLICT'
   | 'ROOM_CONFLICT'
   | 'FIXED_SLOT'
+  | 'CONSECUTIVE'
+  | 'PAIR_SLOT'
   | 'TEACHER_UNAVAILABLE'
   | 'SLOT_KIND'
   | 'ROOM_MISMATCH'
@@ -27,6 +31,8 @@ export const CATEGORY_LABELS: Record<InspectionCategory, string> = {
   TEACHER_CONFLICT: '教师冲突',
   ROOM_CONFLICT: '教室冲突',
   FIXED_SLOT: '固定时间',
+  CONSECUTIVE: '连堂',
+  PAIR_SLOT: '单双周同格',
   TEACHER_UNAVAILABLE: '教师不可用',
   SLOT_KIND: '时段类型',
   ROOM_MISMATCH: '教室不匹配',
@@ -141,6 +147,9 @@ export interface InspectionInput {
     weeklyPeriods: number;
     roomType?: string;
     fixedSlotId?: string;
+    fixedSlotIds?: string[];
+    consecutive?: number;
+    pairId?: string;
     weeks?: string;
     kind?: string;
   }[];
@@ -359,7 +368,7 @@ export function inspectTimetable(input: InspectionInput): InspectionReport {
   // ---- fixed time / unavailable / room fit ---------------------------------
   // Group by plan/room so one broken plan reads as one line ("3 节") instead of
   // three near-identical rows.
-  const fixedByPlan = new Map<string, InspectionInput['entries']>();
+  const entriesByPlan = new Map<string, InspectionInput['entries']>();
   const unavailableBySlot = new Map<string, InspectionInput['entries']>();
   const capacityByRoom = new Map<string, InspectionInput['entries']>();
   const roomTypeByKey = new Map<string, { entries: InspectionInput['entries']; roomType: string; subjectId: string }>();
@@ -377,8 +386,8 @@ export function inspectTimetable(input: InspectionInput): InspectionReport {
         { entryIds: [entry.id], planIds: [plan.id], classIds: [entry.classId], slotIds: [entry.slotId] },
       );
     }
-    if (plan.fixedSlotId && entry.slotId !== plan.fixedSlotId) {
-      fixedByPlan.set(plan.id, [...(fixedByPlan.get(plan.id) ?? []), entry]);
+    if (!entry.groupId) {
+      entriesByPlan.set(plan.id, [...(entriesByPlan.get(plan.id) ?? []), entry]);
     }
     if (unavailable.has(entry.teacherId + '|' + entry.slotId)) {
       const key = entry.teacherId + '|' + entry.slotId;
@@ -398,21 +407,91 @@ export function inspectTimetable(input: InspectionInput): InspectionReport {
       }
     }
   }
-  for (const [planId, group] of fixedByPlan) {
+  for (const [planId, group] of entriesByPlan) {
     const plan = plans.get(planId);
     if (!plan) continue;
+    if (plan.consecutive && Number(plan.consecutive) >= 2) {
+      const byDay = new Map<number, number[]>();
+      for (const entry of group) {
+        const slot = slots.get(entry.slotId);
+        if (!slot) continue;
+        const list = byDay.get(slot.day) ?? [];
+        list.push(slot.period);
+        byDay.set(slot.day, list);
+      }
+      const pairs = Math.floor(group.length / Number(plan.consecutive));
+      const adjacentPairs = [...byDay.values()].reduce((sum, periods) => {
+        const sorted = [...periods].sort((a, b) => a - b);
+        let adjacent = 0;
+        for (let index = 1; index < sorted.length; index += 1) if (sorted[index] === sorted[index - 1] + 1) adjacent += 1;
+        return sum + Math.floor(adjacent / Math.max(1, Number(plan.consecutive) - 1));
+      }, 0);
+      if (adjacentPairs < pairs) {
+        issue(
+          'CONSECUTIVE',
+          'prefer',
+          className(plan.classId) + ' ' + subjectName(plan.subjectId) + ' 连堂不完整',
+          '要求 ' + plan.consecutive + ' 节连排，共 ' + pairs + ' 组；实际只形成 ' + adjacentPairs + ' 组相邻',
+          { entryIds: group.map((entry) => entry.id), planIds: [planId], classIds: [plan.classId] },
+        );
+      }
+    }
+    const fixedIds = fixedSlotIdsOf(plan);
+    if (fixedIds.length === 0) continue;
+    const fixedEntries = group.filter((entry) => fixedIds.includes(entry.slotId));
+    const outside = group.filter((entry) => !fixedIds.includes(entry.slotId));
+    const allowedOutside = Math.max(0, Number(plan.weeklyPeriods) - fixedIds.length);
+    const excess = outside.slice(allowedOutside);
+    if (excess.length > 0) {
+      issue(
+        'FIXED_SLOT',
+        'hard',
+        className(plan.classId) + ' ' + subjectName(plan.subjectId) + ' 有 ' + excess.length + ' 节不在固定时间',
+        '计划固定 ' + fixedIds.map(slotLabel).join('、') + '；多出的节次被排到了 ' + listText(excess.map((entry) => slotLabel(entry.slotId))),
+        {
+          entryIds: excess.map((entry) => entry.id),
+          planIds: [planId],
+          classIds: [plan.classId],
+          slotIds: excess.map((entry) => entry.slotId),
+        },
+      );
+    }
+    const expectedFixed = Math.min(Number(plan.weeklyPeriods), fixedIds.length);
+    // A lesson outside the fixed list already explains a missing fixed slot;
+    // do not emit two rows for the same mismatch.
+    if (fixedEntries.length < expectedFixed && excess.length === 0) {
+      const coveredSlots = new Set(fixedEntries.map((entry) => entry.slotId));
+      const missing = fixedIds.filter((slotId) => !coveredSlots.has(slotId));
+      issue(
+        'FIXED_SLOT',
+        'hard',
+        className(plan.classId) + ' ' + subjectName(plan.subjectId) + ' 未排在全部固定时间',
+        '计划固定 ' + fixedIds.map(slotLabel).join('、') + '；缺少 ' + listText(missing.map(slotLabel)),
+        {
+          entryIds: fixedEntries.map((entry) => entry.id),
+          planIds: [planId],
+          classIds: [plan.classId],
+          slotIds: missing,
+        },
+      );
+    }
+  }
+  // Odd/even plans that share a pairId must sit in the same slot.
+  const pairEntries = new Map<string, InspectionInput['entries']>();
+  for (const entry of validEntries) {
+    const plan = plans.get(entry.coursePlanId);
+    if (!plan || !plan.pairId) continue;
+    pairEntries.set(plan.pairId, [...(pairEntries.get(plan.pairId) ?? []), entry]);
+  }
+  for (const [pairId, group] of pairEntries) {
+    const slotIds = Array.from(new Set(group.map((entry) => entry.slotId)));
+    if (slotIds.length <= 1) continue;
     issue(
-      'FIXED_SLOT',
+      'PAIR_SLOT',
       'hard',
-      className(plan.classId) + ' ' + subjectName(plan.subjectId) + ' 未排在固定时间',
-      '计划要求 ' + slotLabel(plan.fixedSlotId ?? '') + '，实际 ' + listText(group.map((entry) => slotLabel(entry.slotId))) +
-        (group.length > 1 ? '（' + group.length + ' 节）' : ''),
-      {
-        entryIds: group.map((entry) => entry.id),
-        planIds: [planId],
-        classIds: [plan.classId],
-        slotIds: group.map((entry) => entry.slotId),
-      },
+      '配对组「' + pairId + '」没有排在同一时间格',
+      listText(group.map((entry) => className(entry.classId) + ' ' + slotLabel(entry.slotId))),
+      { entryIds: group.map((entry) => entry.id), slotIds },
     );
   }
   for (const [key, group] of unavailableBySlot) {

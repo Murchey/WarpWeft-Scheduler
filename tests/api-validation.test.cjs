@@ -195,3 +195,51 @@ test('orphaned adjustment and lesson-log references are pruned before save', () 
   assert.deepEqual(data.adjustments.map((item) => item.id), ['a2']);
   assert.equal(data.lessonLogs.length, 0);
 });
+
+test('API validates per-occurrence fixed slots, consecutive runs and pair groups', () => {
+  const data = {
+    classes: [{ id: 'c1' }], teachers: [{ id: 't1' }], subjects: [{ id: 's1' }],
+    rooms: [{ id: 'r1', capacity: 30 }],
+    timeSlots: [
+      { id: 'slot-1', day: 1, period: 1 },
+      { id: 'slot-2', day: 1, period: 2 },
+    ],
+    coursePlans: [{
+      id: 'p1', classId: 'c1', teacherId: 't1', subjectId: 's1', weeklyPeriods: 2,
+      fixedSlotIds: ['slot-1'], consecutive: 2,
+    }],
+  };
+  assert.equal(validateData(data), null);
+  data.coursePlans[0].fixedSlotIds = ['missing'];
+  assert.match(validateData(data), /不存在的固定时间/);
+  data.coursePlans[0].fixedSlotIds = ['slot-1', 'slot-1'];
+  assert.match(validateData(data), /固定时间重复/);
+  data.coursePlans[0].fixedSlotIds = ['slot-1', 'slot-2'];
+  data.coursePlans[0].weeklyPeriods = 1;
+  assert.match(validateData(data), /超过周课时/);
+  data.coursePlans[0].weeklyPeriods = 2;
+  data.coursePlans[0].fixedSlotIds = [];
+  data.coursePlans[0].consecutive = 9;
+  assert.match(validateData(data), /连堂节数/);
+  data.coursePlans[0].consecutive = 2;
+  data.coursePlans.push({
+    id: 'p2', classId: 'c1', teacherId: 't1', subjectId: 's1', weeklyPeriods: 1, weeks: 'odd', pairId: 'g1',
+  });
+  data.coursePlans.push({
+    id: 'p3', classId: 'c1', teacherId: 't1', subjectId: 's1', weeklyPeriods: 1, weeks: 'odd', pairId: 'g1',
+  });
+  assert.match(validateData(data), /周次重叠/);
+});
+
+test('API accepts subject time preferences and the new soft objective', () => {
+  const data = {
+    classes: [{ id: 'c1' }], teachers: [{ id: 't1' }],
+    subjects: [{ id: 's1', name: '数学', preference: 'morning' }],
+    rooms: [{ id: 'r1', capacity: 30 }], timeSlots: [{ id: 'slot-1', day: 1, period: 1 }],
+    coursePlans: [{ id: 'p1', classId: 'c1', teacherId: 't1', subjectId: 's1', weeklyPeriods: 1 }],
+    softConstraints: [{ kind: 'SUBJECT_TIME_PREFERENCE', weight: 2 }],
+  };
+  assert.equal(validateData(data), null);
+  data.subjects[0].preference = 'evening';
+  assert.match(validateData(data), /时段偏好无效/);
+});

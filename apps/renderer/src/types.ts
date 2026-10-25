@@ -25,9 +25,13 @@ export interface Teacher {
   classes?: string;
 }
 
+export type SubjectTimePreference = 'morning' | 'afternoon';
+
 export interface Subject {
   id: string;
   name: string;
+  /** Default time-of-day preference used by the solver's soft objective. */
+  preference?: SubjectTimePreference;
 }
 
 export interface Room {
@@ -77,8 +81,14 @@ export interface CoursePlan {
   teacherId: string;
   weeklyPeriods: number;
   roomType?: string;
+  /** Legacy single fixed slot; use fixedSlotIds for new data. */
   fixedSlotId?: string;
+  /** Per-occurrence fixed slots: lesson i is pinned to fixedSlotIds[i]. */
+  fixedSlotIds?: string[];
+  /** Desired adjacent run length (连堂): 2 = two lessons in a row. */
   consecutive?: number;
+  /** Plans sharing a pairId must occupy the same slot (odd/even pairing). */
+  pairId?: string;
   locked?: boolean;
   /** all = every week (default), odd/even = alternating weeks. */
   weeks?: WeekType;
@@ -151,7 +161,8 @@ export interface SolverInput {
       | 'TEACHER_CONTINUOUS'
       | 'TEACHER_GAPS'
       | 'TEACHER_WORKLOAD_BALANCE'
-      | 'CLASS_GAPS';
+      | 'CLASS_GAPS'
+      | 'SUBJECT_TIME_PREFERENCE';
     weight: number;
   }[];
   timeLimitSeconds: number;

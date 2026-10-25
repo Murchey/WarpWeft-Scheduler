@@ -7,7 +7,7 @@ export interface SoftConstraintDefinition {
   defaultWeight: number;
 }
 
-/** The four constraints the solver actually scores today. TEACHER_CONTINUOUS is
+/** The constraints the solver actually scores today. TEACHER_CONTINUOUS is
  *  kept in existing data but not exposed because its score is always 0. */
 export const SOFT_CONSTRAINT_DEFINITIONS: SoftConstraintDefinition[] = [
   {
@@ -34,14 +34,21 @@ export const SOFT_CONSTRAINT_DEFINITIONS: SoftConstraintDefinition[] = [
     description: '数字越大，越优先把同班课程排成连续块；受教师/教室约束，不保证空档为 0。',
     defaultWeight: 2,
   },
+  {
+    kind: 'SUBJECT_TIME_PREFERENCE',
+    label: '学科时段偏好',
+    description: '按学科的「上午 / 下午」偏好排课：语文、数学等主科优先上午，阅读、班会等活动类优先下午。',
+    defaultWeight: 2,
+  },
 ];
 
-/** Old workspaces and old clients keep exactly the previous four defaults. */
+/** Old workspaces and old clients keep the previous defaults plus the new time-of-day objective. */
 export const BASE_SOFT_CONSTRAINTS: { kind: SoftRuleKind; weight: number }[] = [
   { kind: 'SUBJECT_DISTRIBUTION', weight: 3 },
   { kind: 'TEACHER_CONTINUOUS', weight: 2 },
   { kind: 'TEACHER_GAPS', weight: 1 },
   { kind: 'TEACHER_WORKLOAD_BALANCE', weight: 2 },
+  { kind: 'SUBJECT_TIME_PREFERENCE', weight: 2 },
 ];
 
 /** Brand-new workspaces start with class gaps on; existing data stays opt-in. */

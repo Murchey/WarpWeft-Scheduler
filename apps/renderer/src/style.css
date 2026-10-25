@@ -1552,3 +1552,17 @@ html[data-theme='dark'] .tt-warning.is-danger{background:#2b1717;color:#fca5a5}
 
 .task-history-preview h4{margin:0 0 8px;font:11px var(--font-ui);letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
 .task-history-preview{padding:10px 0;border-bottom:1px solid var(--rule);margin-bottom:12px}
+
+/* Fixed-slot picker: group time slots by weekday, keep 35 options readable */
+.fixed-slots-overlay{z-index:130}
+.fixed-slots-dialog{width:min(760px,94vw)}
+.fixed-slots-meta{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;color:var(--muted);font-size:12px}
+.fixed-slots-meta b{color:var(--ink)}
+.fixed-slots-days{display:grid;gap:10px;max-height:56vh;overflow:auto;padding-right:4px}
+.fixed-slots-day{display:grid;grid-template-columns:52px 1fr;gap:10px;align-items:start}
+.fixed-slots-day>b{font-size:12px;color:var(--muted);padding-top:7px}
+.fixed-slots-options{display:flex;flex-wrap:wrap;gap:6px}
+.fixed-slot-option{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid var(--rule);border-radius:7px;background:var(--paper);font-size:12px;cursor:pointer;user-select:none}
+.fixed-slot-option input{accent-color:var(--ink)}
+.fixed-slot-option.is-checked{border-color:var(--ink);background:var(--ink);color:var(--paper)}
+.fixed-slot-option.is-checked input{accent-color:var(--paper)}

@@ -340,3 +340,60 @@ test('a real solver output passes inspection', async () => {
   assert.equal(report.summary.placed, 21);
 });
 
+
+test('multi fixed slots allow surplus lessons and flag excess ones', async () => {
+  const { inspectTimetable } = await loadInspection();
+  const input = baseInput();
+  input.coursePlans[0] = { ...input.coursePlans[0], weeklyPeriods: 3, fixedSlotIds: ['d1-p1'] };
+  input.entries = [
+    { id: 'e1', coursePlanId: 'p1', classId: 'c1', teacherId: 't1', roomId: 'r1', slotId: 'd1-p1' },
+    { id: 'e1b', coursePlanId: 'p1', classId: 'c1', teacherId: 't1', roomId: 'r1', slotId: 'd2-p1' },
+    { id: 'e1c', coursePlanId: 'p1', classId: 'c1', teacherId: 't1', roomId: 'r1', slotId: 'd2-p2' },
+    { id: 'e2', coursePlanId: 'p2', classId: 'c1', teacherId: 't2', roomId: 'r2', slotId: 'd1-p2' },
+    { id: 'e3', coursePlanId: 'p3', classId: 'c2', teacherId: 't2', roomId: 'r2', slotId: 'd1-p1' },
+    { id: 'e4', coursePlanId: 'p4', classId: 'c2', teacherId: 't1', roomId: 'r2', slotId: 'd1-p2' },
+  ];
+  assert.equal(inspectTimetable(input).issues.filter((item) => item.category === 'FIXED_SLOT').length, 0);
+
+  // Two free lessons but only one surplus slot: one must be flagged.
+  input.coursePlans[0] = { ...input.coursePlans[0], weeklyPeriods: 2 };
+  const report = inspectTimetable(input);
+  assert.equal(report.issues.filter((item) => item.category === 'FIXED_SLOT').length, 1);
+});
+
+test('consecutive runs are checked next to the fixed-time check', async () => {
+  const { inspectTimetable } = await loadInspection();
+  const input = baseInput();
+  input.coursePlans[0] = { ...input.coursePlans[0], weeklyPeriods: 2, consecutive: 2 };
+  input.entries = [
+    { id: 'e1', coursePlanId: 'p1', classId: 'c1', teacherId: 't1', roomId: 'r1', slotId: 'd1-p1' },
+    { id: 'e1b', coursePlanId: 'p1', classId: 'c1', teacherId: 't1', roomId: 'r1', slotId: 'd1-p2' },
+    { id: 'e2', coursePlanId: 'p2', classId: 'c1', teacherId: 't2', roomId: 'r2', slotId: 'd2-p1' },
+    { id: 'e3', coursePlanId: 'p3', classId: 'c2', teacherId: 't2', roomId: 'r2', slotId: 'd1-p1' },
+    { id: 'e4', coursePlanId: 'p4', classId: 'c2', teacherId: 't1', roomId: 'r2', slotId: 'd2-p2' },
+  ];
+  const paired = inspectTimetable(input);
+  assert.equal(paired.issues.filter((item) => item.category === 'CONSECUTIVE').length, 0);
+
+  input.entries[1] = { ...input.entries[1], slotId: 'd2-p1' };
+  input.entries[2] = { ...input.entries[2], slotId: 'd1-p2' };
+  const broken = inspectTimetable(input);
+  assert.equal(broken.issues.filter((item) => item.category === 'CONSECUTIVE').length, 1);
+});
+
+test('paired odd/even plans must share a slot', async () => {
+  const { inspectTimetable } = await loadInspection();
+  const input = baseInput();
+  input.coursePlans = [
+    { id: 'pa', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyPeriods: 1, weeks: 'odd', pairId: 'g1' },
+    { id: 'pb', classId: 'c1', subjectId: 's2', teacherId: 't2', weeklyPeriods: 1, weeks: 'even', pairId: 'g1' },
+  ];
+  input.entries = [
+    { id: 'ea', coursePlanId: 'pa', classId: 'c1', teacherId: 't1', roomId: 'r1', slotId: 'd1-p1' },
+    { id: 'eb', coursePlanId: 'pb', classId: 'c1', teacherId: 't2', roomId: 'r2', slotId: 'd2-p1' },
+  ];
+  const broken = inspectTimetable(input);
+  assert.equal(broken.issues.filter((item) => item.category === 'PAIR_SLOT').length, 1);
+  input.entries[1] = { ...input.entries[1], slotId: 'd1-p1' };
+  assert.equal(inspectTimetable(input).issues.filter((item) => item.category === 'PAIR_SLOT').length, 0);
+});

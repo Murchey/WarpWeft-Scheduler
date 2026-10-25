@@ -1,5 +1,6 @@
 import type { ScheduleEntry, SchoolData, TimeSlot } from './types';
 import { slotKindAcceptsPlan } from '../../../packages/inspection/src.ts';
+import { fixedSlotIdsOf } from '../../../packages/contracts/src.ts';
 
 export interface DropDecision {
   ok: boolean;
@@ -61,11 +62,24 @@ export function checkMove(entry: ScheduleEntry, slot: TimeSlot, ctx: DropContext
   if (entry.groupId) return { ok: false, reason: '走班课程由走班组统一安排' };
   if (entry.locked) return { ok: false, reason: '课程已锁定，先解锁再移动' };
   const plan = planFor(ctx.data, entry);
-  if (plan?.fixedSlotId) {
-    return plan.fixedSlotId === slot.id
-      ? { ok: true, reason: '固定时间原位置' }
-      : { ok: false, reason: '课程固定在其它时间' };
+  const fixedSlots = fixedSlotIdsOf(plan ?? {});
+  if (fixedSlots.length > 0) {
+    const placed = ctx.entries.filter((other) => other.coursePlanId === entry.coursePlanId).length;
+    // The lesson is pinned when it sits in a fixed slot, or when the plan has
+    // no surplus lessons beyond its fixed ones (all of its entries are pinned).
+    const pinned = fixedSlots.includes(entry.slotId) || placed <= fixedSlots.length;
+    if (pinned) {
+      return fixedSlots.includes(entry.slotId) && entry.slotId === slot.id
+        ? { ok: true, reason: '固定时间原位置' }
+        : { ok: false, reason: '这一节固定在其它时间' };
+    }
+    // A free lesson of a partially fixed plan may move, but not into one of
+    // the slots reserved for that plan's fixed occurrences.
+    if (fixedSlots.includes(slot.id)) {
+      return { ok: false, reason: '该时段被同一门课的固定节次占用' };
+    }
   }
+  if (plan?.pairId) return { ok: false, reason: '配对课程由单双周同格约束控制' };
   if (!slotKindAcceptsPlan(slotKindOf(slot), plan?.kind)) {
     return { ok: false, reason: '时段类型与课程不匹配' };
   }
@@ -90,7 +104,14 @@ export function checkSwap(a: ScheduleEntry, b: ScheduleEntry, ctx: DropContext):
   if (a.coursePlanId === b.coursePlanId) return { ok: false, reason: '同一门课无需交换' };
   const planA = planFor(ctx.data, a);
   const planB = planFor(ctx.data, b);
-  if (planA?.fixedSlotId || planB?.fixedSlotId) return { ok: false, reason: '固定时间课程不能交换' };
+  const fixedA = fixedSlotIdsOf(planA ?? {});
+  const fixedB = fixedSlotIdsOf(planB ?? {});
+  const placedA = ctx.entries.filter((entry) => entry.coursePlanId === a.coursePlanId).length;
+  const placedB = ctx.entries.filter((entry) => entry.coursePlanId === b.coursePlanId).length;
+  const pinnedA = fixedA.includes(a.slotId) || (fixedA.length > 0 && placedA <= fixedA.length);
+  const pinnedB = fixedB.includes(b.slotId) || (fixedB.length > 0 && placedB <= fixedB.length);
+  if (pinnedA || pinnedB) return { ok: false, reason: '固定时间课程不能交换' };
+  if (planA?.pairId || planB?.pairId) return { ok: false, reason: '配对课程不能单独交换' };
   const slotA = ctx.data.timeSlots.find((slot) => slot.id === a.slotId);
   const slotB = ctx.data.timeSlots.find((slot) => slot.id === b.slotId);
   if (!slotA || !slotB) return { ok: false, reason: '时间格不存在' };

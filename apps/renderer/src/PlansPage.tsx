@@ -5,7 +5,9 @@ import type { Column } from './components';
 import { ResourceWorkspace } from './ResourceWorkspace';
 import { PlanComposer } from './PlanComposer';
 import { GradePlanComposer } from './GradePlanComposer';
+import { FixedSlotsDialog } from './FixedSlotsDialog';
 import { uid } from './utils';
+import { fixedSlotIdsOf } from '../../../packages/contracts/src';
 
 const PLAN_PREVIEW = 8;
 
@@ -36,6 +38,7 @@ function PlansPage({
   const [composerOpen, setComposerOpen] = useState(false);
   const [gradeComposerOpen, setGradeComposerOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [fixedEditor, setFixedEditor] = useState<string | null>(null);
   const total = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
   const [matrixMode, setMatrixMode] = useState<'class' | 'grade'>('class');
   const [duration, setDuration] = useState(1);
@@ -94,6 +97,20 @@ function PlansPage({
     );
     commit({ ...data, coursePlans: plans }, { invalidate: true, immediate: true });
   };
+  const slotLabel = (slotId: string) => data.timeSlots.find((slot) => slot.id === slotId)?.label ?? slotId;
+  const planFixedText = (plan: CoursePlan) => {
+    const ids = fixedSlotIdsOf(plan);
+    return ids.length ? ids.map(slotLabel).join('；') : '';
+  };
+  const saveFixedSlots = (slotIds: string[]) => {
+    if (!fixedEditor) return;
+    const plans = data.coursePlans.map((plan) => {
+      if (plan.id !== fixedEditor) return plan;
+      const { fixedSlotId: _legacy, fixedSlotIds: _legacyIds, ...rest } = plan;
+      return slotIds.length ? { ...rest, fixedSlotIds: slotIds } : rest;
+    });
+    commit({ ...data, coursePlans: plans }, { invalidate: true, immediate: true });
+  };
   const planColumns: Column<CoursePlan>[] = [
     { key: 'classId', label: '班级', type: 'select', options: data.classes.map((item) => ({ value: item.id, label: item.name })) },
     { key: 'subjectId', label: '学科', type: 'select', options: data.subjects.map((item) => ({ value: item.id, label: item.name })) },
@@ -127,15 +144,11 @@ function PlansPage({
       ],
     },
     { key: 'roomType', label: '教室类型（选填）', width: '12%' },
-    {
-      key: 'fixedSlotId',
-      label: '固定时间（选填）',
-      type: 'select',
-      width: '14%',
-      defaultValue: '',
-      options: [{ value: '', label: '不固定' }, ...data.timeSlots.map((slot) => ({ value: slot.id, label: slot.label }))],
-    },
+    { key: 'fixedSlotIds', label: '固定时间（选填）', type: 'fixedSlots', width: '16%' },
+    { key: 'consecutive', label: '连堂（选填）', type: 'number', width: '8%' },
+    { key: 'pairId', label: '配对组（选填）', width: '12%' },
   ];
+  const editingPlan = fixedEditor ? data.coursePlans.find((plan) => plan.id === fixedEditor) : undefined;
   const planLabel = (plan: CoursePlan) => {
     const klass = data.classes.find((item) => item.id === plan.classId)?.name ?? '';
     const subject = data.subjects.find((item) => item.id === plan.subjectId)?.name ?? '';
@@ -243,13 +256,15 @@ function PlansPage({
               <th>课程类型（选填）</th>
               <th>教室类型（选填）</th>
               <th>固定时间（选填）</th>
+              <th>连堂（选填）</th>
+              <th>配对组（选填）</th>
               <th className="action-column">操作</th>
             </tr>
           </thead>
           <tbody>
             {data.coursePlans.length === 0 ? (
               <tr>
-                <td className="table-empty" colSpan={9}>
+                <td className="table-empty" colSpan={11}>
                   暂无教学计划，先新增一条。
                 </td>
               </tr>
@@ -313,14 +328,28 @@ function PlansPage({
                     <input list="plan-room-types" value={plan.roomType ?? ''} onChange={(event) => update(plan.id, { roomType: event.target.value })} placeholder="不限" />
                   </td>
                   <td>
-                    <select value={plan.fixedSlotId ?? ''} onChange={(event) => update(plan.id, { fixedSlotId: event.target.value })}>
-                      <option value="">不固定</option>
-                      {data.timeSlots.map((slot) => (
-                        <option key={slot.id} value={slot.id}>
-                          {slot.label}
-                        </option>
-                      ))}
-                    </select>
+                    <button type="button" className="classes-trigger" onClick={() => setFixedEditor(plan.id)} title="点击选择固定时间；可多选，按顺序固定每一节">
+                      <span>{planFixedText(plan) || '不固定'}</span>
+                      <em>编辑</em>
+                    </button>
+                  </td>
+                  <td>
+                    <input
+                      type="number"
+                      min={0}
+                      max={4}
+                      value={plan.consecutive ?? 0}
+                      onChange={(event) => update(plan.id, { consecutive: Number(event.target.value) || undefined })}
+                      title="2–4 表示连续几节一起排；0 表示不连堂"
+                    />
+                  </td>
+                  <td>
+                    <input
+                      value={plan.pairId ?? ''}
+                      onChange={(event) => update(plan.id, { pairId: event.target.value || undefined })}
+                      placeholder="如 语数间周"
+                      title="单周/双周两条计划填同一个配对组，会排在同一时间格"
+                    />
                   </td>
                   <td className="action-column">
                     <button className="danger-link" onClick={() => remove(plan.id)}>
@@ -334,7 +363,7 @@ function PlansPage({
         </table>
       </div>
       <p className="panel-note">
-        固定时间会优先占用指定时间格；「单周 / 双周」计划只在对应周次上课，可以和另一周次的课程共用同一时段。修改教学计划会清空候选课表，避免旧课表与新计划混用。
+        固定时间会作为硬约束优先占用指定时间格，并按勾选顺序固定第 1、2…节；「连堂」2–4 表示连续几节一起排；「单周 / 双周」两条计划填同一个配对组，会排在同一时间格。修改教学计划会清空候选课表，避免旧课表与新计划混用。
         {data.coursePlans.length > PLAN_PREVIEW ? ' 当前只显示前 ' + PLAN_PREVIEW + ' 条，点击「查看全部」进入完整列表与批量操作。' : ''}
       </p>
       {workspaceOpen ? (
@@ -369,13 +398,26 @@ function PlansPage({
                 { value: 'makeup', label: '补课' },
               ],
             },
+            { key: 'consecutive', label: '连堂节数（选填）', type: 'number', placeholder: '2–4' },
+            { key: 'pairId', label: '配对组（选填）', type: 'text', placeholder: '如 语数间周' },
           ]}
-          searchText={planLabel}
+          searchText={(plan) => planLabel(plan) + ' ' + (plan.pairId ?? '') + ' ' + planFixedText(plan)}
           onChange={(id, key, value) => update(id, { [key]: value } as Partial<CoursePlan>)}
           onBatchEdit={batchEdit}
           onRemoveMany={removeMany}
+          onEditFixedSlots={(id) => setFixedEditor(id)}
           onClose={() => setWorkspaceOpen(false)}
-          note="批量修改教师/每周课时/周次/时段类型会清空候选课表；删除同样会失效候选。"
+          note="批量修改教师/每周课时/周次/时段类型会清空候选课表；固定时间按顺序固定每一节，连堂填 2–4，单双周配对填同一个配对组。"
+        />
+      ) : null}
+      {fixedEditor && editingPlan ? (
+        <FixedSlotsDialog
+          title={'固定时间：' + planLabel(editingPlan)}
+          slots={data.timeSlots}
+          value={fixedSlotIdsOf(editingPlan)}
+          max={Number(editingPlan.weeklyPeriods ?? 0)}
+          onChange={saveFixedSlots}
+          onClose={() => setFixedEditor(null)}
         />
       ) : null}
       {composerOpen ? <PlanComposer data={data} commit={commit} setError={setError} onClose={() => setComposerOpen(false)} /> : null}

@@ -15,6 +15,7 @@ import com.warpweft.solver.model.SoftWeights;
 import com.warpweft.solver.model.SolverData;
 import com.warpweft.solver.model.Task;
 import com.warpweft.solver.protocol.SolverProtocol;
+import com.warpweft.solver.rules.Rule;
 import com.warpweft.solver.rules.RuleEvaluator;
 
 import java.nio.charset.StandardCharsets;
@@ -27,9 +28,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.TreeSet;
 
 public final class Scheduler {
@@ -70,45 +74,38 @@ public final class Scheduler {
         }
         Map<String, List<String>> groupClasses = new HashMap<>();
         for (ElectiveGroup group : data.groups) groupClasses.put(group.id(), group.classIds());
-
-        List<Plan> pairedPlans = new ArrayList<>();
-        List<Task> tasks = new ArrayList<>();
+        Map<String, Integer> runLengths = runLengthsOf(data);
+        Map<String, List<Plan>> pairGroups = new LinkedHashMap<>();
         for (Plan plan : data.plans) {
-            int fixed = lockedByPlan.getOrDefault(plan.id(), 0) + seededByPlan.getOrDefault(plan.id(), 0);
-            boolean isDouble = plan.weeklyPeriods() >= 2
-                && data.rules.stream().anyMatch(rule -> "DOUBLE_PERIOD".equals(rule.kind()) && rule.matchesPlan(plan.teacherId(), plan.subjectId()));
-            if (isDouble) {
-                pairedPlans.add(plan);
-                if ((plan.weeklyPeriods() - Math.min(fixed, plan.weeklyPeriods())) % 2 == 1) tasks.add(new Task(plan, plan.weeklyPeriods() - 1));
-            } else {
-                for (int occurrence = Math.min(fixed, plan.weeklyPeriods()); occurrence < plan.weeklyPeriods(); occurrence++) tasks.add(new Task(plan, occurrence));
-            }
+            if (plan.paired()) pairGroups.computeIfAbsent(plan.pairId(), key -> new ArrayList<>()).add(plan);
         }
-        int pairedEntries = pairedPlans.stream()
-            .mapToInt(plan -> ((plan.weeklyPeriods() - Math.min(plan.weeklyPeriods(), lockedByPlan.getOrDefault(plan.id(), 0) + seededByPlan.getOrDefault(plan.id(), 0))) / 2) * 2)
-            .sum();
+        Map<String, Slot> slotByDayPeriod = new HashMap<>();
+        for (Slot slot : data.slots.values()) slotByDayPeriod.put(slot.day() + "|" + slot.period(), slot);
+
         int groupEntries = data.groups.stream()
             .mapToInt(group -> group.weeklyPeriods() * group.blocks().size())
             .sum();
-        int totalEntries = tasks.size() + pairedEntries + data.locked.size() + data.seed.size() + groupEntries;
+        int totalEntries = data.plans.stream().mapToInt(Plan::weeklyPeriods).sum() + groupEntries;
         if (totalEntries == 0) {
-            State empty = new State(data.slots, data.rooms, data.classes, data.unavailable, data.rules, groupClasses);
+            State empty = new State(data.slots, data.rooms, data.classes, data.unavailable, data.rules, groupClasses, data.subjectPreference);
             return SolverProtocol.success(data.protocolVersion, empty, started, data.softWeights);
         }
 
         Map<String, Double> pressure = pressureOf(data, roomsByPlan);
+        List<Plan> fixedPriority = new ArrayList<>(data.plans);
+        fixedPriority.sort(Comparator.comparingDouble((Plan plan) -> pressure.getOrDefault(plan.id(), 0.0)).reversed());
         // Keep starting fresh constructions until the deadline. The previous
         // fixed cap of 8 attempts made anything above ~8 seconds pointless: the
         // solver returned FAILED while most of the requested budget was unused.
         int attempts = Math.max(8, timeLimitSeconds * 4);
         System.err.println("[java] solve start: " + totalEntries + " entries, " + data.locked.size() + " locked, " + data.seed.size() + " seeded, "
-            + pairedPlans.size() + " paired plans, " + data.slots.size() + " slots, " + data.rooms.size() + " rooms, limit " + timeLimitSeconds + "s"
+            + data.plans.stream().filter(Plan::hasFixedSlots).count() + " fixed plans, "
+            + data.plans.stream().filter(Plan::paired).count() + " paired plans, " + data.slots.size() + " slots, " + data.rooms.size() + " rooms, limit " + timeLimitSeconds + "s"
             + (stagnationSeconds > 0 ? ", stagnation " + stagnationSeconds + "s" : ""));
         for (int attempt = 0; attempt < attempts && System.nanoTime() < deadline
             && System.nanoTime() - lastImprovement < stagnationNanos; attempt++) {
             Random random = new Random(randomSeed + attempt * 7919L);
-            State state = new State(data.slots, data.rooms, data.classes, data.unavailable, data.rules, groupClasses);
-            for (Plan plan : pairedPlans) state.pairedPlans.add(plan.id());
+            State state = new State(data.slots, data.rooms, data.classes, data.unavailable, data.rules, groupClasses, data.subjectPreference);
             List<String> attemptViolations = new ArrayList<>();
             for (Entry entry : data.locked) {
                 Plan plan = planById.get(entry.coursePlanId());
@@ -142,8 +139,21 @@ public final class Scheduler {
                 state.add(entry);
                 seededCounts.merge(plan.id(), 1, Integer::sum);
             }
-            List<Plan> shuffledPlans = new ArrayList<>(pairedPlans);
-            Collections.shuffle(shuffledPlans, random);
+
+            // Fixed lessons are hard commitments: reserve their slots first so a
+            // free lesson can never take the place they are going to need, then
+            // place the fixed lessons themselves before anything movable.
+            for (Plan plan : data.plans) {
+                for (String slotId : pendingFixedSlots(state, plan)) state.reserveFixed(plan, slotId);
+            }
+            for (Plan plan : fixedPriority) {
+                if (System.nanoTime() >= deadline) break;
+                for (String slotId : pendingFixedSlots(state, plan)) {
+                    if (System.nanoTime() >= deadline) break;
+                    int[] budget = { 400 };
+                    placeFixedOccurrence(state, data, plan, slotId, planById, roomsByPlan, random, deadline, attempt, 2, budget);
+                }
+            }
 
             // Elective groups are rigid: every group lesson needs one slot where
             // all member classes are free and every block has a teacher + room.
@@ -155,30 +165,81 @@ public final class Scheduler {
                 }
             }
 
-            for (Plan plan : shuffledPlans) {
-                int pairs = (plan.weeklyPeriods() - Math.min(plan.weeklyPeriods(), lockedByPlan.getOrDefault(plan.id(), 0) + seededCounts.getOrDefault(plan.id(), 0))) / 2;
-                for (int pair = 0; pair < pairs; pair++) {
-                    if (System.nanoTime() >= deadline || !placePair(state, plan, roomsByPlan.get(plan.id()), random, attempt, pair)) {
-                        break;
+            // Free week-pairs are greedy about their slot. Placing every pair
+            // at one common anchor slot reproduces the usual school convention
+            // (语数间周 at a fixed period) and keeps specialist teachers' days
+            // contiguous. The anchor is the slot that fits the most pairs.
+            List<List<Plan>> freePairGroups = new ArrayList<>();
+            for (List<Plan> group : pairGroups.values()) {
+                boolean pinned = false;
+                boolean touched = false;
+                for (Plan plan : group) {
+                    if (plan.hasFixedSlots()) pinned = true;
+                    if (placedFor(state, plan.id()) > 0) touched = true;
+                }
+                // A seeded/locked pair member already has a slot; leave that
+                // group to repair so the anchor cannot add a second copy.
+                if (!pinned && !touched) freePairGroups.add(group);
+            }
+            if (!freePairGroups.isEmpty()) {
+                Slot anchor = null;
+                int bestFit = 0;
+                List<List<Plan>> bestGroups = List.of();
+                for (Slot slot : state.slots.values()) {
+                    List<List<Plan>> fits = new ArrayList<>();
+                    for (List<Plan> group : freePairGroups) {
+                        if (pairFitsAt(state, group, slot, roomsByPlan)) fits.add(group);
+                    }
+                    if (fits.size() > bestFit) {
+                        bestFit = fits.size();
+                        anchor = slot;
+                        bestGroups = fits;
                     }
                 }
+                if (anchor != null) {
+                    for (List<Plan> group : bestGroups) placePairAtSlot(state, data, group, anchor, attempt, roomsByPlan, random);
+                }
             }
+
+            // Consecutive (连堂) plans are placed as whole runs before singles so
+            // the two lessons really end up next to each other.
+            for (Plan plan : fixedPriority) {
+                int runLength = runLengths.getOrDefault(plan.id(), 0);
+                if (runLength < 2) continue;
+                while (System.nanoTime() < deadline) {
+                    int free = freeOccurrences(state, plan);
+                    if (free < runLength) break;
+                    if (!placeRun(state, plan, runLength, roomsByPlan.get(plan.id()), random, attempt, slotByDayPeriod)) break;
+                }
+            }
+
             // Most-constrained-first: plans whose teacher is already heavily
             // loaded, or that have few rooms, are placed before the easy ones.
-            List<Task> shuffled = orderTasks(tasks, pressure, random);
+            List<Task> shuffled = orderTasks(singleTasks(state, data), pressure, random);
             for (Task task : shuffled) {
-                if (System.nanoTime() >= deadline) {
-                    continue;
+                if (System.nanoTime() >= deadline) continue;
+                Plan plan = task.plan();
+                if (plan.paired()) continue;
+                if (placedFor(state, plan.id()) >= plan.weeklyPeriods()) continue;
+                List<Slot> candidates = freeCandidateSlots(state, plan, planById, random);
+                Placement bestPlacement = choosePlacement(state, plan, roomsByPlan.get(plan.id()), random, data.softWeights, candidates);
+                if (bestPlacement == null) continue;
+                state.add(autoEntry(plan, bestPlacement, attempt));
+            }
+
+            // Week-paired lessons are placed last: once the class has exactly
+            // one free slot left, both weeks share it (语数间周). Placing them
+            // first would scatter them and fragment specialist teachers' days.
+            for (List<Plan> group : pairGroups.values()) {
+                int lessons = group.stream().mapToInt(Plan::weeklyPeriods).max().orElse(0);
+                for (int lesson = 0; lesson < lessons && System.nanoTime() < deadline; lesson++) {
+                    int[] budget = { 400 };
+                    if (!placePairGroup(state, data, group, planById, roomsByPlan, random, deadline, attempt, budget)) break;
                 }
-                Placement bestPlacement = choosePlacement(state, task.plan(), roomsByPlan.get(task.plan().id()), random, data.softWeights);
-                if (bestPlacement == null) {
-                    continue;
-                }
-                state.add(autoEntry(task.plan(), bestPlacement, attempt));
             }
             int unplaced = missingCount(state, data);
             if (unplaced > 0) {
-                unplaced = repairMissing(state, data, planById, roomsByPlan, random, deadline);
+                unplaced = repairMissing(state, data, planById, roomsByPlan, random, deadline, runLengths, slotByDayPeriod);
             }
             int groupMissing = groupMissing(state, data);
             unplaced += groupMissing;
@@ -192,7 +253,7 @@ public final class Scheduler {
                 publish(started, state, totalEntries, unplaced, score, checkpointFile, false);
             }
             if (unplaced == 0) {
-                localSearch(state, data, planById, roomsByPlan, random, deadline);
+                localSearch(state, data, planById, roomsByPlan, random, deadline, runLengths);
                 publish(started, state, totalEntries, 0, softScore(state, data.softWeights).total(), checkpointFile, true);
                 ObjectNode result = SolverProtocol.success(data.protocolVersion, state, started, data.softWeights);
                 System.err.println("[java] completed in " + result.get("elapsedMs").asLong() + " ms");
@@ -210,13 +271,15 @@ public final class Scheduler {
             Random random = new Random(randomSeed * 104729L + repairRound * 7919L);
             State candidate = best.copy();
             List<Entry> movable = new ArrayList<>();
-            for (Entry entry : candidate.entries) if (!entry.locked() && entry.groupId() == null) movable.add(entry);
+            for (Entry entry : candidate.entries) {
+                if (isMovable(candidate, planById, entry, runLengths)) movable.add(entry);
+            }
             if (movable.isEmpty()) break;
             int kick = Math.max(1, movable.size() / 20);
             for (int index = 0; index < kick; index++) {
                 candidate.remove(movable.get(random.nextInt(movable.size())));
             }
-            int unplaced = repairMissing(candidate, data, planById, roomsByPlan, random, deadline);
+            int unplaced = repairMissing(candidate, data, planById, roomsByPlan, random, deadline, runLengths, slotByDayPeriod);
             unplaced += groupMissing(candidate, data);
             int score = softScore(candidate, data.softWeights).total();
             if (unplaced < bestUnplaced || (unplaced == bestUnplaced && score > bestScore)) {
@@ -231,7 +294,7 @@ public final class Scheduler {
         }
 
         if (best != null && bestUnplaced == 0) {
-            localSearch(best, data, planById, roomsByPlan, new Random(randomSeed), deadline);
+            localSearch(best, data, planById, roomsByPlan, new Random(randomSeed), deadline, runLengths);
             publish(started, best, totalEntries, 0, softScore(best, data.softWeights).total(), checkpointFile, true);
             return SolverProtocol.success(data.protocolVersion, best, started, data.softWeights);
         }
@@ -247,6 +310,171 @@ public final class Scheduler {
         result.put("elapsedMs", (System.nanoTime() - started) / 1_000_000);
         result.put("hasFeasibleSolution", false);
         return result;
+    }
+
+    /** Run length per plan: explicit 连堂 wins, then a DOUBLE_PERIOD rule. Paired plans are excluded. */
+    private static Map<String, Integer> runLengthsOf(SolverData data) {
+        Map<String, Integer> result = new HashMap<>();
+        for (Plan plan : data.plans) {
+            if (plan.paired()) continue;
+            int length = plan.consecutive() >= 2 ? Math.min(4, plan.consecutive()) : 0;
+            for (Rule rule : data.rules) {
+                if (!"DOUBLE_PERIOD".equals(rule.kind()) || !rule.matchesPlan(plan.teacherId(), plan.subjectId())) continue;
+                length = Math.max(length, Math.min(4, Math.max(2, rule.number("periods", 2))));
+            }
+            if (length >= 2 && plan.weeklyPeriods() >= length) result.put(plan.id(), length);
+        }
+        return result;
+    }
+
+    private static List<String> pendingFixedSlots(State state, Plan plan) {
+        if (!plan.hasFixedSlots()) return List.of();
+        Set<String> occupied = new HashSet<>();
+        for (Entry entry : state.entries) {
+            if (entry.coursePlanId().equals(plan.id())) occupied.add(entry.slotId());
+        }
+        List<String> pending = new ArrayList<>();
+        for (String slotId : plan.fixedSlotIds()) {
+            if (!occupied.contains(slotId)) pending.add(slotId);
+        }
+        return pending;
+    }
+
+    private static int placedFor(State state, String planId) {
+        int placed = 0;
+        for (Entry entry : state.entries) if (entry.coursePlanId().equals(planId)) placed += 1;
+        return placed;
+    }
+
+    /** Free (non-fixed, non-paired-run) occurrences still to place. */
+    private static int freeOccurrences(State state, Plan plan) {
+        int remaining = plan.weeklyPeriods() - placedFor(state, plan.id());
+        int pendingFixed = pendingFixedSlots(state, plan).size();
+        return Math.max(0, remaining - pendingFixed);
+    }
+
+    /** One single-lesson task per remaining free occurrence; fixed ones are handled separately. */
+    private static List<Task> singleTasks(State state, SolverData data) {
+        List<Task> tasks = new ArrayList<>();
+        for (Plan plan : data.plans) {
+            if (plan.paired()) continue;
+            int free = freeOccurrences(state, plan);
+            for (int index = 0; index < free; index++) tasks.add(new Task(plan, index));
+        }
+        return tasks;
+    }
+
+    /** Can every member of the pair group take this exact slot (ignoring ejection)? */
+    private static boolean pairFitsAt(State state, List<Plan> group, Slot slot, Map<String, List<Room>> roomsByPlan) {
+        Set<String> usedRooms = new HashSet<>();
+        for (Plan plan : group) {
+            List<Room> rooms = roomsByPlan.get(plan.id());
+            if (rooms == null || rooms.isEmpty()) return false;
+            boolean fits = false;
+            for (Room room : rooms) {
+                if (usedRooms.contains(room.id())) continue;
+                if (!RuleEvaluator.canPlace(state, plan, slot, room)) continue;
+                usedRooms.add(room.id());
+                fits = true;
+                break;
+            }
+            if (!fits) return false;
+        }
+        return true;
+    }
+
+    /** Add one lesson of every group member at the given slot (no ejection). */
+    private static boolean placePairAtSlot(State state, SolverData data, List<Plan> group, Slot slot, int attempt,
+                                           Map<String, List<Room>> roomsByPlan, Random random) {
+        List<Plan> pending = new ArrayList<>();
+        for (Plan plan : group) if (placedFor(state, plan.id()) < plan.weeklyPeriods()) pending.add(plan);
+        if (pending.isEmpty()) return true;
+        State.Snapshot snapshot = state.snapshot();
+        for (Plan plan : pending) {
+            Placement placement = choosePlacement(state, plan, roomsByPlan.get(plan.id()), random, data.softWeights, List.of(slot));
+            if (placement == null) {
+                state.restore(snapshot);
+                return false;
+            }
+            state.add(autoEntry(plan, placement, attempt));
+        }
+        return true;
+    }
+
+    /**
+     * Place one lesson of every member of an odd/even pair at the same slot.
+     * The whole group is placed or rolled back together, so a leader can never
+     * occupy a slot its partner's teacher/room cannot share.
+     */
+    private static boolean placePairGroup(State state, SolverData data, List<Plan> group, Map<String, Plan> planById,
+                                          Map<String, List<Room>> roomsByPlan, Random random, long deadline, int attempt, int[] budget) {
+        List<Plan> pending = new ArrayList<>();
+        for (Plan plan : group) if (placedFor(state, plan.id()) < plan.weeklyPeriods()) pending.add(plan);
+        if (pending.isEmpty()) return true;
+        if (System.nanoTime() >= deadline || budget[0] <= 0) return false;
+        java.util.LinkedHashSet<String> fixedSlots = new java.util.LinkedHashSet<>();
+        for (Plan plan : pending) fixedSlots.addAll(pendingFixedSlots(state, plan));
+        List<Slot> candidates = new ArrayList<>();
+        if (!fixedSlots.isEmpty()) {
+            for (String slotId : fixedSlots) {
+                Slot slot = state.slots.get(slotId);
+                if (slot != null) candidates.add(slot);
+            }
+        } else {
+            candidates.addAll(state.slots.values());
+            Collections.shuffle(candidates, random);
+        }
+        // First pass: no ejection at all. The class usually has exactly one
+        // free slot left, and spending the ejection budget on full slots before
+        // reaching it was what left a few pairs unplaced.
+        for (Slot slot : candidates) {
+            State.Snapshot snapshot = state.snapshot();
+            for (Plan plan : pending) if (pendingFixedSlots(state, plan).contains(slot.id())) state.releaseReservation(plan, slot.id());
+            boolean placed = true;
+            for (Plan plan : pending) {
+                Placement placement = choosePlacement(state, plan, roomsByPlan.get(plan.id()), random, data.softWeights, List.of(slot));
+                if (placement == null) {
+                    placed = false;
+                    break;
+                }
+                state.add(autoEntry(plan, placement, attempt));
+            }
+            if (placed) return true;
+            state.restore(snapshot);
+        }
+        // Second pass: eject one or two blockers when no slot is directly free.
+        for (Slot slot : candidates) {
+            State.Snapshot snapshot = state.snapshot();
+            // All members reserve the same class/slot for their own fixed
+            // occurrence; release every one of them together.
+            for (Plan plan : pending) if (pendingFixedSlots(state, plan).contains(slot.id())) state.releaseReservation(plan, slot.id());
+            boolean placed = true;
+            for (Plan plan : pending) {
+                if (!placeWithEjection(state, data, plan, slot.id(), planById, roomsByPlan, random, deadline, 2, budget)) {
+                    placed = false;
+                    break;
+                }
+            }
+            if (placed) return true;
+            state.restore(snapshot);
+            if (budget[0] <= 0) return false;
+        }
+        return false;
+    }
+
+    /**
+     * Place the fixed occurrence of a plan. The plan's own reservation is
+     * released first so the lesson can use its slot; it is restored if the
+     * attempt fails, keeping the slot protected for a later repair round.
+     */
+    private static boolean placeFixedOccurrence(State state, SolverData data, Plan plan, String slotId,
+                                                Map<String, Plan> planById, Map<String, List<Room>> roomsByPlan,
+                                                Random random, long deadline, int attempt, int depth, int[] budget) {
+        if (System.nanoTime() >= deadline || budget[0] <= 0) return false;
+        state.releaseReservation(plan, slotId);
+        boolean placed = placeWithEjection(state, data, plan, slotId, planById, roomsByPlan, random, deadline, depth, budget);
+        if (!placed) state.reserveFixed(plan, slotId);
+        return placed;
     }
 
     /** Rooms that can ever host the plan (type + capacity), cheapest capacity first. */
@@ -280,9 +508,8 @@ public final class Scheduler {
         }
         Map<String, Double> result = new HashMap<>();
         for (Plan plan : data.plans) {
-            int slots = plan.fixedSlotId() != null && !plan.fixedSlotId().isBlank()
-                ? 1
-                : Math.max(1, data.slots.size() - unavailableByTeacher.getOrDefault(plan.teacherId(), 0));
+            int fixedCount = plan.fixedCount();
+            int slots = Math.max(1, data.slots.size() - fixedCount - unavailableByTeacher.getOrDefault(plan.teacherId(), 0));
             int rooms = Math.max(1, roomsByPlan.getOrDefault(plan.id(), List.of()).size());
             double teacherFill = teacherWeekly.getOrDefault(plan.teacherId(), 0) / (double) slots;
             double classFill = classWeekly.getOrDefault(plan.classId(), 0) / (double) Math.max(1, data.slots.size());
@@ -305,22 +532,60 @@ public final class Scheduler {
         return ordered;
     }
 
-    private static boolean placePair(State state, Plan plan, List<Room> rooms, Random random, int attempt, int pair) {
+    /** Slots a paired plan may use: the slot its partner already occupies, else every slot. */
+    private static List<Slot> freeCandidateSlots(State state, Plan plan, Map<String, Plan> planById, Random random) {
+        if (plan.paired()) {
+            List<Slot> partners = new ArrayList<>();
+            Set<String> seen = new HashSet<>();
+            for (Entry entry : state.entries) {
+                Plan other = planById.get(entry.coursePlanId());
+                if (other == null || !plan.pairId().equals(other.pairId())) continue;
+                Slot slot = state.slots.get(entry.slotId());
+                if (slot != null && seen.add(slot.id())) partners.add(slot);
+            }
+            if (!partners.isEmpty()) return partners;
+        }
         List<Slot> slots = new ArrayList<>(state.slots.values());
         Collections.shuffle(slots, random);
-        for (Slot first : slots) {
-            for (Slot second : slots) {
-                if (first.day() != second.day() || second.period() != first.period() + 1) continue;
-                for (Room room : rooms) {
-                    if (!RuleEvaluator.canPlace(state, plan, first, room) || !RuleEvaluator.canPlace(state, plan, second, room)) continue;
-                    Entry a = new Entry("entry-" + plan.id() + "-pair-" + pair + "-a-" + attempt, plan.id(), plan.classId(), plan.subjectId(), plan.teacherId(), room.id(), first.id(), plan.weeks(), "AUTO", false);
-                    Entry b = new Entry("entry-" + plan.id() + "-pair-" + pair + "-b-" + attempt, plan.id(), plan.classId(), plan.subjectId(), plan.teacherId(), room.id(), second.id(), plan.weeks(), "AUTO", false);
-                    state.add(a);
-                    if (!RuleEvaluator.canPlace(state, plan, second, room)) {
-                        state.remove(a);
-                        continue;
+        return slots;
+    }
+
+    private static boolean placeRun(State state, Plan plan, int runLength, List<Room> rooms, Random random, int attempt,
+                                    Map<String, Slot> slotByDayPeriod) {
+        if (rooms == null || rooms.isEmpty()) return false;
+        List<Integer> days = new ArrayList<>();
+        for (Slot slot : state.slots.values()) if (!days.contains(slot.day())) days.add(slot.day());
+        Collections.shuffle(days, random);
+        for (int day : days) {
+            List<Integer> starts = new ArrayList<>();
+            for (Slot slot : state.slots.values()) {
+                if (slot.day() != day) continue;
+                boolean fits = true;
+                for (int offset = 1; offset < runLength; offset++) {
+                    if (!slotByDayPeriod.containsKey(day + "|" + (slot.period() + offset))) {
+                        fits = false;
+                        break;
                     }
-                    state.add(b);
+                }
+                if (fits) starts.add(slot.period());
+            }
+            Collections.shuffle(starts, random);
+            for (int period : starts) {
+                List<Slot> window = new ArrayList<>();
+                for (int offset = 0; offset < runLength; offset++) window.add(slotByDayPeriod.get(day + "|" + (period + offset)));
+                for (Room room : rooms) {
+                    boolean ok = true;
+                    for (Slot slot : window) {
+                        if (!RuleEvaluator.canPlace(state, plan, slot, room)) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if (!ok) continue;
+                    for (Slot slot : window) {
+                        state.add(new Entry("entry-" + plan.id() + "-run-" + entrySequence++, plan.id(), plan.classId(),
+                            plan.subjectId(), plan.teacherId(), room.id(), slot.id(), plan.weeks(), "AUTO", false));
+                    }
                     return true;
                 }
             }
@@ -342,6 +607,14 @@ public final class Scheduler {
         }
         int mask = 3;
         for (Slot slot : slots) {
+            boolean reserved = false;
+            for (String classId : group.classIds()) {
+                if (state.classSlotReserved(classId, slot.id(), mask)) {
+                    reserved = true;
+                    break;
+                }
+            }
+            if (reserved) continue;
             boolean classesFree = true;
             for (String classId : group.classIds()) {
                 if (!state.classSlotFree(classId, slot.id(), mask)) {
@@ -359,6 +632,10 @@ public final class Scheduler {
                     break;
                 }
                 if (state.unavailable.contains(block.teacherId() + "|" + slot.id())) {
+                    blocksOk = false;
+                    break;
+                }
+                if (state.teacherSlotReserved(block.teacherId(), slot.id(), mask)) {
                     blocksOk = false;
                     break;
                 }
@@ -411,17 +688,8 @@ public final class Scheduler {
         return missing;
     }
 
-    private static Placement choosePlacement(State state, Plan plan, List<Room> rooms, Random random, SoftWeights weights) {
-        if (rooms == null || rooms.isEmpty()) return null;
-        List<Slot> candidateSlots = new ArrayList<>();
-        if (plan.fixedSlotId() != null && !plan.fixedSlotId().isBlank()) {
-            Slot fixed = state.slots.get(plan.fixedSlotId());
-            if (fixed != null) candidateSlots.add(fixed);
-            if (candidateSlots.isEmpty()) return null;
-        } else {
-            candidateSlots.addAll(state.slots.values());
-            Collections.shuffle(candidateSlots, random);
-        }
+    private static Placement choosePlacement(State state, Plan plan, List<Room> rooms, Random random, SoftWeights weights, List<Slot> candidateSlots) {
+        if (rooms == null || rooms.isEmpty() || candidateSlots == null || candidateSlots.isEmpty()) return null;
         Placement best = null;
         int bestScore = Integer.MAX_VALUE;
         int classSize = state.classes.containsKey(plan.classId()) ? state.classes.get(plan.classId()).size() : 0;
@@ -440,6 +708,10 @@ public final class Scheduler {
                 }
             }
         }
+        Map<Integer, Integer> morningCutoff = new HashMap<>();
+        if (weights.subjectTimePreference() > 0) {
+            for (Slot slot : candidateSlots) morningCutoff.computeIfAbsent(slot.day(), state::morningCutoff);
+        }
         for (Slot slot : candidateSlots) {
             for (Room room : rooms) {
                 if (!RuleEvaluator.canPlace(state, plan, slot, room)) continue;
@@ -449,6 +721,7 @@ public final class Scheduler {
                     + state.subjectDayCount(plan.classId(), slot.day(), plan.subjectId(), mask) * 10
                     + Math.max(0, room.capacity() - classSize) / 10
                     + (weights.classGaps() > 0 ? compactCost(classPeriodsByDay.get(slot.day()), slot.period()) * 4 : 0)
+                    + preferenceCost(state, plan, slot, weights, morningCutoff)
                     + RuleEvaluator.rulePlacementPenalty(state, plan, slot)
                     + random.nextInt(3);
                 if (score < bestScore) {
@@ -458,6 +731,17 @@ public final class Scheduler {
             }
         }
         return best;
+    }
+
+    /** Prefer the subject's morning/afternoon home when the soft objective is enabled. */
+    private static int preferenceCost(State state, Plan plan, Slot slot, SoftWeights weights, Map<Integer, Integer> morningCutoff) {
+        if (weights.subjectTimePreference() <= 0) return 0;
+        String preference = state.subjectPreferenceOf(plan.subjectId());
+        if (preference == null || preference.isBlank()) return 0;
+        boolean morning = slot.period() <= morningCutoff.getOrDefault(slot.day(), slot.period());
+        if ("morning".equals(preference) && !morning) return 6 + weights.subjectTimePreference() * 5;
+        if ("afternoon".equals(preference) && morning) return 6 + weights.subjectTimePreference() * 5;
+        return 0;
     }
 
     /** Only the regular daytime block participates in class-gap scoring. */
@@ -482,7 +766,8 @@ public final class Scheduler {
      * tried first; the rest go through an ejection search that temporarily
      * removes one or two blocking lessons and re-places them elsewhere.
      */
-    private static int repairMissing(State state, SolverData data, Map<String, Plan> planById, Map<String, List<Room>> roomsByPlan, Random random, long deadline) {
+    private static int repairMissing(State state, SolverData data, Map<String, Plan> planById, Map<String, List<Room>> roomsByPlan,
+                                     Random random, long deadline, Map<String, Integer> runLengths, Map<String, Slot> slotByDayPeriod) {
         List<Task> missing = missingTasks(state, data);
         int stillMissing = 0;
         int[] budget = { Math.max(200, missing.size() * 40) };
@@ -492,9 +777,23 @@ public final class Scheduler {
                 continue;
             }
             Plan plan = task.plan();
-            if (!placeWithEjection(state, data, plan, planById, roomsByPlan, random, deadline, 2, budget)) {
-                stillMissing += 1;
+            if (placedFor(state, plan.id()) >= plan.weeklyPeriods()) continue;
+            boolean placed;
+            if (plan.paired()) {
+                List<Plan> group = new ArrayList<>();
+                for (Plan other : data.plans) if (plan.pairId().equals(other.pairId())) group.add(other);
+                placed = placePairGroup(state, data, group, planById, roomsByPlan, random, deadline, -1, budget);
+            } else if (task.isFixed()) {
+                placed = placeFixedOccurrence(state, data, plan, task.fixedSlotId(), planById, roomsByPlan, random, deadline, -1, 2, budget);
+            } else {
+                int runLength = runLengths.getOrDefault(plan.id(), 0);
+                placed = false;
+                if (runLength >= 2 && freeOccurrences(state, plan) >= runLength) {
+                    placed = placeRun(state, plan, runLength, roomsByPlan.get(plan.id()), random, -1, slotByDayPeriod);
+                }
+                if (!placed) placed = placeWithEjection(state, data, plan, "", planById, roomsByPlan, random, deadline, 2, budget);
             }
+            if (!placed) stillMissing += 1;
         }
         return stillMissing;
     }
@@ -505,45 +804,63 @@ public final class Scheduler {
 
     private static List<Task> missingTasks(State state, SolverData data) {
         Map<String, Integer> placed = new HashMap<>();
-        for (Entry entry : state.entries) placed.merge(entry.coursePlanId(), 1, Integer::sum);
-        List<Task> missing = new ArrayList<>();
+        Map<String, Set<String>> slotsByPlan = new HashMap<>();
+        for (Entry entry : state.entries) {
+            placed.merge(entry.coursePlanId(), 1, Integer::sum);
+            slotsByPlan.computeIfAbsent(entry.coursePlanId(), key -> new HashSet<>()).add(entry.slotId());
+        }
+        List<Task> fixedTasks = new ArrayList<>();
+        List<Task> freeTasks = new ArrayList<>();
         for (Plan plan : data.plans) {
             int gap = plan.weeklyPeriods() - placed.getOrDefault(plan.id(), 0);
-            for (int occurrence = 0; occurrence < gap; occurrence++) missing.add(new Task(plan, occurrence));
+            if (gap <= 0) continue;
+            List<String> pending = new ArrayList<>();
+            Set<String> occupied = slotsByPlan.getOrDefault(plan.id(), Set.of());
+            for (String slotId : plan.fixedSlotIds()) if (!occupied.contains(slotId)) pending.add(slotId);
+            for (int occurrence = 0; occurrence < gap; occurrence++) {
+                if (occurrence < pending.size()) fixedTasks.add(new Task(plan, occurrence, pending.get(occurrence)));
+                else freeTasks.add(new Task(plan, occurrence));
+            }
         }
-        return missing;
+        List<Task> tasks = new ArrayList<>(fixedTasks);
+        tasks.addAll(freeTasks);
+        return tasks;
     }
 
-    private static boolean placeWithEjection(State state, SolverData data, Plan plan, Map<String, Plan> planById, Map<String, List<Room>> roomsByPlan, Random random, long deadline, int depth, int[] budget) {
+    /**
+     * Try to place one lesson. An explicit {@code onlySlotId} pins it (fixed
+     * occurrence or a paired partner slot); otherwise every free slot is tried.
+     */
+    private static boolean placeWithEjection(State state, SolverData data, Plan plan, String onlySlotId,
+                                             Map<String, Plan> planById, Map<String, List<Room>> roomsByPlan,
+                                             Random random, long deadline, int depth, int[] budget) {
         if (System.nanoTime() >= deadline || budget[0] <= 0) return false;
         List<Room> rooms = roomsByPlan.get(plan.id());
-        Placement direct = choosePlacement(state, plan, rooms, random, data.softWeights);
+        if (rooms == null || rooms.isEmpty()) return false;
+        List<Slot> candidates;
+        if (onlySlotId != null && !onlySlotId.isBlank()) {
+            Slot slot = state.slots.get(onlySlotId);
+            if (slot == null) return false;
+            candidates = List.of(slot);
+        } else {
+            candidates = freeCandidateSlots(state, plan, planById, random);
+        }
+        Placement direct = choosePlacement(state, plan, rooms, random, data.softWeights, candidates);
         if (direct != null) {
             state.add(autoEntry(plan, direct, -1));
             return true;
         }
-        if (depth <= 0 || rooms == null || rooms.isEmpty()) return false;
-        List<Slot> slots = new ArrayList<>();
-        if (plan.fixedSlotId() != null && !plan.fixedSlotId().isBlank()) {
-            // A fixed-time lesson may only ever move blockers out of its own
-            // slot; it must never be ejected to a different time.
-            Slot fixed = state.slots.get(plan.fixedSlotId());
-            if (fixed == null) return false;
-            slots.add(fixed);
-        } else {
-            slots.addAll(state.slots.values());
-            Collections.shuffle(slots, random);
-        }
+        if (depth <= 0) return false;
         int classSize = state.classes.containsKey(plan.classId()) ? state.classes.get(plan.classId()).size() : 0;
-        for (Slot slot : slots) {
+        for (Slot slot : candidates) {
             if (state.unavailable.contains(plan.teacherId() + "|" + slot.id())) continue;
             for (Room room : rooms) {
                 if (room.capacity() < classSize) continue;
                 List<Entry> blockers = blockingEntries(state, plan, slot, room);
                 if (blockers.isEmpty() || blockers.size() > depth) continue;
-                boolean hasLocked = false;
-                for (Entry blocker : blockers) if (blocker.locked()) hasLocked = true;
-                if (hasLocked) continue;
+                boolean protectedBlocker = false;
+                for (Entry blocker : blockers) if (isProtectedEntry(state, planById, blocker)) protectedBlocker = true;
+                if (protectedBlocker) continue;
                 budget[0] -= 1;
                 State.Snapshot snapshot = state.snapshot();
                 for (Entry blocker : blockers) state.remove(blocker);
@@ -555,7 +872,7 @@ public final class Scheduler {
                 boolean movedAll = true;
                 for (Entry blocker : blockers) {
                     Plan blockerPlan = planById.get(blocker.coursePlanId());
-                    if (blockerPlan == null || !placeWithEjection(state, data, blockerPlan, planById, roomsByPlan, random, deadline, depth - 1, budget)) {
+                    if (blockerPlan == null || !placeWithEjection(state, data, blockerPlan, "", planById, roomsByPlan, random, deadline, depth - 1, budget)) {
                         movedAll = false;
                         break;
                     }
@@ -566,6 +883,24 @@ public final class Scheduler {
             }
         }
         return false;
+    }
+
+    /** Locked, elective-group, paired and fixed lessons must never be ejected. */
+    private static boolean isProtectedEntry(State state, Map<String, Plan> planById, Entry entry) {
+        if (entry.locked() || entry.groupId() != null) return true;
+        Plan plan = planById.get(entry.coursePlanId());
+        if (plan == null) return true;
+        if (plan.paired()) return true;
+        return plan.fixedSlotIds().contains(entry.slotId());
+    }
+
+    /** An entry can be kicked by ruin-and-recreate only if no structural rule pins it. */
+    private static boolean isMovable(State state, Map<String, Plan> planById, Entry entry, Map<String, Integer> runLengths) {
+        if (entry.locked() || entry.groupId() != null) return false;
+        Plan plan = planById.get(entry.coursePlanId());
+        if (plan == null) return false;
+        if (plan.paired() || plan.fixedSlotIds().contains(entry.slotId())) return false;
+        return runLengths.getOrDefault(plan.id(), 0) < 2;
     }
 
     private static List<Entry> blockingEntries(State state, Plan plan, Slot slot, Room room) {
@@ -588,26 +923,25 @@ public final class Scheduler {
         );
     }
 
-    private static void localSearch(State state, SolverData data, Map<String, Plan> planById, Map<String, List<Room>> roomsByPlan, Random random, long deadline) {
+    private static void localSearch(State state, SolverData data, Map<String, Plan> planById, Map<String, List<Room>> roomsByPlan,
+                                    Random random, long deadline, Map<String, Integer> runLengths) {
         if (!data.softWeights.anyEnabled()) return;
-        int iterations = data.softWeights.classGaps() > 0
+        int iterations = data.softWeights.classGaps() > 0 || data.softWeights.subjectTimePreference() > 0
             ? Math.min(12000, 200 + state.entries.size() * 20)
             : Math.min(1500, 200 + state.entries.size() * 10);
         int currentScore = softScore(state, data.softWeights).total();
         for (int i = 0; i < iterations && System.nanoTime() < deadline; i++) {
             List<Entry> movable = new ArrayList<>();
             for (Entry entry : state.entries) {
-                if (!entry.locked() && !state.pairedPlans.contains(entry.coursePlanId())) movable.add(entry);
+                if (isMovable(state, planById, entry, runLengths)) movable.add(entry);
             }
             if (movable.isEmpty()) return;
             Entry entry = movable.get(random.nextInt(movable.size()));
             Plan plan = planById.get(entry.coursePlanId());
             if (plan == null) continue;
-            List<Slot> slots = new ArrayList<>(state.slots.values());
-            Slot target = slots.get(random.nextInt(slots.size()));
-            if (target.id().equals(entry.slotId())) continue;
             state.remove(entry);
-            Placement placement = choosePlacement(state, plan, roomsByPlan.get(plan.id()), random, data.softWeights);
+            List<Slot> candidates = freeCandidateSlots(state, plan, planById, random);
+            Placement placement = choosePlacement(state, plan, roomsByPlan.get(plan.id()), random, data.softWeights, candidates);
             if (placement == null) {
                 state.add(entry);
                 continue;
@@ -681,10 +1015,12 @@ public final class Scheduler {
 
     public static Score softScore(State state, SoftWeights weights) {
         int subject = 0;
+        int preference = 0;
         Map<String, Integer> classDaySubjects = new HashMap<>();
         Map<String, TreeSet<Integer>> teacherPeriods = new HashMap<>();
         Map<String, TreeSet<Integer>> classPeriods = new HashMap<>();
         Map<String, Integer> teacherLoads = new HashMap<>();
+        Map<Integer, Integer> morningCutoff = new HashMap<>();
         for (Entry entry : state.entries) {
             Slot slot = state.slots.get(entry.slotId());
             if (slot == null) continue;
@@ -692,6 +1028,13 @@ public final class Scheduler {
             classDaySubjects.merge(subjectKey, 1, Integer::sum);
             teacherPeriods.computeIfAbsent(entry.teacherId() + "|" + slot.day(), key -> new TreeSet<>()).add(slot.period());
             teacherLoads.merge(entry.teacherId(), 1, Integer::sum);
+            if (weights.subjectTimePreference() > 0) {
+                String subjectPreference = state.subjectPreferenceOf(entry.subjectId());
+                if (subjectPreference != null && !subjectPreference.isBlank()) {
+                    boolean morning = slot.period() <= morningCutoff.computeIfAbsent(slot.day(), state::morningCutoff);
+                    if (("morning".equals(subjectPreference) && !morning) || ("afternoon".equals(subjectPreference) && morning)) preference += 1;
+                }
+            }
             if (isDaytimeKind(slot.kind())) {
                 if (entry.groupId() != null) {
                     for (String classId : state.groupClasses.getOrDefault(entry.groupId(), List.of())) {
@@ -727,13 +1070,11 @@ public final class Scheduler {
         int subjectPenalty = subject * weights.subjectDistribution();
         int teacherGapPenalty = teacherGapCount * weights.teacherGaps();
         int classGapPenalty = classGapCount * weights.classGaps();
+        int preferencePenalty = preference * weights.subjectTimePreference();
         int rulePenalty = RuleEvaluator.rulePenalty(state);
-        int total = subjectPenalty + teacherGapPenalty + balance + classGapPenalty + rulePenalty;
-        return new Score(Math.max(0, 100 - total), subjectPenalty, 0, teacherGapPenalty, balance, classGapPenalty, rulePenalty);
+        int total = subjectPenalty + teacherGapPenalty + balance + classGapPenalty + preferencePenalty + rulePenalty;
+        return new Score(Math.max(0, 100 - total), subjectPenalty, 0, teacherGapPenalty, balance, classGapPenalty, rulePenalty, preferencePenalty);
     }
 
-    public record Score(int total, int subjectDistribution, int teacherContinuous, int teacherGaps, int teacherWorkloadBalance, int classGaps, int rulePenalty) {}
+    public record Score(int total, int subjectDistribution, int teacherContinuous, int teacherGaps, int teacherWorkloadBalance, int classGaps, int rulePenalty, int subjectTimePreference) {}
 }
-
-
-

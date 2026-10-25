@@ -14,6 +14,7 @@ function emptyWorkspace() {
       { kind: 'TEACHER_GAPS', weight: 1 },
       { kind: 'TEACHER_WORKLOAD_BALANCE', weight: 2 },
       { kind: 'CLASS_GAPS', weight: 2 },
+      { kind: 'SUBJECT_TIME_PREFERENCE', weight: 2 },
     ], candidate: null, published: null, auditLog: [],
   };
 }

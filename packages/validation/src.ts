@@ -1,3 +1,4 @@
+import { consecutiveOf, fixedSlotIdsOf } from '../contracts/src.ts';
 import type { SolverInput, ScheduleEntry } from '../contracts/src';
 
 export interface ValidationIssue { code:string; message:string; entity?:string; field?:string; }
@@ -31,6 +32,38 @@ export function validateInput(input: SolverInput): ValidationIssue[] {
       });
     }
     if (p.weeklyPeriods <= 0) issues.push({code:'INVALID_VALUE',message:`课程计划 ${p.id} 的周课时必须大于 0`,entity:p.id,field:'weeklyPeriods'});
+    const fixedSlotIds = fixedSlotIdsOf(p);
+    const slotIds = new Set(input.timeSlots.map((slot) => slot.id));
+    if (fixedSlotIds.some((slotId) => !slotIds.has(slotId))) {
+      issues.push({code:'MISSING_REFERENCE',message:`课程计划 ${p.id} 的固定时间引用了不存在的时间段`,entity:p.id,field:'fixedSlotIds'});
+    }
+    if (fixedSlotIds.length > p.weeklyPeriods) {
+      issues.push({code:'INVALID_VALUE',message:`课程计划 ${p.id} 的固定时间超过周课时`,entity:p.id,field:'fixedSlotIds'});
+    }
+    const consecutive = consecutiveOf(p);
+    if (consecutive >= 2 && consecutive > p.weeklyPeriods) {
+      issues.push({code:'INVALID_VALUE',message:`课程计划 ${p.id} 的连堂节数超过周课时`,entity:p.id,field:'consecutive'});
+    }
+  }
+  const pairGroups = new Map<string, SolverInput['coursePlans']>();
+  for (const plan of input.coursePlans) {
+    if (!plan.pairId) continue;
+    pairGroups.set(plan.pairId, [...(pairGroups.get(plan.pairId) ?? []), plan]);
+  }
+  for (const [pairId, group] of pairGroups) {
+    if (group.length < 2) {
+      issues.push({code:'INVALID_VALUE',message:`配对组 ${pairId} 至少需要两条计划`,entity:group[0]?.id,field:'pairId'});
+      continue;
+    }
+    for (const plan of group) {
+      const overlap = group.some((other) => other.id !== plan.id
+        && other.classId === plan.classId
+        && (other.weeks ?? 'all') === (plan.weeks ?? 'all'));
+      if (overlap) {
+        issues.push({code:'INVALID_VALUE',message:`配对组 ${pairId} 的周次重叠，无法共用同一时段`,entity:plan.id,field:'pairId'});
+        break;
+      }
+    }
   }
   const homeroomTeachers = new Map<string, string[]>();
   for (const klass of input.classes) {

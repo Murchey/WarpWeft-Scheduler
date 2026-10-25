@@ -14,11 +14,16 @@ function SectionHeading({ english, title }: { english: string; title: string }) 
 type Column<T> = {
   key: keyof T & string;
   label: string;
-  type?: 'text' | 'number' | 'select' | 'classes';
+  type?: 'text' | 'number' | 'select' | 'classes' | 'fixedSlots';
   options?: { value: string; label: string }[];
   width?: string;
   defaultValue?: string | number;
 };
+
+/** "2 个固定时段" / "不固定" summary for the fixedSlots column type. */
+function fixedSlotsSummary(value: unknown): string {
+  return Array.isArray(value) && value.length > 0 ? value.length + ' 个固定时段' : '不固定';
+}
 
 function EditableTable<T extends { id: string }>({
   title,
@@ -33,6 +38,7 @@ function EditableTable<T extends { id: string }>({
   previewCount,
   onOpenAll,
   onEditClasses,
+  onEditFixedSlots,
   highlightId,
 }: {
   title: string;
@@ -48,6 +54,7 @@ function EditableTable<T extends { id: string }>({
   previewCount?: number;
   onOpenAll?: () => void;
   onEditClasses?: (id: string) => void;
+  onEditFixedSlots?: (id: string) => void;
   /** Newly added row: keep it visible even beyond previewCount and focus its first input. */
   highlightId?: string;
 }) {
@@ -98,7 +105,17 @@ function EditableTable<T extends { id: string }>({
                 <tr key={row.id} className={row.id === highlightId ? 'is-new' : undefined}>
                   {columns.map((column) => (
                     <td key={column.key}>
-                      {column.type === 'classes' ? (
+                      {column.type === 'fixedSlots' ? (
+                        <button
+                          type="button"
+                          className="classes-trigger"
+                          onClick={() => onEditFixedSlots?.(row.id)}
+                          title="点击选择固定时间"
+                        >
+                          <span>{fixedSlotsSummary(row[column.key])}</span>
+                          <em>编辑</em>
+                        </button>
+                      ) : column.type === 'classes' ? (
                         <button
                           type="button"
                           className="classes-trigger"

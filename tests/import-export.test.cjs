@@ -12,7 +12,7 @@ test('import template uses the new headers and required position notes', async (
   const workbook = XLSX.read(Buffer.from(bytes), { type: 'buffer' });
 
   const planHeader = XLSX.utils.sheet_to_json(workbook.Sheets['教学计划'], { header: 1 })[0];
-  assert.deepEqual(planHeader, ['班级*', '学科*', '教师（选填）', '每周课时*', '周次（选填）', '课程类型（选填）', '教室类型（选填）', '固定时间（选填）']);
+  assert.deepEqual(planHeader, ['班级*', '学科*', '教师（选填）', '每周课时*', '周次（选填）', '课程类型（选填）', '教室类型（选填）', '固定时间（选填）', '连堂节数（选填）', '配对组（选填）']);
 
   const teacherHeader = XLSX.utils.sheet_to_json(workbook.Sheets['教师'], { header: 1 })[0];
   assert.deepEqual(teacherHeader, ['姓名*', '负责年级（选填，分号分隔）', '主要学科（选填）', '其他学科（选填，用、分隔）', '负责班级（选填，用、分隔）']);
@@ -41,7 +41,7 @@ test('simplified template omits the room sheet and room type column', async () =
   const workbook = XLSX.read(Buffer.from(bytes), { type: 'buffer' });
   assert.equal(Boolean(workbook.Sheets['教室']), false);
   const planHeader = XLSX.utils.sheet_to_json(workbook.Sheets['教学计划'], { header: 1 })[0];
-  assert.deepEqual(planHeader, ['班级*', '学科*', '教师（选填）', '每周课时*', '周次（选填）', '课程类型（选填）', '固定时间（选填）']);
+  assert.deepEqual(planHeader, ['班级*', '学科*', '教师（选填）', '每周课时*', '周次（选填）', '课程类型（选填）', '固定时间（选填）', '连堂节数（选填）', '配对组（选填）']);
   const classHeader = XLSX.utils.sheet_to_json(workbook.Sheets['班级'], { header: 1 })[0];
   assert.deepEqual(classHeader, ['名称*', '年级（选填）', '人数（选填）', '班主任（选填）']);
 });
@@ -92,7 +92,9 @@ test('the time-slot sheet carries max periods and weekday settings above its hea
   assert.equal(slotRows.length, 8);
   assert.equal(slotRows[0].values['开始时间'], '');
   assert.equal(slotRows[0].values['节次'], 1);
-  assert.equal(slotRows[0].row, 6);
+  // No duplicate example row before period 1 any more.
+  assert.equal(slotRows[0].row, 5);
+  assert.equal(slotRows[0].values['开始时间'], '');
 });
 
 
@@ -110,8 +112,8 @@ test('per-day period settings override the full day', async () => {
   const { buildImportTemplate, readWorkbookWithMeta } = await loadModule();
   const workbook = XLSX.read(Buffer.from(await buildImportTemplate()), { type: 'buffer' });
   const sheet = workbook.Sheets['时间段'];
-  sheet.C17 = { t: 's', v: '1;2;3;4;5;8' };
-  sheet.G17 = { t: 's', v: '1；2;3;4' };
+  sheet.C16 = { t: 's', v: '1;2;3;4;5;8' };
+  sheet.G16 = { t: 's', v: '1；2;3;4' };
   const bytes = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
   const parsed = readWorkbookWithMeta(bytes);
   assert.deepEqual(parsed.meta.dayPeriods[3], [1, 2, 3, 4, 5, 8]);
@@ -188,3 +190,82 @@ test('custom scheduling rules are exported as a documented template sheet', asyn
   assert.ok(notes.some((row) => row[0] === '规则类型' && String(row[2]).includes('教师每日上限')));
 });
 
+
+test('fixed lists, consecutive, pairing, subject preference and teacher time are exported', async () => {
+  const { buildImportTemplate } = await loadModule();
+  const source = {
+    classes: [{ id: 'c1', name: '一班', size: 40 }],
+    teachers: [{ id: 't1', name: '王老师' }],
+    subjects: [
+      { id: 's1', name: '数学', preference: 'morning' },
+      { id: 's2', name: '活动', preference: 'afternoon' },
+    ],
+    timeSlots: [
+      { id: 's1', day: 1, period: 1, label: '周一 第1节' },
+      { id: 's2', day: 1, period: 2, label: '周一 第2节' },
+      { id: 's3', day: 1, period: 3, label: '周一 第3节' },
+    ],
+    unavailableSlots: [{ teacherId: 't1', slotId: 's1' }],
+    coursePlans: [
+      { classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyPeriods: 3, fixedSlotIds: ['s1', 's2'], consecutive: 2, pairId: '语数间周' },
+    ],
+  };
+  const workbook = XLSX.read(Buffer.from(await buildImportTemplate(source)), { type: 'buffer' });
+  const plan = XLSX.utils.sheet_to_json(workbook.Sheets['教学计划'], { header: 1 })[2];
+  assert.deepEqual(plan.slice(0, 10), ['一班', '数学', '王老师', 3, '每周', '常规', '', '周一 第1节；周一 第2节', 2, '语数间周']);
+
+  const subjectRows = XLSX.utils.sheet_to_json(workbook.Sheets['学科'], { header: 1 });
+  assert.deepEqual(subjectRows[0], ['学科*', '时间偏好（选填）']);
+  assert.equal(subjectRows[2][1], '上午');
+  assert.equal(subjectRows[3][1], '下午');
+
+  const teacherTime = XLSX.utils.sheet_to_json(workbook.Sheets['教师时间'], { header: 1 });
+  assert.deepEqual(teacherTime[0], ['教师*', '星期*', '节次*']);
+  assert.equal(teacherTime[2][0], '王老师');
+  assert.equal(teacherTime[2][1], '周一');
+  assert.equal(teacherTime[2][2], '1');
+});
+
+test('a real 7-period day exports exactly 7 period rows', async () => {
+  const { buildImportTemplate, readWorkbookWithMeta } = await loadModule();
+  const source = {
+    timeSlots: Array.from({ length: 7 }, (_, index) => ({ id: 'p' + (index + 1), day: 1, period: index + 1, label: '周一 第' + (index + 1) + '节' })),
+  };
+  const bytes = await buildImportTemplate(source);
+  const parsed = readWorkbookWithMeta(bytes);
+  assert.equal(parsed.meta.maxPeriods, 7);
+  assert.equal(parsed.rows.filter((row) => row.sheet === '时间段').length, 7);
+  const workbook = XLSX.read(Buffer.from(bytes), { type: 'buffer' });
+  const rows = XLSX.utils.sheet_to_json(workbook.Sheets['时间段'], { header: 1 });
+  assert.equal(rows[0][1], 7);
+});
+
+test('blank subject preferences are left empty so the importer can suggest one', async () => {
+  const { buildImportTemplate } = await loadModule();
+  const workbook = XLSX.read(Buffer.from(await buildImportTemplate({ subjects: [{ id: 's1', name: '数学' }] })), { type: 'buffer' });
+  const rows = XLSX.utils.sheet_to_json(workbook.Sheets['学科'], { header: 1 });
+  assert.equal(rows[2][0], '数学');
+  assert.equal(rows[2][1] ?? '', '');
+});
+
+test('example rows from older templates are still skipped after new columns are added', async () => {
+  const { readWorkbookWithMeta } = await loadModule();
+  const XLSX = require('xlsx');
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([
+    { 学科: '示例学科' },
+    { 学科: '语文' },
+    { 学科: '数学' },
+  ]), '学科');
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([
+    { 班级: '示例班级', 学科: '示例学科', 教师: '示例老师', 每周课时: 1, 周次: '每周', 课程类型: '常规', 教室类型: '普通教室', 固定时间: '' },
+    { 班级: '一年级1班', 学科: '语文', 教师: '王老师', 每周课时: 5, 周次: '每周', 课程类型: '常规', 教室类型: '普通教室', 固定时间: '周一 第1节' },
+  ]), '教学计划');
+  const bytes = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+  const parsed = readWorkbookWithMeta(bytes);
+  const subjects = parsed.rows.filter((row) => row.sheet === '学科').map((row) => row.values['学科']);
+  assert.deepEqual(subjects, ['语文', '数学']);
+  const plans = parsed.rows.filter((row) => row.sheet === '教学计划');
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].values['班级'], '一年级1班');
+});

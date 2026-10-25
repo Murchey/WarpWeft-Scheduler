@@ -21,10 +21,15 @@ interface ResourceWorkspaceProps<T extends { id: string }> {
   onRemoveMany: (ids: string[]) => void;
   onClose: () => void;
   onEditClasses?: (id: string) => void;
+  onEditFixedSlots?: (id: string) => void;
   note?: string;
 }
 
 const PAGE_SIZE = 40;
+
+function fixedSlotsText(value: unknown): string {
+  return Array.isArray(value) && value.length > 0 ? value.length + ' 个固定时段' : '不固定';
+}
 
 function ResourceWorkspace<T extends { id: string }>({
   title,
@@ -38,6 +43,7 @@ function ResourceWorkspace<T extends { id: string }>({
   onRemoveMany,
   onClose,
   onEditClasses,
+  onEditFixedSlots,
   note,
 }: ResourceWorkspaceProps<T>) {
   const [query, setQuery] = useState('');
@@ -216,7 +222,17 @@ function ResourceWorkspace<T extends { id: string }>({
                     </td>
                     {columns.map((column) => (
                       <td key={column.key}>
-                        {column.type === 'classes' ? (
+                        {column.type === 'fixedSlots' ? (
+                          <button
+                            type="button"
+                            className="classes-trigger"
+                            onClick={() => onEditFixedSlots?.(row.id)}
+                            title="点击选择固定时间"
+                          >
+                            <span>{fixedSlotsText(row[column.key])}</span>
+                            <em>编辑</em>
+                          </button>
+                        ) : column.type === 'classes' ? (
                           <button
                             type="button"
                             className="classes-trigger"

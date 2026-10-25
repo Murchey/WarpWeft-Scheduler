@@ -11,6 +11,9 @@ import { applyDayTemplate, planDayTemplate, weekdayLabel } from './slotTemplate'
 import { isValidSemester, parseDateInput } from '../../../packages/semester/src';
 import { IMPORTANCE_LABELS, RULE_DEFINITIONS } from '../../../packages/constraints/src';
 import type { RuleImportance, RuleInstance, RuleKind, RuleScope, RuleTime } from '../../../packages/constraints/src';
+import { parseSubjectPreference, suggestedSubjectPreference } from './subjectPreferences';
+import { fixedSlotIdsOf } from '../../../packages/contracts/src';
+import { normalizeSoftConstraints, withSoftWeight } from './softConstraints';
 
 type ResourceCollection = 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots';
 
@@ -168,6 +171,12 @@ function ResourcesPage({
         };
       }
     }
+    // Setting a subject preference should take effect without an extra trip to
+    // the rules page: enable the objective at its default weight if it is off.
+    if (collection === 'subjects' && key === 'preference' && value) {
+      const weight = normalizeSoftConstraints(data).find((item) => item.kind === 'SUBJECT_TIME_PREFERENCE')?.weight ?? 0;
+      if (weight === 0) next = withSoftWeight(next, 'SUBJECT_TIME_PREFERENCE', 2);
+    }
     const invalidate = collection === 'timeSlots' && (key === 'day' || key === 'period' || key === 'kind');
     commit(next, { invalidate });
   };
@@ -234,7 +243,7 @@ function ResourcesPage({
       setError('至少需要保留一间教室');
       return;
     }
-    if (collection === 'timeSlots' && data.coursePlans.some((plan) => plan.fixedSlotId === id)) {
+    if (collection === 'timeSlots' && data.coursePlans.some((plan) => fixedSlotIdsOf(plan).includes(id))) {
       setError('该时间段仍被教学计划设为固定时间，请先调整相关计划');
       return;
     }
@@ -298,7 +307,7 @@ function ResourcesPage({
       setError('至少需要保留一间教室');
       return;
     }
-    if (collection === 'timeSlots' && data.coursePlans.some((plan) => plan.fixedSlotId && selected.has(plan.fixedSlotId))) {
+    if (collection === 'timeSlots' && data.coursePlans.some((plan) => fixedSlotIdsOf(plan).some((slotId) => selected.has(slotId)))) {
       setError('选中的时间段仍被教学计划设为固定时间，请先调整相关计划');
       return;
     }
@@ -406,9 +415,10 @@ function ResourcesPage({
         list.push(row);
         grouped.set(key, list);
       }
-      const takeRows = (tokens: string[]) => {
+      const takeRows = (tokens: string[], exclude: string[] = []) => {
         const result: typeof rows = [];
         for (const [sheet, sheetRows] of grouped) {
+          if (exclude.some((token) => sheet.includes(token))) continue;
           if (tokens.some((token) => sheet.includes(token))) result.push(...sheetRows);
         }
         return result;
@@ -416,7 +426,8 @@ function ResourcesPage({
       const schoolRows = takeRows(['学校', 'school']);
       const semesterRows = takeRows(['学期', 'semester']);
       const classRows = takeRows(['班级', 'class']);
-      const teacherRows = takeRows(['教师', 'teacher']);
+      const teacherRows = takeRows(['教师', 'teacher'], ['教师时间', 'teachertime']);
+      const teacherTimeRows = takeRows(['教师时间', '教师不可用', 'teachertime']);
       const subjectRows = takeRows(['学科', 'subject']);
       const roomRows = takeRows(['教室', 'room']);
       const slotRows = takeRows(['时间段', 'slot']);
@@ -424,7 +435,8 @@ function ResourcesPage({
       const ruleRows = takeRows(['排课规则', 'rules']);
       const planSheetFound = [...grouped.keys()].some((sheet) => sheet.includes('教学计划') || sheet.includes('plan'));
       const ruleSheetFound = [...grouped.keys()].some((sheet) => sheet.includes('排课规则') || sheet.includes('rules'));
-      if (![...schoolRows, ...semesterRows, ...classRows, ...teacherRows, ...subjectRows, ...roomRows, ...slotRows, ...planRows, ...ruleRows].length) {
+      const teacherTimeSheetFound = [...grouped.keys()].some((sheet) => sheet.includes('教师时间') || sheet.includes('teachertime'));
+      if (![...schoolRows, ...semesterRows, ...classRows, ...teacherRows, ...subjectRows, ...roomRows, ...slotRows, ...planRows, ...ruleRows, ...teacherTimeRows].length) {
         const emptyMessage = '未识别到可导入的工作表。请使用模板中的“班级/教师/学科/教室/时间段/教学计划”表头。';
         setImportFeedback({ tone: 'error', text: emptyMessage });
         setError(emptyMessage);
@@ -576,6 +588,7 @@ function ResourcesPage({
         }
       }
       const subjectNames = new Set<string>();
+      const preferenceColumnPresent = subjectRows.some((row) => '时间偏好' in row.values || '时段偏好' in row.values);
       for (const row of subjectRows) {
         const v = row.values;
         const name = text(v['学科'] ?? v['名称'] ?? v['学科名称'] ?? v['name']);
@@ -589,9 +602,34 @@ function ResourcesPage({
           continue;
         }
         subjectNames.add(key);
-        if (!next.subjects.some((item) => item.name.trim().toLowerCase() === key)) {
-          next.subjects.push({ id: uid('subject'), name });
+        const preferenceText = text(v['时间偏好'] ?? v['时段偏好'] ?? v['preference']);
+        let preference: 'morning' | 'afternoon' | undefined;
+        if (preferenceText && preferenceText !== '不限' && preferenceText !== 'none') {
+          preference = parseSubjectPreference(preferenceText);
+          if (!preference) {
+            issues.push('学科 第' + row.row + '行时间偏好无法识别：' + preferenceText + '（可填 上午/下午/不限）');
+            continue;
+          }
+        } else if (preferenceColumnPresent) {
+          // Blank in a new template means "use the school's usual structure";
+          // users can pick 不限 explicitly to keep a subject unconstrained.
+          preference = suggestedSubjectPreference(name);
         }
+        const existingSubject = next.subjects.find((item) => item.name.trim().toLowerCase() === key);
+        if (existingSubject) {
+          // An old workbook has no preference column: keep what the workspace
+          // already stored instead of silently overwriting it.
+          if (preferenceColumnPresent || preferenceText || existingSubject.preference === undefined) {
+            existingSubject.preference = preference;
+          }
+        } else {
+          const suggested = preference ?? (preferenceColumnPresent ? undefined : suggestedSubjectPreference(name));
+          next.subjects.push({ id: uid('subject'), name, ...(suggested ? { preference: suggested } : {}) });
+        }
+      }
+      if (next.subjects.some((subject) => subject.preference)) {
+        const weight = normalizeSoftConstraints(next).find((item) => item.kind === 'SUBJECT_TIME_PREFERENCE')?.weight ?? 0;
+        if (weight === 0) next.softConstraints = withSoftWeight(next, 'SUBJECT_TIME_PREFERENCE', 2).softConstraints;
       }
       const roomNames = new Set<string>();
       for (const row of roomRows) {
@@ -746,7 +784,14 @@ function ResourcesPage({
       const teacherByName = new Map(next.teachers.map((item) => [item.name.trim().toLowerCase(), item]));
       const roomByName = new Map(next.rooms.map((item) => [item.name.trim().toLowerCase(), item]));
       const slotByLabel = new Map(next.timeSlots.map((item) => [item.label.trim(), item]));
+      const looseSlotLabel = (value: string) => value.replace(/\s+/g, '').replace(/星期/g, '周');
+      const slotByLooseLabel = new Map(next.timeSlots.map((item) => [looseSlotLabel(item.label), item]));
       const slotById = new Map(next.timeSlots.map((item) => [item.id, item]));
+      const findSlot = (value: string) => {
+        const textValue = text(value);
+        if (!textValue) return undefined;
+        return slotByLabel.get(textValue) ?? slotById.get(textValue) ?? slotByLooseLabel.get(looseSlotLabel(textValue));
+      };
       if (ruleSheetFound) {
         const rules: RuleInstance[] = [];
         const ruleByLabel = new Map<string, RuleKind>();
@@ -861,15 +906,27 @@ function ResourcesPage({
             issues.push('教学计划 第' + row.row + '行教室类型不存在：' + roomType);
             continue;
           }
-          const fixedText = text(v['固定时间'] ?? v['fixedSlot'] ?? v['fixed']);
-          let fixedSlotId = '';
+          const fixedText = text(v['固定时间'] ?? v['fixedSlot'] ?? v['fixed'] ?? v['fixedSlotIds']);
+          const fixedSlotIds: string[] = [];
           if (fixedText) {
-            const fixed = slotByLabel.get(fixedText) ?? slotById.get(fixedText);
-            if (!fixed) {
-              issues.push('教学计划 第' + row.row + '行固定时间不存在：' + fixedText);
+            const parts = fixedText.split(/[;；,，、\n]+/).map((part) => part.trim()).filter(Boolean);
+            let missing = '';
+            for (const part of parts) {
+              const fixed = findSlot(part);
+              if (!fixed) {
+                missing = part;
+                break;
+              }
+              if (!fixedSlotIds.includes(fixed.id)) fixedSlotIds.push(fixed.id);
+            }
+            if (missing) {
+              issues.push('教学计划 第' + row.row + '行固定时间不存在：' + missing);
               continue;
             }
-            fixedSlotId = fixed.id;
+            if (fixedSlotIds.length > weeklyPeriods) {
+              issues.push('教学计划 第' + row.row + '行固定时间有 ' + fixedSlotIds.length + ' 节，超过周课时 ' + weeklyPeriods + ' 节');
+              continue;
+            }
           }
           const weekText = text(v['周次'] ?? v['单双周'] ?? v['weeks']).trim().toLowerCase();
           let weeks: 'all' | 'odd' | 'even' = 'all';
@@ -888,15 +945,116 @@ function ResourcesPage({
             issues.push('教学计划 第' + row.row + '行时段类型无法识别：' + kindText + '（可填 早读/常规/自习/课后服务/晚自习/补课）');
             continue;
           }
-          const key = classItem.id + '|' + subjectItem.id + '|' + (teacherItem?.id ?? '') + '|' + weeks;
+          const consecutiveText = text(v['连堂节数'] ?? v['连堂'] ?? v['consecutive']);
+          const consecutiveValue = consecutiveText ? Number(consecutiveText) : 0;
+          if (consecutiveText && (!Number.isInteger(consecutiveValue) || consecutiveValue < 0 || consecutiveValue > 4)) {
+            issues.push('教学计划 第' + row.row + '行连堂节数必须是 0–4 的整数');
+            continue;
+          }
+          const consecutive = consecutiveValue >= 2 ? consecutiveValue : undefined;
+          const pairId = text(v['配对组'] ?? v['配对'] ?? v['pairId']) || undefined;
+          const key = classItem.id + '|' + subjectItem.id + '|' + (teacherItem?.id ?? '') + '|' + weeks + '|' + (pairId ?? '');
           if (planKeys.has(key)) {
             issues.push('教学计划 第' + row.row + '行重复：' + className + ' / ' + subjectName);
             continue;
           }
           planKeys.add(key);
-          plans.push({ id: uid('plan'), classId: classItem.id, subjectId: subjectItem.id, teacherId: teacherItem?.id ?? '', weeklyPeriods, roomType, fixedSlotId, weeks, kind: planKind });
+          plans.push({
+            id: uid('plan'),
+            classId: classItem.id,
+            subjectId: subjectItem.id,
+            teacherId: teacherItem?.id ?? '',
+            weeklyPeriods,
+            roomType,
+            ...(fixedSlotIds.length ? { fixedSlotIds } : {}),
+            ...(consecutive ? { consecutive } : {}),
+            ...(pairId ? { pairId } : {}),
+            weeks,
+            kind: planKind,
+          });
+        }
+        const pairGroups = new Map<string, CoursePlan[]>();
+        for (const plan of plans) {
+          if (!plan.pairId) continue;
+          const list = pairGroups.get(plan.pairId) ?? [];
+          list.push(plan);
+          pairGroups.set(plan.pairId, list);
+        }
+        for (const [pairId, group] of pairGroups) {
+          if (group.length < 2) {
+            issues.push('教学计划 第「配对组」' + pairId + ' 只有 1 条计划，至少需要两条才能同格');
+            continue;
+          }
+          for (const plan of group) {
+            const klass = next.classes.find((item) => item.id === plan.classId)?.name ?? plan.classId;
+            const overlap = group.some((other) => other.id !== plan.id
+              && other.classId === plan.classId
+              && (other.weeks ?? 'all') === (plan.weeks ?? 'all'));
+            if (overlap) {
+              issues.push('教学计划 配对组「' + pairId + '」在 ' + klass + ' 的周次重叠，无法共用同一时段');
+              break;
+            }
+          }
+          // Occurrence order matters: lesson 1 is pinned to the first entry.
+          const fixedKey = (plan: CoursePlan) => (plan.fixedSlotIds ?? []).join('|');
+          if (new Set(group.map(fixedKey)).size > 1) {
+            issues.push('教学计划 配对组「' + pairId + '」的固定时间必须完全一致');
+          }
         }
         next.coursePlans = plans;
+      }
+      if (teacherTimeSheetFound) {
+        const unavailable: { teacherId: string; slotId: string }[] = [];
+        const seenUnavailable = new Set<string>();
+        for (const row of teacherTimeRows) {
+          const v = row.values;
+          const teacherName = text(v['教师'] ?? v['教师姓名'] ?? v['teacher']);
+          if (!teacherName) {
+            issues.push('教师时间 第' + row.row + '行缺少教师');
+            continue;
+          }
+          const teacher = teacherByName.get(teacherName.toLowerCase());
+          if (!teacher) {
+            issues.push('教师时间 第' + row.row + '行引用了不存在的教师：' + teacherName);
+            continue;
+          }
+          const dayText = text(v['星期'] ?? v['周几'] ?? v['day']);
+          const slotText = text(v['时间段'] ?? v['时间'] ?? v['slot']);
+          const periods = text(v['节次'] ?? v['period'])
+            .split(/[;；,，、\s]+/)
+            .map((part) => Number(String(part).replace(/[^0-9]/g, '')))
+            .filter((period) => Number.isInteger(period) && period > 0);
+          if (slotText) {
+            const slot = findSlot(slotText);
+            if (!slot) {
+              issues.push('教师时间 第' + row.row + '行时间段不存在：' + slotText);
+              continue;
+            }
+            const key = teacher.id + '|' + slot.id;
+            if (!seenUnavailable.has(key)) {
+              seenUnavailable.add(key);
+              unavailable.push({ teacherId: teacher.id, slotId: slot.id });
+            }
+            continue;
+          }
+          const day = dayMap[dayText] ?? dayMap[dayText.replace(/^星期/, '周')] ?? Number(dayText);
+          if (!day || !periods.length) {
+            issues.push('教师时间 第' + row.row + '行需要填写星期和节次（或直接填时间段）');
+            continue;
+          }
+          for (const period of periods) {
+            const slot = next.timeSlots.find((item) => item.day === day && item.period === period);
+            if (!slot) {
+              issues.push('教师时间 第' + row.row + '行找不到 ' + DAYS[day] + ' 第' + period + '节');
+              continue;
+            }
+            const key = teacher.id + '|' + slot.id;
+            if (seenUnavailable.has(key)) continue;
+            seenUnavailable.add(key);
+            unavailable.push({ teacherId: teacher.id, slotId: slot.id });
+          }
+        }
+        next.unavailableSlots = unavailable;
       }
       if (issues.length) {
         const failure =
@@ -922,7 +1080,8 @@ function ResourcesPage({
         '，时间段 ' +
         next.timeSlots.length +
         '，教学计划 ' +
-        next.coursePlans.length;
+        next.coursePlans.length +
+        (teacherTimeSheetFound ? '，教师不可用时间 ' + (next.unavailableSlots?.length ?? 0) : '');
       setImportFeedback({ tone: 'success', text: (replaceOnImport ? '已清空并导入：' : '导入完成：') + summary });
       setNotice((replaceOnImport ? '已清空并导入：' : 'Excel 导入完成：') + summary);
     } catch (cause) {
@@ -1212,7 +1371,21 @@ function ResourcesPage({
   }
 
   if (kind === 'subjects') {
-    const columns: Column<Subject>[] = [{ key: 'name', label: '学科名称', width: '78%' }];
+    const columns: Column<Subject>[] = [
+      { key: 'name', label: '学科名称', width: '58%' },
+      {
+        key: 'preference',
+        label: '时间偏好',
+        type: 'select',
+        width: '30%',
+        defaultValue: '',
+        options: [
+          { value: '', label: '不限' },
+          { value: 'morning', label: '上午' },
+          { value: 'afternoon', label: '下午' },
+        ],
+      },
+    ];
     return (
       <div className="resource-single">
         <EditableTable<Subject>
@@ -1224,7 +1397,7 @@ function ResourcesPage({
           onAdd={() => add('subjects')}
           onRemove={(id) => remove('subjects', id)}
           addLabel="新增学科"
-          note="新增后可直接在表格中修改名称；教学计划通过学科引用课程名称。"
+          note="新增后可直接在表格中修改名称；时间偏好用于「学科时段偏好」软约束（语文、数学等默认上午，阅读、班会等活动类默认下午），可改为不限。"
           previewCount={6}
           highlightId={highlightFor('subjects')}
           onOpenAll={() => setWorkspace('subjects')}
@@ -1241,7 +1414,7 @@ function ResourcesPage({
             onBatchEdit={(ids, key, value) => batchEdit('subjects', ids, key, value)}
             onRemoveMany={(ids) => removeMany('subjects', ids)}
             onClose={() => setWorkspace(null)}
-            note="学科名称可直接在表格中修改；被教学计划引用的学科不能删除。"
+            note="学科名称和时间偏好可直接修改；被教学计划引用的学科不能删除。"
           />
         ) : null}
       </div>

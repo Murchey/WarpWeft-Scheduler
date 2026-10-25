@@ -34,6 +34,9 @@ public final class RuleEvaluator {
         if (!state.classSlotFree(plan.classId(), slot.id(), mask)) return false;
         if (!state.teacherSlotFree(plan.teacherId(), slot.id(), mask)) return false;
         if (!state.roomSlotFree(room.id(), slot.id(), mask)) return false;
+        // Fixed lessons still waiting for this slot are hard-protected: a free
+        // lesson must not take the place a fixed lesson is going to need.
+        if (state.reservationBlocks(plan.classId(), plan.teacherId(), slot.id(), mask)) return false;
         for (Rule rule : state.rules) {
             if (!"must".equals(rule.importance()) || !rule.applies(plan.teacherId(), plan.subjectId(), slot.day(), slot.period())) continue;
             if ("TEACHER_MAX_DAILY".equals(rule.kind()) && state.teacherDayLoad(plan.teacherId(), slot.day(), mask) >= rule.number("maxPerDay", 1)) return false;
@@ -48,6 +51,20 @@ public final class RuleEvaluator {
             }
         }
         return true;
+    }
+
+    /**
+     * 1 when the subject's default time-of-day preference is violated. Skipped
+     * when the subject has no preference. The scheduler multiplies this by the
+     * SUBJECT_TIME_PREFERENCE soft weight.
+     */
+    public static int subjectPreferencePenalty(State state, Plan plan, Slot slot) {
+        String preference = state.subjectPreferenceOf(plan.subjectId());
+        if (preference == null || preference.isBlank()) return 0;
+        boolean morning = slot.period() <= state.morningCutoff(slot.day());
+        if ("morning".equals(preference) && !morning) return 1;
+        if ("afternoon".equals(preference) && morning) return 1;
+        return 0;
     }
 
     public static int rulePlacementPenalty(State state, Plan plan, Slot slot) {

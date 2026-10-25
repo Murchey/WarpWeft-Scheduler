@@ -3,6 +3,7 @@ package com.warpweft.solver.model;
 import com.warpweft.solver.rules.Rule;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -21,6 +22,8 @@ public final class SolverData {
     public final List<Entry> seed = new ArrayList<>();
     public final List<Rule> rules = new ArrayList<>();
     public final List<ElectiveGroup> groups = new ArrayList<>();
+    /** subjectId → morning/afternoon preference from the subject register. */
+    public final Map<String, String> subjectPreference = new HashMap<>();
     public final List<String> violations = new ArrayList<>();
     public SoftWeights softWeights = SoftWeights.defaults();
 

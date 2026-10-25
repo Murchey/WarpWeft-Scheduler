@@ -1,6 +1,11 @@
 import * as XLSX from 'xlsx';
 import { IMPORTANCE_LABELS, RULE_DEFINITIONS } from '../constraints/src.ts';
 import type { RuleInstance } from '../constraints/src.ts';
+import {
+  consecutiveOf,
+  fixedSlotIdsOf,
+  SUBJECT_PREFERENCE_LABELS,
+} from '../contracts/src.ts';
 
 export interface ImportRow { sheet: string; row: number; values: Record<string, unknown>; }
 export interface ImportIssue { sheet: string; row: number; field?: string; message: string; }
@@ -46,7 +51,7 @@ const EXAMPLE_ROWS: Record<string, Record<string, string | number>> = {
     其他学科: '示例学科2',
     负责班级: '示例班级',
   },
-  学科: { 学科: '示例学科' },
+  学科: { 学科: '示例学科', 时间偏好: '上午' },
   教室: { 教室名称: '示例教室', 类型: '普通教室', 容量: 1 },
   时间段: { 节次: 1, 开始时间: '07:00', 时长: 1 },
   教学计划: {
@@ -58,7 +63,10 @@ const EXAMPLE_ROWS: Record<string, Record<string, string | number>> = {
     课程类型: '常规',
     教室类型: '普通教室',
     固定时间: '',
+    连堂节数: '',
+    配对组: '',
   },
+  教师时间: { 教师: '示例老师', 星期: '周一', 节次: '1;2' },
   排课规则: {
     规则类型: '教师每日上限',
     作用对象类型: '教师',
@@ -71,13 +79,19 @@ const EXAMPLE_ROWS: Record<string, Record<string, string | number>> = {
 };
 
 function exampleForSheet(sheetName: string): Record<string, string | number> | undefined {
+  // Exact names win: "教师时间" must not inherit the "教师" example row.
+  const exact = Object.entries(EXAMPLE_ROWS).find(([name]) => sheetName === name);
+  if (exact) return exact[1];
   return Object.entries(EXAMPLE_ROWS).find(([name]) => sheetName.includes(name))?.[1];
 }
 
 function isTemplateExampleRow(sheetName: string, values: Record<string, unknown>): boolean {
   const example = exampleForSheet(sheetName);
   if (!example) return false;
-  return Object.entries(example).every(([field, value]) => cellText(values[field]) === cellText(value));
+  // Old templates do not have the newest columns (e.g. 时间偏好). A field that
+  // is not present in the header set must not stop the example row from being
+  // recognised, otherwise "示例学科" would be imported as a real subject.
+  return Object.entries(example).every(([field, value]) => !(field in values) || cellText(values[field]) === cellText(value));
 }
 
 function parseWeekdays(value: string): number[] | undefined {
@@ -288,6 +302,7 @@ function buildInstructions(simplified: boolean): (string | number)[][] {
   ]);
   section('学科', [
     ['学科', '是', '本校实际开设的学科名称，一行一个。', '语文'],
+    ['时间偏好', '否', '上午 / 下午 / 不限；用于「学科时段偏好」软约束，留空按学科名套用推荐值。', '上午'],
   ]);
   section('教室', [
     ['教室名称', '整表选填', '一行一间；整张表留空时按每班一间普通教室生成。', '一号教室'],
@@ -310,7 +325,14 @@ function buildInstructions(simplified: boolean): (string | number)[][] {
     ['周次', '否', '每周 / 单周 / 双周；留空按每周。', '每周'],
     ['课程类型', '否', '常规 / 早读 / 自习 / 课后服务 / 晚自习 / 补课。', '常规'],
     ...(simplified ? [] : [['教室类型', '否', '须与「教室」表类型一致；留空不限。', '普通教室']] as [string, string, string, string][]),
-    ['固定时间', '否', '如「周一 第1节」；留空由系统排。', ''],
+    ['固定时间', '否', '多个用「；」分隔，按顺序固定第 1、2…节，如「周一 第1节；周四 第6节」。', ''],
+    ['连堂节数', '否', '2–4 表示连续几节一起排（连堂），留空不连堂。', '2'],
+    ['配对组', '否', '单周/双周两条计划填同一名称，会排在同一时间格（如语数间周）。', '语数间周'],
+  ]);
+  section('教师时间', [
+    ['教师', '是', '教师姓名，须与「教师」表一致。', '王老师'],
+    ['星期', '是', '周一至周日。', '周一'],
+    ['节次', '是', '可写多个节次，用分号分隔，如 1;2;3。', '1;2'],
   ]);
   section('排课规则', [
     ['规则类型', '是', '教师每日上限 / 教师连续上限 / 教师半天无课 / 学科每日上限 / 学科时间偏好 / 避开首末节 / 学科分散 / 连堂双节。', '教师每日上限'],
@@ -334,9 +356,10 @@ export interface TemplateSource {
   semester?: { startDate: string; endDate: string } | null;
   classes?: { id: string; name: string; grade?: string; size?: number; homeroomTeacherId?: string }[];
   teachers?: { id: string; name: string; grade?: string; subject?: string; subject2?: string; classes?: string }[];
-  subjects?: { id: string; name: string }[];
+  subjects?: { id: string; name: string; preference?: 'morning' | 'afternoon' }[];
   rooms?: { id: string; name: string; type?: string; capacity?: number }[];
   timeSlots?: { id: string; day: number; period: number; start?: string; duration?: number; label?: string }[];
+  unavailableSlots?: { teacherId: string; slotId: string }[];
   rules?: RuleInstance[];
   coursePlans?: {
     classId: string;
@@ -347,6 +370,9 @@ export interface TemplateSource {
     kind?: 'morning' | 'regular' | 'study' | 'aftercare' | 'evening' | 'makeup';
     roomType?: string;
     fixedSlotId?: string;
+    fixedSlotIds?: string[];
+    consecutive?: number;
+    pairId?: string;
   }[];
 }
 
@@ -366,7 +392,10 @@ function templateTimeSlotRows(source?: TemplateSource): { rows: (string | number
   const slots = source?.timeSlots ?? [];
   const actualMax = Math.max(0, ...slots.map((slot) => slot.period));
   const maxPeriod = actualMax || 8;
-  const periodCount = Math.max(8, actualMax);
+  // Keep a real workspace's 7-period day at 7 rows; only a blank template
+  // falls back to 8. Emitting a minimum of 8 made 7-period schools import an
+  // extra slot of capacity and an unusable eighth row.
+  const periodCount = maxPeriod;
   const days = Array.from(new Set(slots.map((slot) => slot.day))).sort((a, b) => a - b);
   const periods = Array.from({ length: periodCount }, (_, index) => index + 1);
   const requiredPeriods = Array.from({ length: maxPeriod }, (_, index) => index + 1);
@@ -612,10 +641,12 @@ export async function buildImportTemplate(
   });
   addDataSheet({
     name: '学科',
-    headers: ['学科'],
-    rows: (source?.subjects ?? []).map((subject) => [subject.name]),
-    widths: [24],
+    headers: ['学科', '时间偏好（选填）'],
+    rows: (source?.subjects ?? []).map((subject) => [subject.name, subject.preference ? SUBJECT_PREFERENCE_LABELS[subject.preference] : '']),
+    widths: [24, 20],
     required: ['学科'],
+    validations: { 2: 'J' },
+    hint: '时间偏好只影响「学科时段偏好」软约束；留空时导入会按学科名套用推荐值。',
   });
   if (!simplified) {
     addDataSheet({
@@ -633,10 +664,11 @@ export async function buildImportTemplate(
   const timeSheet = workbook.addWorksheet('时间段', {
     views: [{ state: 'frozen', ySplit: timeHeaderIndex + 1 }],
   });
+  // No example row here: a grey "节次 1 / 07:00" row duplicated the real first
+  // period and, when left in place, overwrote period 1 on import.
   const timeRows = [
     ...timeSlots.rows.slice(0, timeHeaderIndex),
     ['节次*', '开始时间（选填）', '时长（分钟，选填）'],
-    [1, '07:00', 1],
     ...timeSlots.rows.slice(timeHeaderIndex + 1),
   ];
   for (const row of timeRows) timeSheet.addRow(row);
@@ -655,25 +687,24 @@ export async function buildImportTemplate(
   });
   timeSheet.getCell('A1').font = { bold: true };
   timeSheet.getCell('A2').font = { bold: true };
-  const timeExample = timeSheet.getRow(timeHeaderIndex + 2);
-  timeExample.eachCell((cell) => {
-    cell.font = { italic: true, color: { argb: 'FF6D716C' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
-  });
-  timeSheet.getCell(`A${timeHeaderIndex + 2}`).note = '示例行，导入前请删除';
+  timeSheet.getCell(`A${timeHeaderIndex + 1}`).note = '示例：节次 1 / 开始时间 07:00 / 时长 45；直接填写即可，不需要额外示例行。';
   timeSheet.autoFilter = {
     from: { row: timeHeaderIndex + 1, column: 1 },
     to: { row: Math.max(500, timeSheet.rowCount), column: 3 },
   };
 
   const planHeaders = simplified
-    ? ['班级', '学科', '教师（选填）', '每周课时', '周次（选填）', '课程类型（选填）', '固定时间（选填）']
-    : ['班级', '学科', '教师（选填）', '每周课时', '周次（选填）', '课程类型（选填）', '教室类型（选填）', '固定时间（选填）'];
+    ? ['班级', '学科', '教师（选填）', '每周课时', '周次（选填）', '课程类型（选填）', '固定时间（选填）', '连堂节数（选填）', '配对组（选填）']
+    : ['班级', '学科', '教师（选填）', '每周课时', '周次（选填）', '课程类型（选填）', '教室类型（选填）', '固定时间（选填）', '连堂节数（选填）', '配对组（选填）'];
   const planRows = (source?.coursePlans ?? []).map((plan) => {
     const klass = classById.get(plan.classId);
     const subject = subjectById.get(plan.subjectId);
     const teacher = plan.teacherId ? teacherById.get(plan.teacherId) : undefined;
-    const fixed = plan.fixedSlotId ? slotById.get(plan.fixedSlotId) : undefined;
+    const fixedText = fixedSlotIdsOf(plan)
+      .map((slotId) => slotById.get(slotId)?.label ?? '')
+      .filter(Boolean)
+      .join('；');
+    const consecutive = consecutiveOf(plan);
     const base = [
       klass?.name ?? '',
       subject?.name ?? '',
@@ -682,18 +713,45 @@ export async function buildImportTemplate(
       WEEK_LABELS[plan.weeks ?? 'all'] ?? '每周',
       KIND_LABELS[plan.kind ?? 'regular'] ?? '常规',
     ];
-    return simplified ? [...base, fixed?.label ?? ''] : [...base, plan.roomType ?? '', fixed?.label ?? ''];
+    const tail = [fixedText, consecutive >= 2 ? consecutive : '', plan.pairId ?? ''];
+    return simplified ? [...base, ...tail] : [...base, plan.roomType ?? '', ...tail];
   });
   const planSheet = addDataSheet({
     name: '教学计划',
     headers: planHeaders,
     rows: planRows,
-    widths: simplified ? [22, 16, 16, 12, 14, 16, 20] : [22, 16, 16, 12, 14, 18, 18, 20],
+    widths: simplified ? [22, 16, 16, 12, 14, 16, 24, 14, 18] : [22, 16, 16, 12, 14, 18, 18, 24, 14, 18],
     required: ['班级', '学科', '每周课时'],
     validations: simplified ? { 1: 'A', 2: 'C', 3: 'B', 5: 'H', 6: 'I' } : { 1: 'A', 2: 'C', 3: 'B', 5: 'H', 6: 'I', 7: 'D' },
-    hint: '一行 = 一门课一个学期；每周课时写一周上几节。',
+    hint: '一行 = 一门课一个学期；固定时间可填多个（用；分隔）；连堂填 2–4；单双周配对填同一个配对组。',
   });
-  planSheet.getCell('A1').note = '一行 = 一门课一个学期；每周课时写一周上几节。';
+  planSheet.getCell('A1').note = '一行 = 一门课一个学期；固定时间可填多个（用；分隔）；连堂填 2–4；单双周配对填同一个配对组。';
+
+  const teacherTimeGroups = new Map<string, { teacherId: string; day: number; periods: number[] }>();
+  for (const item of source?.unavailableSlots ?? []) {
+    const slot = slotById.get(item.slotId);
+    const teacher = teacherById.get(item.teacherId);
+    if (!slot || !teacher) continue;
+    const key = item.teacherId + '|' + slot.day;
+    const group = teacherTimeGroups.get(key) ?? { teacherId: item.teacherId, day: slot.day, periods: [] };
+    group.periods.push(slot.period);
+    teacherTimeGroups.set(key, group);
+  }
+  const teacherTimeRows = [...teacherTimeGroups.values()]
+    .sort((a, b) => (teacherById.get(a.teacherId)?.name ?? '').localeCompare(teacherById.get(b.teacherId)?.name ?? '') || a.day - b.day)
+    .map((group) => [
+      teacherById.get(group.teacherId)?.name ?? '',
+      DAY_NAMES[group.day] ?? '',
+      Array.from(new Set(group.periods)).sort((a, b) => a - b).join(';'),
+    ]);
+  addDataSheet({
+    name: '教师时间',
+    headers: ['教师', '星期', '节次'],
+    rows: teacherTimeRows,
+    widths: [16, 12, 26],
+    required: ['教师', '星期', '节次'],
+    hint: '填写教师不可用的时间；节次可写多个（用；分隔）。导入后会整体替换「教师不可用时间」。',
+  });
 
   addDataSheet({
     name: '排课规则',
@@ -714,7 +772,7 @@ export async function buildImportTemplate(
   });
 
   const optionSheet = workbook.addWorksheet('_选项');
-  optionSheet.addRow(['班级', '教师', '学科', '教室类型', '规则类型', '作用对象类型', '重要程度', '周次', '课程类型']);
+  optionSheet.addRow(['班级', '教师', '学科', '教室类型', '规则类型', '作用对象类型', '重要程度', '周次', '课程类型', '时间偏好']);
   const roomTypes = uniqueValues([
     ...(source?.rooms ?? []).map((room) => room.type),
     '普通教室',
@@ -732,12 +790,13 @@ export async function buildImportTemplate(
     ['必须', '尽量', '避免'],
     ['每周', '单周', '双周'],
     ['常规', '早读', '自习', '课后服务', '晚自习', '补课'],
+    ['上午', '下午', '不限'],
   ];
   const optionRowCount = Math.max(...optionRows.map((column) => column.length), 0);
   for (let row = 0; row < optionRowCount; row += 1) {
     optionSheet.addRow(optionRows.map((column) => column[row] ?? ''));
   }
-  optionSheet.columns = Array.from({ length: 9 }, () => ({ width: 18 }));
+  optionSheet.columns = Array.from({ length: 10 }, () => ({ width: 18 }));
   optionSheet.state = 'hidden';
 
   const output = await workbook.xlsx.writeBuffer();
