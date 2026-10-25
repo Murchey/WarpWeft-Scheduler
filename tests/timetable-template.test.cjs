@@ -79,6 +79,13 @@ test('vertical template keeps fonts, borders and page layout, with no metadata s
   assert.equal(sheet.getCell('B5').border?.top?.style, 'thin');
   assert.equal(sheet.getCell('B5').alignment?.wrapText, true);
   assert.ok(sheet.getCell('A1').font?.size >= 16);
+  assert.ok(sheet.getColumn(1).width >= 9);
+  assert.ok(sheet.getColumn(2).width >= 24);
+  assert.ok(sheet.getColumn(8).width >= 24);
+  assert.equal(sheet.getColumn(2).hidden, false);
+  assert.equal(sheet.getColumn(3).hidden, false);
+  assert.equal(sheet.getColumn(4).hidden, true);
+  assert.equal(sheet.getColumn(8).hidden, true);
 
   assert.equal(filled.pageSetup.orientation, 'portrait');
   assert.equal(filled.pageSetup.fitToPage, true);
@@ -96,6 +103,20 @@ test('the fourth period grows the template and inherits the period row style', a
   assert.equal(sheet.getRow(8).height, 63);
   assert.equal(sheet.getCell('A8').font?.name, '宋体');
   assert.equal(sheet.getCell('B8').border?.top?.style, 'thin');
+});
+
+test('long or multiple lessons grow the row instead of clipping', async () => {
+  const { fillTimetableTemplate } = await loadTemplateFiller();
+  const { data, result, settings } = fixture();
+  data.rooms[0].name = '教学楼A-102 多媒体教室';
+  result.entries.push({ ...result.entries[0], id: 'e3' });
+  const buffer = fs.readFileSync(templates.vertical);
+  const filled = await fillTimetableTemplate(buffer, data, result, settings);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(filled.buffer);
+  const sheet = workbook.getWorksheet('班级课表');
+  assert.ok(sheet.getRow(5).height > 63, 'the busy row must grow beyond the template height');
+  assert.ok(sheet.getColumn(2).width >= 24);
 });
 
 test('horizontal template keeps its own landscape page setup', async () => {

@@ -37,6 +37,23 @@ const DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周�
 const WEEK_LABEL: Record<string, string> = { all: '全周', odd: '单周', even: '双周' };
 const TEMPLATE_FIRST_DATA_ROW = 5;
 const TEMPLATE_PERIOD_ROWS = 3;
+/** Keep day columns wide enough for a full "学科 / 教师 / 教室" line at 16pt. */
+const DAY_COLUMN_WIDTH = 24;
+const PERIOD_COLUMN_WIDTH = 9.5;
+
+function displayWidth(text: string): number {
+  let width = 0;
+  for (const char of text) width += (char.codePointAt(0) ?? 0) > 0xff ? 2 : 1;
+  return width;
+}
+
+/** Approximate wrapped lines for Excel's fixed row height calculation. */
+function wrappedLineCount(value: unknown, width: number): number {
+  const text = String(value ?? '');
+  if (!text.trim()) return 0;
+  const capacity = Math.max(8, width * 0.7);
+  return text.split(/\r?\n/).reduce((total, line) => total + Math.max(1, Math.ceil(displayWidth(line) / capacity)), 0);
+}
 
 function entryWeeks(entry: ScheduleEntry, data: SchoolData): 'all' | 'odd' | 'even' {
   return (entry.weeks ?? planOf(data, entry)?.weeks ?? 'all') as 'all' | 'odd' | 'even';
@@ -85,6 +102,16 @@ function fillTimetableSheet(
     }
   }
 
+  sheet.getColumn(1).width = Math.max(Number(sheet.getColumn(1).width ?? 0), PERIOD_COLUMN_WIDTH);
+  for (let day = 1; day <= 7; day += 1) {
+    const column = sheet.getColumn(day + 1);
+    column.width = Math.max(Number(column.width ?? 0), DAY_COLUMN_WIDTH);
+  }
+  sheet.getRow(1).height = Math.max(Number(sheet.getRow(1).height ?? 0), 26);
+  sheet.getRow(2).height = Math.max(Number(sheet.getRow(2).height ?? 0), 52);
+  sheet.getRow(3).height = Math.max(Number(sheet.getRow(3).height ?? 0), 24);
+  sheet.getRow(4).height = Math.max(Number(sheet.getRow(4).height ?? 0), 24);
+
   const semester = data.semester;
   const week = settings.weekNo ? semesterWeeks(semester).find((item) => item.index === settings.weekNo) : null;
   const entityName = exportEntityName(data, settings);
@@ -110,6 +137,22 @@ function fillTimetableSheet(
     const weeks = entryWeeks(entry, data);
     return effectiveWeeks === 'all' || weeks === 'all' || weeks === effectiveWeeks;
   });
+  const slotById = new Map(data.timeSlots.map((slot) => [slot.id, slot]));
+  const activeDays = new Set<number>();
+  for (const entry of entries) {
+    const slot = slotById.get(entry.slotId);
+    if (slot) activeDays.add(slot.day);
+  }
+  const slotDays = new Set(data.timeSlots.map((slot) => slot.day));
+  // Hide empty weekday columns, but keep a recognisable Mon–Fri shell for a blank timetable.
+  const visibleDays = activeDays.size > 0
+    ? activeDays
+    : slotDays.size > 0
+      ? slotDays
+      : new Set([1, 2, 3, 4, 5]);
+  for (let day = 1; day <= 7; day += 1) {
+    sheet.getColumn(day + 1).hidden = !visibleDays.has(day);
+  }
 
   for (let index = 0; index < count; index += 1) {
     const period = periods[index] ?? index + 1;
@@ -134,6 +177,18 @@ function fillTimetableSheet(
       }
       cell.value = lines.join('\n');
       cell.alignment = { ...cell.alignment, wrapText: true, vertical: 'middle' };
+    }
+  }
+
+  for (let index = 0; index < count; index += 1) {
+    const row = sheet.getRow(TEMPLATE_FIRST_DATA_ROW + index);
+    let lines = 0;
+    for (const day of visibleDays) {
+      lines = Math.max(lines, wrappedLineCount(row.getCell(day + 1).value, DAY_COLUMN_WIDTH));
+    }
+    if (lines > 0) {
+      const fontSize = Number(row.getCell(2).font?.size ?? 16) || 16;
+      row.height = Math.max(Number(row.height ?? 0), Math.ceil(fontSize * 1.35 * lines + 10));
     }
   }
 
