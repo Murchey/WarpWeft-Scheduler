@@ -101,5 +101,35 @@ test('batch timetable file name reflects the selected views and week', async () 
   assert.match(teachers, /批量课表-教师课表-/);
 });
 
+test('multi-file batch names identify every timetable and stay unique', async () => {
+  const { batchTimetableEntryFileName, batchTimetableFolderName, uniqueFileName } = await loadExport();
+  const { data } = fixture();
+  const classFile = batchTimetableEntryFileName(data, {
+    schoolName: '测试学校',
+    view: 'class',
+    entityId: 'c1',
+    weeks: 'all',
+    weekNo: 3,
+  });
+  assert.match(classFile, /^测试学校-班-七年级1班-第3周-\d{4}-\d{2}-\d{2}\.xlsx$/);
+  const teacherFile = batchTimetableEntryFileName(data, {
+    schoolName: '',
+    view: 'teacher',
+    entityId: 't1',
+    weeks: 'odd',
+    weekNo: null,
+  });
+  assert.match(teacherFile, /^测试学校-师-王老师-单周-\d{4}-\d{2}-\d{2}\.xlsx$/);
+
+  const folder = batchTimetableFolderName(data, { schoolName: '测试学校', weeks: 'all', weekNo: null }, { classes: true, teachers: true });
+  assert.match(folder, /^测试学校-批量课表-班级\+教师-\d{4}-\d{2}-\d{2}$/);
+  assert.doesNotMatch(folder, /\.xlsx$/);
+
+  const used = new Set();
+  assert.equal(uniqueFileName('课表.xlsx', used), '课表.xlsx');
+  assert.equal(uniqueFileName('课表.xlsx', used), '课表·2.xlsx');
+  assert.equal(uniqueFileName('课表.xlsx', used), '课表·3.xlsx');
+});
+
 
 

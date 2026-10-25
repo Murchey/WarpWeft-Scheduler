@@ -1407,7 +1407,8 @@ html[data-theme='dark'] .tt-warning.is-danger{background:#2b1717;color:#fca5a5}
 .export-batch-options{display:flex;gap:18px;flex-wrap:wrap;font-size:12px}
 .export-batch-options label{display:inline-flex;align-items:center;gap:6px;flex-direction:row;color:var(--ink);font:12px var(--font-text);letter-spacing:0}
 .export-batch-options b{font-weight:700;color:var(--muted)}
-.export-batch-options input[type="checkbox"]{height:auto;width:auto;border:0;background:transparent;padding:0;margin:0;accent-color:var(--signal);cursor:pointer}
+.export-batch-options input[type="checkbox"],.export-batch-options input[type="radio"]{height:auto;width:auto;border:0;background:transparent;padding:0;margin:0;accent-color:var(--signal);cursor:pointer}
+.export-batch-output-label{margin-top:4px}
 .export-batch-scope small{font-size:11px;color:var(--muted)}
 
 .export-toggles{display:flex;gap:16px;font-size:12px;margin-bottom:10px;flex-wrap:wrap}

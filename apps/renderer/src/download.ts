@@ -12,8 +12,14 @@ interface BridgeResult {
   error?: string;
 }
 
+export interface DownloadFile {
+  filename: string;
+  data: ArrayBuffer | ArrayBufferView | Blob | string;
+}
+
 type ExportBridge = {
   saveExport?: (filename: string, data: ArrayBuffer) => Promise<BridgeResult | string>;
+  saveExports?: (folderName: string, files: { filename: string; data: ArrayBuffer }[]) => Promise<BridgeResult | string>;
 };
 
 interface SavePickerWindow {
@@ -23,6 +29,15 @@ interface SavePickerWindow {
   }) => Promise<{
     name?: string;
     createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }>;
+  }>;
+  showDirectoryPicker?: (options?: {
+    id?: string;
+    mode?: 'read' | 'readwrite';
+  }) => Promise<{
+    name?: string;
+    getFileHandle: (name: string, options?: { create?: boolean }) => Promise<{
+      createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }>;
+    }>;
   }>;
 }
 
@@ -99,6 +114,84 @@ async function download(content: ArrayBuffer | ArrayBufferView | Blob | string, 
   return { status: 'downloaded' };
 }
 
+async function saveManyViaFolder(
+  files: DownloadFile[],
+  type: string,
+  suggestedFolder: string,
+): Promise<ExportResult | null> {
+  const picker = (window as unknown as SavePickerWindow).showDirectoryPicker;
+  if (typeof picker !== 'function') return null;
+  let directory: Awaited<ReturnType<NonNullable<SavePickerWindow['showDirectoryPicker']>>>;
+  try {
+    directory = await picker.call(window, { id: 'warpweft-timetable-export', mode: 'readwrite' });
+  } catch (cause) {
+    if (cause instanceof DOMException && cause.name === 'AbortError') return { status: 'canceled' };
+    return null;
+  }
+  try {
+    for (const file of files) {
+      const handle = await directory.getFileHandle(file.filename, { create: true });
+      const writable = await handle.createWritable();
+      await writable.write(file.data instanceof Blob ? file.data : new Blob([blobPartOf(file.data)], { type }));
+      await writable.close();
+    }
+    return { status: 'saved', path: directory.name || suggestedFolder };
+  } catch (cause) {
+    return { status: 'failed', error: cause instanceof Error ? cause.message : String(cause) };
+  }
+}
+
+/**
+ * Save a batch of timetables as separate files. Electron asks for one folder
+ * and writes every file there; a browser falls back to a directory picker and
+ * then to sequential downloads.
+ */
+async function downloadFiles(
+  files: DownloadFile[],
+  type: string,
+  suggestedFolder: string,
+): Promise<ExportResult> {
+  if (files.length === 0) return { status: 'failed', error: '没有可保存的文件' };
+  const bridge = (window as unknown as { warpweft?: ExportBridge }).warpweft;
+  if (bridge?.saveExports) {
+    try {
+      const payload = await Promise.all(
+        files.map(async (file) => ({
+          filename: file.filename,
+          data: await (file.data instanceof Blob ? file.data : new Blob([blobPartOf(file.data)], { type })).arrayBuffer(),
+        })),
+      );
+      const result = await bridge.saveExports(suggestedFolder, payload);
+      if (typeof result === 'string') return result ? { status: 'saved', path: result } : { status: 'canceled' };
+      if (result?.status === 'canceled') return { status: 'canceled' };
+      if (result?.status === 'failed') return { status: 'failed', error: result.error || '写入文件失败' };
+      return { status: 'saved', path: result?.path };
+    } catch (cause) {
+      return { status: 'failed', error: cause instanceof Error ? cause.message : String(cause) };
+    }
+  }
+
+  const folderResult = await saveManyViaFolder(files, type, suggestedFolder);
+  if (folderResult) return folderResult;
+
+  // Browser fallback: each file becomes a normal download. Browsers may ask
+  // once for permission to download multiple files.
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    const blob = file.data instanceof Blob ? file.data : new Blob([blobPartOf(file.data)], { type });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = file.filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (index < files.length - 1) await new Promise((resolve) => window.setTimeout(resolve, 120));
+  }
+  return { status: 'downloaded' };
+}
+
 /**
  * One place to turn an export result into user-facing text. Cancellation is not
  * an error and produces no notice at all.
@@ -114,4 +207,4 @@ export function exportMessage(result: ExportResult, what: string): { tone: 'succ
   return { tone: 'success', text: what + '已开始下载，请查看浏览器下载目录' };
 }
 
-export { download };
+export { download, downloadFiles };

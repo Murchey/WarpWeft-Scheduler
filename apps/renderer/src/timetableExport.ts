@@ -23,9 +23,31 @@ export interface TimetableExportSettings {
 }
 
 
+export type BatchTimetableOutput = 'workbook' | 'files';
+
 export interface BatchTimetableSelection {
   classes: boolean;
   teachers: boolean;
+  /** One workbook with many sheets (default), or one workbook per timetable. */
+  output?: BatchTimetableOutput;
+}
+
+function batchScopeLabel(selection: BatchTimetableSelection): string {
+  if (selection.classes && selection.teachers) return '班级+教师';
+  return selection.classes ? '班级课表' : '教师课表';
+}
+
+function batchWeekLabel(settings: Pick<TimetableExportSettings, 'weeks' | 'weekNo'>): string {
+  if (settings.weekNo) return '第' + settings.weekNo + '周';
+  return settings.weeks === 'all' ? '' : settings.weeks === 'odd' ? '单周' : '双周';
+}
+
+function safeExportName(value: string): string {
+  const cleaned = value
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .slice(0, 120)
+    .replace(/[. ]+$/g, '');
+  return cleaned || '课表';
 }
 
 /** File name for one workbook containing many class/teacher timetables. */
@@ -34,14 +56,54 @@ export function batchTimetableFileName(
   settings: Pick<TimetableExportSettings, 'schoolName' | 'weeks' | 'weekNo'>,
   selection: BatchTimetableSelection,
 ): string {
-  const parts = [settings.schoolName || data.school.name, '批量课表'];
-  if (selection.classes && selection.teachers) parts.push('班级+教师');
-  else if (selection.classes) parts.push('班级课表');
-  else parts.push('教师课表');
-  if (settings.weekNo) parts.push('第' + settings.weekNo + '周');
-  else if (settings.weeks !== 'all') parts.push(settings.weeks === 'odd' ? '单周' : '双周');
+  const parts = [settings.schoolName || data.school.name, '批量课表', batchScopeLabel(selection)];
+  const week = batchWeekLabel(settings);
+  if (week) parts.push(week);
   parts.push(new Date().toISOString().slice(0, 10));
-  return parts.join('-').replace(/[\/:*?"<>|]/g, '_').slice(0, 120) + '.xlsx';
+  return safeExportName(parts.join('-')) + '.xlsx';
+}
+
+/** Suggested folder when every timetable is written to its own workbook. */
+export function batchTimetableFolderName(
+  data: SchoolData,
+  settings: Pick<TimetableExportSettings, 'schoolName' | 'weeks' | 'weekNo'>,
+  selection: BatchTimetableSelection,
+): string {
+  const parts = [settings.schoolName || data.school.name, '批量课表', batchScopeLabel(selection)];
+  const week = batchWeekLabel(settings);
+  if (week) parts.push(week);
+  parts.push(new Date().toISOString().slice(0, 10));
+  return safeExportName(parts.join('-'));
+}
+
+/** File name for one timetable inside a multi-file export. */
+export function batchTimetableEntryFileName(
+  data: SchoolData,
+  settings: Pick<TimetableExportSettings, 'schoolName' | 'view' | 'entityId' | 'weeks' | 'weekNo'>,
+): string {
+  const entity = exportEntityName(data, settings);
+  const prefix = settings.view === 'teacher' ? '师-' : '班-';
+  const parts = [settings.schoolName || data.school.name, prefix + entity];
+  const week = batchWeekLabel(settings);
+  if (week) parts.push(week);
+  parts.push(new Date().toISOString().slice(0, 10));
+  return safeExportName(parts.join('-')) + '.xlsx';
+}
+
+/** Make a download name unique on case-insensitive file systems. */
+export function uniqueFileName(base: string, used: Set<string>): string {
+  const dot = base.lastIndexOf('.');
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  const extension = dot > 0 ? base.slice(dot) : '';
+  let name = base;
+  let suffix = 2;
+  while (used.has(name) || used.has(name.toLowerCase())) {
+    name = stem + '·' + suffix + extension;
+    suffix += 1;
+  }
+  used.add(name);
+  used.add(name.toLowerCase());
+  return name;
 }
 
 export interface TimetableGrid {

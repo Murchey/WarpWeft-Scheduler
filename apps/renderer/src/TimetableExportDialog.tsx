@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import type { SchoolData, SolverOutput } from './types';
 import { SectionHeading } from './components';
-import { batchTimetableFileName, buildTimetableGrid, exportEntityName, VIEW_LABELS } from './timetableExport';
-import type { BatchTimetableSelection, ExportView, TimetableExportSettings } from './timetableExport';
+import { batchTimetableFileName, batchTimetableFolderName, buildTimetableGrid, exportEntityName, VIEW_LABELS } from './timetableExport';
+import type { BatchTimetableOutput, BatchTimetableSelection, ExportView, TimetableExportSettings } from './timetableExport';
 import { semesterWeeks } from '../../../packages/semester/src';
 
 export function TimetableExportDialog({
@@ -52,6 +52,7 @@ export function TimetableExportDialog({
   const [batch, setBatch] = useState(Boolean(initialBatch) && canBatch);
   const [batchClasses, setBatchClasses] = useState(true);
   const [batchTeachers, setBatchTeachers] = useState(true);
+  const [batchOutput, setBatchOutput] = useState<BatchTimetableOutput>('workbook');
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<'idle' | 'generating' | 'writing'>('idle');
@@ -93,7 +94,7 @@ export function TimetableExportDialog({
         const batchSettings: TimetableExportSettings = { ...settings, scope: 'single' };
         ok = await onBatchConfirm(
           batchSettings,
-          { classes: batchClasses, teachers: batchTeachers },
+          { classes: batchClasses, teachers: batchTeachers, output: batchOutput },
           (next) => setStage(next),
           (done, total) => setBatchProgress({ done, total }),
         );
@@ -117,12 +118,12 @@ export function TimetableExportDialog({
         : batch
           ? 8
           : 40;
+  const batchSelection: BatchTimetableSelection = { classes: batchClasses, teachers: batchTeachers, output: batchOutput };
+  const batchDescriptor = { schoolName: settings.schoolName, weeks: settings.weeks, weekNo: settings.weekNo };
   const fileName = batch
-    ? batchTimetableFileName(
-        data,
-        { schoolName: settings.schoolName, weeks: settings.weeks, weekNo: settings.weekNo },
-        { classes: batchClasses, teachers: batchTeachers },
-      )
+    ? batchOutput === 'workbook'
+      ? batchTimetableFileName(data, batchDescriptor, batchSelection)
+      : batchTimetableFolderName(data, batchDescriptor, batchSelection) + '/'
     : (settings.schoolName || data.school.name) + '-' + exportEntityName(data, settings) + '-' + (settings.title || '课表') + (settings.weekNo ? '-第' + settings.weekNo + '周' : '') + '-日期.xlsx';
 
   return (
@@ -134,7 +135,9 @@ export function TimetableExportDialog({
         </header>
         <p className="panel-note">
           {batch
-            ? '一次生成一个 Excel 文件，每个班级/教师一张工作表；仍使用选定模板的字体、边框与页面布局（自动调整为 1 页宽）。'
+            ? batchOutput === 'workbook'
+              ? '一次生成一个 Excel 文件，每个班级/教师一张工作表；仍使用选定模板的字体、边框与页面布局（自动调整为 1 页宽）。'
+              : '每张课表生成一个独立的 Excel 文件，保存时选择一个文件夹统一写入；每份文件仍保留模板的字体、边框与页面布局（自动调整为 1 页宽）。'
             : '使用选定的纵向/横向课表模板导出，保留模板的字体、边框与页面布局（自动调整为 1 页宽）；不附加软件元数据。'}
         </p>
 
@@ -161,7 +164,18 @@ export function TimetableExportDialog({
                 <label><input type="checkbox" checked={batchClasses} onChange={(event) => setBatchClasses(event.target.checked)} /> 班级课表 <b>{data.classes.length}</b></label>
                 <label><input type="checkbox" checked={batchTeachers} onChange={(event) => setBatchTeachers(event.target.checked)} /> 教师课表 <b>{data.teachers.length}</b></label>
               </div>
-              <small>{batchCount ? '共 ' + batchCount + ' 张工作表' : '请至少选择一种课表'}</small>
+              <span className="export-batch-output-label">输出方式</span>
+              <div className="export-batch-options">
+                <label><input type="radio" name="batch-output" checked={batchOutput === 'workbook'} onChange={() => setBatchOutput('workbook')} /> 一个文件（多个工作表）</label>
+                <label><input type="radio" name="batch-output" checked={batchOutput === 'files'} onChange={() => setBatchOutput('files')} /> 多个文件（每张课表一个）</label>
+              </div>
+              <small>
+                {batchCount
+                  ? batchOutput === 'workbook'
+                    ? '共 ' + batchCount + ' 张工作表，保存为一个 xlsx 文件'
+                    : '共 ' + batchCount + ' 个文件，保存时选择目标文件夹'
+                  : '请至少选择一种课表'}
+              </small>
             </div>
           ) : (
             <>
@@ -226,7 +240,11 @@ export function TimetableExportDialog({
         </div>
 
         {batch ? (
-          <p className="panel-note">批量导出按当前周次/单双周设置生成，每个班级/教师一张工作表；不支持整学期拆分。</p>
+          <p className="panel-note">
+            {batchOutput === 'workbook'
+              ? '批量导出按当前周次/单双周设置生成，每个班级/教师一张工作表；不支持整学期拆分。'
+              : '批量导出按当前周次/单双周设置生成，每张课表单独保存；不支持整学期拆分。保存时会弹出文件夹选择窗口。'}
+          </p>
         ) : settings.scope === 'semester' ? (
           <p className="panel-note">整学期导出会按实际课表去重：完全相同的周只生成一张工作表，有差异的周按周次标注。</p>
         ) : null}
@@ -240,7 +258,7 @@ export function TimetableExportDialog({
         </div>
 
         <div className="export-preview">
-          {batch ? <p className="panel-note">下方为当前单个视图的样式预览；批量导出会按同一模板生成所有选中工作表。</p> : null}
+          {batch ? <p className="panel-note">下方为当前单个视图的样式预览；批量导出会按同一模板生成所有选中课表。</p> : null}
           {grid ? (
             <table className="export-preview-table">
               <tbody>
@@ -258,13 +276,23 @@ export function TimetableExportDialog({
         {busy ? (
           <div className="export-progress" role="status" aria-live="polite">
             <div className="export-progress-head">
-              <b>{stage === 'writing' ? '正在写入文件…' : batch ? '正在生成批量课表…' : '正在生成课表…'}</b>
+              <b>
+                {stage === 'writing'
+                  ? batch && batchOutput === 'files'
+                    ? '正在保存多个文件…'
+                    : '正在写入文件…'
+                  : batch
+                    ? '正在生成批量课表…'
+                    : '正在生成课表…'}
+              </b>
               <span>
                 {stage === 'writing'
-                  ? '请等待保存完成后再打开文件，否则可能看到未写完的文件。'
+                  ? batch && batchOutput === 'files'
+                    ? '请在系统对话框中选择保存文件夹；保存完成前请勿关闭窗口。'
+                    : '请等待保存完成后再打开文件，否则可能看到未写完的文件。'
                   : batch
                     ? batchProgress
-                      ? '已完成 ' + batchProgress.done + '/' + batchProgress.total + ' 张工作表。'
+                      ? '已生成 ' + batchProgress.done + '/' + batchProgress.total + (batchOutput === 'workbook' ? ' 张工作表。' : ' 个文件。')
                       : '正在按模板生成班级/教师课表…'
                     : '正在生成 Excel 网格与明细。'}
               </span>
@@ -275,10 +303,16 @@ export function TimetableExportDialog({
           </div>
         ) : null}
         <footer className="export-actions">
-          <span>文件名：{fileName}</span>
+          <span>{batch && batchOutput === 'files' ? '建议文件夹：' : '文件名：'}{fileName}</span>
           <button type="button" className="ghost-button" onClick={onClose} disabled={busy}>取消</button>
           <button type="button" className="action-button" onClick={() => void confirm()} disabled={busy || (batch && batchCount === 0)}>
-            {busy ? '正在导出…' : batch ? '批量导出 ' + batchCount + ' 张课表' : mode === 'publish' ? '导出并保存为正式版' : '导出 Excel'} <span>↗</span>
+            {busy
+              ? '正在导出…'
+              : batch
+                ? '批量导出 ' + batchCount + (batchOutput === 'workbook' ? ' 张课表' : ' 个文件')
+                : mode === 'publish'
+                  ? '导出并保存为正式版'
+                  : '导出 Excel'} <span>↗</span>
           </button>
         </footer>
       </div>

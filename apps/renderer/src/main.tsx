@@ -7,12 +7,12 @@ import { ApiError, cancelServerJob, clearAuthToken, createUser, DEFAULT_API_BASE
 import { DAYS, SectionHeading } from './components';
 import { PreparePage } from './PreparePage';
 import type { PrepareSection } from './PreparePage';
-import { download, exportMessage } from './download';
+import { download, downloadFiles, exportMessage } from './download';
 import type { ExportResult } from './download';
 import { TimetableExportDialog } from './TimetableExportDialog';
-import { batchTimetableFileName, timetableFileName, VIEW_LABELS } from './timetableExport';
+import { batchTimetableEntryFileName, batchTimetableFileName, batchTimetableFolderName, timetableFileName, uniqueFileName, VIEW_LABELS } from './timetableExport';
 import { loadTimetableTemplate } from './timetableTemplateLoader';
-import { fillBatchTimetableTemplate, fillSemesterTemplate, fillTimetableTemplate } from './timetableTemplate';
+import { fillBatchTimetableFiles, fillBatchTimetableTemplate, fillSemesterTemplate, fillTimetableTemplate } from './timetableTemplate';
 import type { BatchTimetableItem } from './timetableTemplate';
 import type { BatchTimetableSelection, TimetableExportSettings } from './timetableExport';
 import { checkMove, checkSwap } from './dnd';
@@ -1637,6 +1637,7 @@ function App() {
         });
       }
     }
+    const output = selection.output ?? 'workbook';
     try {
       const weekStart = batchSettings.weekNo
         ? semesterWeeks(data.semester).find((week) => week.index === batchSettings.weekNo)?.startDate
@@ -1646,6 +1647,28 @@ function App() {
         : target;
       onStage('generating');
       const template = await loadTimetableTemplate(batchSettings.layout);
+      if (output === 'files') {
+        const generated = await fillBatchTimetableFiles(template, data, batchTarget, items, onProgress);
+        const used = new Set<string>();
+        const files = generated.map((file, index) => ({
+          filename: uniqueFileName(batchTimetableEntryFileName(data, items[index].settings), used),
+          data: file.buffer,
+        }));
+        onStage('writing');
+        const outcome = await downloadFiles(
+          files,
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          batchTimetableFolderName(data, batchSettings, selection),
+        );
+        const message = exportMessage(outcome, '课表文件（' + files.length + ' 个）');
+        if (!message) return false;
+        if (message.tone === 'error') {
+          setError(message.text);
+          return false;
+        }
+        setNotice(message.text);
+        return true;
+      }
       const filled = await fillBatchTimetableTemplate(template, data, batchTarget, items, onProgress);
       onStage('writing');
       const outcome = await download(

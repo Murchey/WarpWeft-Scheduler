@@ -129,6 +129,105 @@ ipcMain.handle('warpweft:save-export', async (event, payload) => {
   }
 });
 
+function safeExportFileName(rawName) {
+  return path
+    .basename(String(rawName || 'warpweft-export'))
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    .slice(0, 160) || 'warpweft-export';
+}
+
+function uniqueExportFileName(name, used) {
+  const extension = path.extname(name);
+  const stem = path.basename(name, extension);
+  let candidate = name;
+  let suffix = 2;
+  while (used.has(candidate.toLowerCase())) {
+    candidate = stem + ' (' + suffix + ')' + extension;
+    suffix += 1;
+  }
+  used.add(candidate.toLowerCase());
+  return candidate;
+}
+
+ipcMain.handle('warpweft:save-exports', async (event, payload) => {
+  const folderName = safeExportFileName(payload?.folderName || '课表导出');
+  const files = Array.isArray(payload?.files) ? payload.files : [];
+  if (files.length === 0) return { status: 'failed', error: '没有可保存的文件' };
+  if (files.length > 1000) return { status: 'failed', error: '一次最多保存 1000 个文件' };
+
+  const pending = [];
+  let totalBytes = 0;
+  for (const file of files) {
+    const filename = safeExportFileName(file?.filename);
+    const extension = path.extname(filename).toLowerCase();
+    if (extension !== '.xlsx' && extension !== '.csv') {
+      return { status: 'failed', error: '不支持的导出文件类型：' + filename };
+    }
+    const data = file?.data;
+    let buffer;
+    if (data instanceof ArrayBuffer) {
+      buffer = Buffer.from(new Uint8Array(data));
+    } else if (ArrayBuffer.isView(data)) {
+      buffer = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+    } else {
+      return { status: 'failed', error: '导出数据格式无效：' + filename };
+    }
+    if (buffer.length === 0) return { status: 'failed', error: '导出内容为空：' + filename };
+    if (buffer.length > 50 * 1024 * 1024) return { status: 'failed', error: '单个导出文件过大：' + filename };
+    totalBytes += buffer.length;
+    if (totalBytes > 500 * 1024 * 1024) return { status: 'failed', error: '批量导出文件总大小超过 500 MB' };
+    pending.push({ filename, buffer });
+  }
+
+  const options = {
+    title: '选择课表保存文件夹',
+    defaultPath: app.getPath('downloads'),
+    properties: ['openDirectory', 'createDirectory'],
+  };
+  const window = BrowserWindow.fromWebContents(event.sender);
+  const chosen = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+  if (chosen.canceled || !chosen.filePaths?.[0]) return { status: 'canceled' };
+  const folder = path.resolve(chosen.filePaths[0]);
+  try {
+    await fs.promises.mkdir(folder, { recursive: true });
+    const used = new Set();
+    const targets = pending.map((file) => ({
+      ...file,
+      filename: uniqueExportFileName(file.filename, used),
+    }));
+    const conflicts = targets
+      .filter((file) => fs.existsSync(path.join(folder, file.filename)))
+      .map((file) => file.filename);
+    if (conflicts.length > 0) {
+      const overwriteOptions = {
+        type: 'warning',
+        buttons: ['覆盖', '取消'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+        title: '确认覆盖课表',
+        message: '目标文件夹中已有 ' + conflicts.length + ' 个同名文件',
+        detail:
+          '继续保存将覆盖这些文件：\n' +
+          conflicts.slice(0, 6).join('\n') +
+          (conflicts.length > 6 ? '\n…' : ''),
+      };
+      const answer = window
+        ? await dialog.showMessageBox(window, overwriteOptions)
+        : await dialog.showMessageBox(overwriteOptions);
+      if (answer.response !== 0) return { status: 'canceled' };
+    }
+    let written = 0;
+    for (const file of targets) {
+      await fs.promises.writeFile(path.join(folder, file.filename), file.buffer);
+      written += 1;
+    }
+    return { status: 'saved', path: folder, files: written, folderName };
+  } catch (error) {
+    return { status: 'failed', error: error.message };
+  }
+});
+
 ipcMain.handle('warpweft:show-item', async (_event, target) => {
   if (typeof target !== 'string' || !target.trim()) return { ok: false, error: '没有文件路径' };
   try {

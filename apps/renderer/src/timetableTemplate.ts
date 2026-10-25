@@ -258,6 +258,55 @@ export async function fillBatchTimetableTemplate(
   return { buffer, pageSetup, sheets };
 }
 
+export interface FilledBatchFile {
+  /** Worksheet name inside this single-sheet workbook. */
+  sheetName: string;
+  buffer: Uint8Array;
+  pageSetup: PageSetupSummary;
+}
+
+/**
+ * Fill one workbook per timetable for multi-file export. The template is parsed
+ * once and copied for every file, so all files keep the approved layout without
+ * paying the template-load cost for every class/teacher.
+ */
+export async function fillBatchTimetableFiles(
+  templateBuffer: ArrayBuffer | Uint8Array,
+  data: SchoolData,
+  result: SolverOutput,
+  items: BatchTimetableItem[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<FilledBatchFile[]> {
+  if (items.length === 0) throw new Error('没有可导出的课表');
+  const ExcelJS = (await import('exceljs')).default;
+  const templateWorkbook = new ExcelJS.Workbook();
+  await templateWorkbook.xlsx.load(templateBuffer as ArrayBuffer);
+  for (const sheet of [...templateWorkbook.worksheets]) {
+    if (sheet.name !== '班级课表') templateWorkbook.removeWorksheet(sheet.id);
+  }
+  const source = templateWorkbook.getWorksheet('班级课表') ?? templateWorkbook.worksheets[0];
+  if (!source) throw new Error('课表模板缺少工作表');
+
+  const used = new Set<string>();
+  const files: FilledBatchFile[] = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    const sheetName = uniqueSheetName(item.sheetName, used);
+    const workbook = new ExcelJS.Workbook();
+    const target = workbook.addWorksheet(sheetName);
+    if (item.tabColor) target.properties.tabColor = { argb: item.tabColor };
+    copySheet(source, target);
+    const pageSetup = fillTimetableSheet(target, data, result, item.settings);
+    const written = await workbook.xlsx.writeBuffer();
+    const buffer = written instanceof Uint8Array ? written : new Uint8Array(written as ArrayBuffer);
+    files.push({ sheetName, buffer, pageSetup });
+    onProgress?.(index + 1, items.length);
+    // Let React repaint between files without slowing down normal-size batches.
+    if ((index + 1) % 4 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  return files;
+}
+
 /**
  * Export several distinct week patterns into one workbook. Weeks with identical
  * effective timetables share a sheet; the sheet name is the week label.
@@ -300,7 +349,6 @@ export async function fillSemesterTemplate(
   const buffer = written instanceof Uint8Array ? written : new Uint8Array(written as ArrayBuffer);
   return { buffer, pageSetup, sheets };
 }
-
 
 
 

@@ -181,3 +181,43 @@ test('batch export creates one formatted sheet per class/teacher with unique nam
   assert.equal(workbook.getWorksheet('班-七年级1班').pageSetup.orientation, 'portrait');
   assert.equal(filled.pageSetup.fitToWidth, 1);
 });
+
+test('multi-file batch export writes one formatted workbook per timetable', async () => {
+  const { fillBatchTimetableFiles } = await import('../apps/renderer/src/timetableTemplate.ts');
+  const { data, result, settings } = fixture();
+  const template = fs.readFileSync(templates.horizontal);
+  const progress = [];
+  const files = await fillBatchTimetableFiles(
+    template,
+    data,
+    result,
+    [
+      { sheetName: '班-七年级1班', tabColor: 'FF1F4E78', settings: { ...settings, view: 'class', title: '班级课表' } },
+      { sheetName: '师-王老师', tabColor: 'FF2E7D32', settings: { ...settings, view: 'teacher', entityId: 't1', title: '教师课表' } },
+      { sheetName: '班-七年级1班', settings: { ...settings, view: 'class', title: '班级课表' } },
+    ],
+    (done, total) => progress.push([done, total]),
+  );
+
+  assert.equal(files.length, 3);
+  assert.deepEqual(progress, [[1, 3], [2, 3], [3, 3]]);
+  assert.deepEqual(files.map((file) => file.sheetName), ['班-七年级1班', '师-王老师', '班-七年级1班·2']);
+
+  for (const [index, file] of files.entries()) {
+    assert.ok(file.buffer.length > 1000, 'file ' + index + ' has workbook bytes');
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(file.buffer);
+    assert.equal(workbook.worksheets.length, 1, 'file ' + index + ' has one sheet');
+    const sheet = workbook.getWorksheet(file.sheetName);
+    assert.ok(sheet, 'file ' + index + ' keeps its sheet name');
+    assert.equal(sheet.pageSetup.orientation, 'landscape');
+    assert.equal(sheet.pageSetup.fitToPage, true);
+    assert.equal(sheet.pageSetup.fitToWidth, 1);
+    assert.equal(sheet.getCell('A1').value, '模板测试中学');
+    assert.equal(sheet.getCell('A3').value, index === 1 ? '王老师' : '七年级1班');
+    assert.equal(sheet.getCell('B5').font?.name, '宋体');
+    assert.equal(sheet.getCell('B5').border?.top?.style, 'thin');
+    assert.equal(file.pageSetup.orientation, 'landscape');
+  }
+  assert.equal(files[1].sheetName, '师-王老师');
+});
