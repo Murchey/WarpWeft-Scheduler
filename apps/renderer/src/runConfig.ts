@@ -1,4 +1,4 @@
-﻿import type { RunMode } from './types';
+import type { RunMode, SolverOutput } from './types';
 
 export type RunPhase =
   | 'idle'
@@ -60,6 +60,28 @@ export const RUN_MODE_OPTIONS: {
   },
 ];
 
+export const RUN_STATUS_LABELS: Record<string, string> = {
+  queued: '排队中',
+  running: '运行中',
+  paused: '已暂停',
+  completed: '已完成',
+  failed: '未完成',
+  cancelled: '已取消',
+  interrupted: '已中断',
+  COMPLETED: '已完成',
+  FAILED: '未完成',
+  TIMEOUT: '超时',
+  FEASIBLE: '可行',
+  OPTIMAL: '最优',
+  IMPROVED: '已改进',
+};
+
+export function runStatusText(status: string): string {
+  return RUN_STATUS_LABELS[status] ?? status;
+}
+
+export type ShortRunMode = 'solve' | 'repair';
+
 export interface ShortRunRecord {
   id: string;
   createdAt: string;
@@ -67,4 +89,16 @@ export interface ShortRunRecord {
   entries: number;
   elapsedMs: number;
   feasible: boolean;
+  /** solve = 整表排课；repair = 局部重排。 */
+  mode: ShortRunMode;
+  /** 本次提交给求解器的时限。 */
+  timeLimitSeconds: number;
+  /** 启动时锁定的课时数。 */
+  lockedCount: number;
+  /** 启动时工作区的计划总课时，用于查看未排课时。 */
+  totalPeriods: number;
+  /** 启动时的运行模式，便于回看当时连接的是本机还是服务端。 */
+  runMode: RunMode | null;
+  /** 完整结果快照；仅在本次会话内存中保留。 */
+  result: SolverOutput;
 }

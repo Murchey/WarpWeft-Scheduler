@@ -651,6 +651,9 @@ function App() {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<RunProgress>({ phase: 'idle', message: '等待开始排课' });
   const [shortRuns, setShortRuns] = useState<ShortRunRecord[]>([]);
+  const deleteShortRun = useCallback((id: string) => {
+    setShortRuns((current) => current.filter((run) => run.id !== id));
+  }, []);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [toastLogs, setToastLogs] = useState<ToastLogEntry[]>(() => readToastLogs());
   const toastRef = useRef<ToastState | null>(null);
@@ -1286,6 +1289,12 @@ function App() {
         entries: output.entries.length,
         elapsedMs: output.elapsedMs,
         feasible: output.hasFeasibleSolution,
+        mode: 'solve' as const,
+        timeLimitSeconds: timeLimit,
+        lockedCount: locked.length,
+        totalPeriods: data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0),
+        runMode,
+        result: output,
       }, ...current].slice(0, 12));
       const updated = { ...data, candidate: output };
       setData(updated);
@@ -1360,6 +1369,12 @@ function App() {
         entries: repaired.entries.length,
         elapsedMs: repaired.elapsedMs,
         feasible: repaired.hasFeasibleSolution,
+        mode: 'repair' as const,
+        timeLimitSeconds: timeLimit,
+        lockedCount: originalLocked.size,
+        totalPeriods: data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0),
+        runMode,
+        result: repaired,
       }, ...current].slice(0, 12));
       const updated = { ...data, candidate: repaired };
       setData(updated);
@@ -1914,6 +1929,7 @@ function App() {
             progress={progress}
             runMode={runMode}
             shortRuns={shortRuns}
+            onDeleteShortRun={deleteShortRun}
             timeLimit={timeLimit}
             setTimeLimit={setTimeLimit}
             onRun={run}

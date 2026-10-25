@@ -1,31 +1,24 @@
 import React, { useCallback, useRef, useState } from 'react';
 import type { RunMode, SchoolData, SolverInput, SolverOutput } from './types';
-import type { RunProgress } from './runConfig';
-import { RUN_MODE_OPTIONS } from './runConfig';
+import type { RunProgress, ShortRunRecord } from './runConfig';
+import { RUN_MODE_OPTIONS, runStatusText } from './runConfig';
 import { SectionHeading } from './components';
 import { EmptyState, MissingReasons, RunProgressView } from './runViews';
-import { findClass, missingPlans, planSubjectName } from './selectors';
+import { missingPlans } from './selectors';
 import { activeRules, describeRule } from './rules';
 import { LongRunPanel } from './LongRunPanel';
+import { ShortRunDialog } from './ShortRunDialog';
 import type { LongJob, LongJobDetail } from './api';
 
-const RUN_STATUS_LABELS: Record<string, string> = {
-  queued: '排队中', running: '运行中', paused: '已暂停', completed: '已完成', failed: '未完成', cancelled: '已取消', interrupted: '已中断',
-  COMPLETED: '已完成', FAILED: '未完成', TIMEOUT: '超时', FEASIBLE: '可行', OPTIMAL: '最优', IMPROVED: '已改进',
-};
-
-function runStatusText(status: string): string {
-  return RUN_STATUS_LABELS[status] ?? status;
-}
-
 export function RunsPage({
-  data, result, issues, running, progress, timeLimit, setTimeLimit, onRun, onRepair, onTimetable, onClear, runMode, shortRuns, inputFactory, onApplyLongResult, onNotice, onError,
+  data, result, issues, running, progress, timeLimit, setTimeLimit, onRun, onRepair, onTimetable, onClear, runMode, shortRuns, onDeleteShortRun, inputFactory, onApplyLongResult, onNotice, onError,
 }: {
   data: SchoolData; result: SolverOutput | null; issues: string[]; running: boolean; progress: RunProgress;
   timeLimit: number; setTimeLimit: (value: number) => void; onRun: () => void;
   onRepair: (scope: 'class' | 'teacher' | 'rule', id: string) => Promise<void>;
   onTimetable: () => void; onClear: () => void; runMode?: RunMode | null;
-  shortRuns: { id: string; createdAt: string; status: string; entries: number; elapsedMs: number; feasible: boolean }[];
+  shortRuns: ShortRunRecord[];
+  onDeleteShortRun: (id: string) => void;
   inputFactory: (seconds: number) => SolverInput;
   onApplyLongResult: (job: LongJobDetail) => void;
   onNotice: (message: string) => void;
@@ -41,6 +34,7 @@ export function RunsPage({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [longActive, setLongActive] = useState(false);
   const [longJobs, setLongJobs] = useState<LongJob[]>([]);
+  const [viewingShortRun, setViewingShortRun] = useState<ShortRunRecord | null>(null);
   const longStartRef = useRef<() => Promise<void>>(async () => {});
   const registerLongStart = useCallback((start: () => Promise<void>) => {
     longStartRef.current = start;
@@ -62,14 +56,28 @@ export function RunsPage({
   const canConfigure = checked && !running;
   const lockedCount = data.candidate?.entries.filter((entry) => entry.locked).length ?? 0;
   const modeLabel = RUN_MODE_OPTIONS.find((item) => item.value === runMode)?.title ?? '当前模式';
-  const recentTasks = [
+  const removeShortRun = (run: ShortRunRecord) => {
+    if (!window.confirm('删除这条短时计算记录？仅移除本次会话的历史记录，不影响当前候选课表、正式版课表或长时任务。')) return;
+    onDeleteShortRun(run.id);
+    setViewingShortRun((current) => (current?.id === run.id ? null : current));
+  };
+  const recentTasks: {
+    key: string;
+    kind: string;
+    at: string;
+    title: string;
+    detail: string;
+    ok: boolean;
+    run: ShortRunRecord | null;
+  }[] = [
     ...shortRuns.map((run) => ({
       key: 'short-' + run.id,
       kind: '短时',
       at: run.createdAt,
-      title: '短时计算 · ' + runStatusText(run.status),
-      detail: run.entries + ' 条 · ' + run.elapsedMs + ' ms',
+      title: (run.mode === 'repair' ? '局部重排 · ' : '短时计算 · ') + runStatusText(run.status),
+      detail: run.entries + ' 条 · ' + run.elapsedMs + ' ms · 时限 ' + run.timeLimitSeconds + ' 秒',
       ok: run.feasible,
+      run,
     })),
     ...longJobs.map((item) => ({
       key: 'long-' + item.id,
@@ -78,6 +86,7 @@ export function RunsPage({
       title: '长时任务 · ' + runStatusText(item.status),
       detail: item.placed + '/' + item.total + ' 课时 · ' + item.id,
       ok: item.status === 'completed',
+      run: null,
     })),
   ].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 3);
 
@@ -197,8 +206,14 @@ export function RunsPage({
           <h4>最近任务</h4>
           {recentTasks.length === 0 ? <p className="panel-note">还没有任务记录。</p> : recentTasks.map((item) => (
             <div className="short-history-row" key={item.key}>
-              <div><b>{item.title}</b><small>{new Date(item.at).toLocaleString('zh-CN')} · {item.detail}</small></div>
+              <div className="short-history-copy"><b>{item.title}</b><small>{new Date(item.at).toLocaleString('zh-CN')} · {item.detail}</small></div>
               <span className={item.ok ? 'status-tag' : 'status-tag danger'}>{item.kind}</span>
+              {item.run ? (
+                <div className="short-history-actions">
+                  <button type="button" className="history-action" aria-label={'查看 ' + item.title} onClick={() => { if (item.run) setViewingShortRun(item.run); }}>查看</button>
+                  <button type="button" className="history-action is-danger" aria-label={'删除 ' + item.title} onClick={() => { if (item.run) removeShortRun(item.run); }}>删除</button>
+                </div>
+              ) : null}
             </div>
           ))}
         </div>
@@ -207,8 +222,15 @@ export function RunsPage({
             <h4>短时计算记录</h4>
             {shortRuns.length === 0 ? <p className="panel-note">本次会话还没有短时计算记录。</p> : shortRuns.map((run) => (
               <div className="short-history-row" key={run.id}>
-                <div><b>{runStatusText(run.status)}</b><small>{new Date(run.createdAt).toLocaleString('zh-CN')} · {run.entries} 条 · {run.elapsedMs} ms</small></div>
+                <div className="short-history-copy">
+                  <b>{run.mode === 'repair' ? '局部重排' : '短时计算'} · {runStatusText(run.status)}</b>
+                  <small>{new Date(run.createdAt).toLocaleString('zh-CN')} · {run.entries} 条 · {run.elapsedMs} ms · 时限 {run.timeLimitSeconds} 秒</small>
+                </div>
                 <span className={run.feasible ? 'status-tag' : 'status-tag danger'}>{run.feasible ? '可行' : '未排满'}</span>
+                <div className="short-history-actions">
+                  <button type="button" className="history-action" aria-label={'查看 ' + new Date(run.createdAt).toLocaleString('zh-CN') + ' 的短时记录'} onClick={() => setViewingShortRun(run)}>查看</button>
+                  <button type="button" className="history-action is-danger" aria-label={'删除 ' + new Date(run.createdAt).toLocaleString('zh-CN') + ' 的短时记录'} onClick={() => removeShortRun(run)}>删除</button>
+                </div>
               </div>
             ))}
           </div>
@@ -260,6 +282,15 @@ export function RunsPage({
           </div>
         ) : <EmptyState title="尚未生成候选课表" message="完成向导后，候选课表会显示在这里。" />}
       </section>
+
+      {viewingShortRun ? (
+        <ShortRunDialog
+          data={data}
+          run={viewingShortRun}
+          onClose={() => setViewingShortRun(null)}
+          onDelete={() => { if (viewingShortRun) removeShortRun(viewingShortRun); }}
+        />
+      ) : null}
     </div>
   );
 }
