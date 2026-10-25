@@ -94,7 +94,9 @@ export function MissingReasons({
   data: SchoolData;
   missing: { plan: CoursePlan; missing: number }[];
 }) {
+  const [expanded, setExpanded] = useState(false);
   if (missing.length === 0) return null;
+  const visible = expanded ? missing : missing.slice(0, 6);
   return (
     <div className="missing-reasons">
       <div className="missing-head">
@@ -107,7 +109,7 @@ export function MissingReasons({
       <p className="panel-note">
         以下是基于当前教师时间、教室和已启用规则的可能原因；不是数学证明。
       </p>
-      {missing.slice(0, 6).map((item) => {
+      {visible.map((item) => {
         const hints = unscheduledHints(item.plan, data);
         return (
           <div className="missing-reason" key={item.plan.id}>
@@ -131,7 +133,15 @@ export function MissingReasons({
         );
       })}
       {missing.length > 6 ? (
-        <p className="panel-note">还有 {missing.length - 6} 条未展开。</p>
+        <button
+          type="button"
+          className="ghost-button missing-more"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? '收起未排原因' : '展开全部 ' + missing.length + ' 条未排原因'}
+          <span>{expanded ? '↑' : '↓'}</span>
+        </button>
       ) : null}
     </div>
   );

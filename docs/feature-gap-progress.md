@@ -12,7 +12,7 @@
 | 1 自动排课 | ✅ | ✅ 增强 | 求解器最受限优先、弹出修复、热启动迭代（120 班/3600 课时 6.1s 排满） |
 | 2 单双周 | ⛔ | ✅ | `CoursePlan.weeks` 三态 + 周次掩码冲突判定 + 课表单/双周筛选 + 导入模板/检测/统计 |
 | 3 课表检测 | 🟡 | ✅ | 检测引擎 + 「课表检测」页 + 发布门禁 + 报告导出 |
-| 4 临时调代课 | 🟡 | ✅ | 按日期的 `Adjustment`（调课/代课/停课）+ 冲突校验 + 撤销 + 审计 + 当天导出 |
+| 4 临时调代课 | 🟡 | ✅ | 按日期的 `Adjustment`（调课/跨日对调/代课/停课）+ 冲突校验 + 撤销 + 审计 + 当天导出 |
 | 5 120+ 班级 | 🟡 | ✅ 求解侧 + 任务侧 | 合成 120 班/3600 课时排满；长时任务（检查点/暂停/继续/进度/断线重连）已落地 |
 | 6 即时预览 | 🟡 | 🟡→✅ 任务进度 | 长时任务每秒上报「已排/总数」并可在页面查看、载入最佳课表；求解器内的增量课表预览未做 |
 | 7 早晚补课时 | ⛔ | ✅ | 时段类型（早读/常规/晚自习/补课）+ 开始时间/时长 + 课表分栏 + 统计分类；计划只能排进同类型时段 |
@@ -166,27 +166,31 @@ node scripts/bench-solver.cjs --classes 24,96,120 --time-limit 30
 
 **模型**
 
-- 新增 `Adjustment`：`{ id, date, type: 'move'|'substitute'|'cancel', slotId, classId, originalEntryId, targetSlotId?, substituteTeacherId?, roomId?, reason?, createdBy, createdAt, status: 'active'|'revoked', revokedAt?, revokedBy? }`，持久化在 `SchoolData.adjustments[]`。
+- 新增 `Adjustment`：`{ id, date, type: 'move'|'swap'|'substitute'|'cancel', slotId, classId, originalEntryId, targetSlotId?, targetDate?, targetEntryId?, substituteTeacherId?, roomId?, reason?, createdBy, createdAt, status: 'active'|'revoked', revokedAt?, revokedBy? }`，持久化在 `SchoolData.adjustments[]`。
 - 周课表（候选/正式版）**不被改写**：调整是按日期叠加的独立记录，撤销后自然回到原状，历史与审计都保留。
+- `swap` 表示“所选日期的一节课 ↔ 未来不同星期的同班一节课”双向对调；`targetDate + targetSlotId + targetEntryId` 指向另一侧，`date + slotId + originalEntryId` 指向本侧。
 
 **引擎** `packages/adjustments/src.ts`（纯 TS、无依赖，Node 可直测）
 
-- `effectiveEntries(data, date)`：取该星期几的基础课表，按创建顺序叠加调课（换时间）、代课（换教师）、停课（移除）；只影响所选日期。
-- `validateAdjustment(...)`：目标时间必须同日、班级/教师/教室占用冲突、教师不可用时间、代课教师不能是原任课教师、同一课次每天只能有一条有效调整；冲突时返回可读错误列表。
+- `effectiveEntries(data, date)`：取该星期几的基础课表，按创建顺序叠加调课（换时间）、代课（换教师）、停课（移除）和跨日对调（本侧移出、对侧移入）；对调两侧分别按各自日期的课表生效。
+- `validateAdjustment(...)` / `planSwap(...)`：调课仍限制同日空节次；对调要求同班、目标日期晚于当前日期且星期不同，检查两天的班级/教师占用与教师不可用时间；每班固定教室随班走，不把教室容量当阻塞条件。
 - `substituteCandidates(...)`：按该时段占用与不可用时间标记候选教师。
-- `summarizeAdjustments(...)`：调课/代课/停课/撤销计数 + **代课课时按教师汇总**。
+- `summarizeAdjustments(...)`：调课/对调/代课/停课/撤销计数 + **代课课时按教师汇总**。
 - `describeAdjustment(...)`：列表与导出共用的一句话描述。
 
 **界面**
 
-- 新增「调代课」页：日期 + 操作人、当天班级 × 节次课表、调课/代课/停课表单、实时校验、当天记录列表与撤销、导出当天调整 CSV；保存/撤销都会写入 `auditLog`（`ADJUSTMENT` / `ADJUSTMENT_REVOKE`）。
+- 新增「调代课」页：日期 + 操作人、当天班级 × 节次课表、调课/对调/代课/停课表单、实时校验、当天记录列表与撤销、导出当天调整 CSV；保存/撤销都会写入 `auditLog`（`ADJUSTMENT` / `ADJUSTMENT_SWAP` / `ADJUSTMENT_SWAP_REVOKE` 等）。
+- 「对调」页签选择目标日期后列出该班当天逐节课程：绿色可对调，红色直接给出原因（同星期、教师占用、教师不可用、已有调整等）；创建后当天课表显示移入课程与移出影子，目标日期显示另一侧。
+- 排课任务页「未排原因」默认显示前 6 条，新增「展开全部 N 条未排原因 / 收起」，可逐条查看全部提示。
 - 课表预览新增「叠加日期调整」开关（支持 `?adjustDate=YYYY-MM-DD` 深链）：只读展示某天的实际课表，停课不计入「未排」；未设置学期起始周时单双周课程会同时显示，界面已注明。
 - API `validateData` 校验调整记录的类型、日期、班级/教师/时段/教室引用与状态。
 
 **测试**
 
-- `tests/adjustments.test.cjs`（9 条）：日期→星期换算、叠加/撤销、班级冲突、教师冲突、跨天拒绝、代课可用性与双排拦截、同一课次唯一、代课课时汇总。
-- `tests/api-validation.test.cjs`：调整记录的引用/日期/目标校验。
+- `tests/adjustments.test.cjs`（21 条）：日期→星期换算、叠加/撤销、班级冲突、教师冲突、同日调课/跨日对调拒绝或放行、代课可用性与双排拦截、同一课次唯一、代课课时汇总、实际授课记录。
+- `tests/adjustment-swap.test.cjs`（6 条）：跨日对调双向移入/移出、同班限制、同星期/同日期拒绝、教师冲突、对调日志与统计、影响范围、摘要与描述。
+- `tests/api-validation.test.cjs`：调整记录的引用/日期/目标校验，包含 `swap` 目标日期/目标课程/一致性。
 
 **截图**：`build/shots/adjustments.png`（当天 3 条调整）、`adjustments-editor.png`（代课表单与校验）、`timetable-overlay2.png`（课表叠加只读视图）。
 

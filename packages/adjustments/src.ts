@@ -8,7 +8,7 @@
  * this file as-is (Node ≥ 22.6 strips the types).
  */
 
-export type AdjustmentType = 'move' | 'substitute' | 'cancel';
+export type AdjustmentType = 'move' | 'swap' | 'substitute' | 'cancel';
 
 export interface Adjustment {
   id: string;
@@ -19,8 +19,11 @@ export interface Adjustment {
   slotId: string;
   classId: string;
   originalEntryId: string;
-  /** For type=move: the slot the lesson moved to. */
+  /** For type=move: the slot the lesson moved to. For type=swap: the other lesson's slot. */
   targetSlotId?: string;
+  /** For type=swap: the other lesson's date and entry (the date is the other side of the swap). */
+  targetDate?: string;
+  targetEntryId?: string;
   /** For type=substitute: the teacher who takes over. */
   substituteTeacherId?: string;
   /** Optional room change (move/substitute). */
@@ -63,6 +66,8 @@ export interface AdjustmentDraft {
   type: AdjustmentType;
   originalEntryId: string;
   targetSlotId?: string;
+  targetDate?: string;
+  targetEntryId?: string;
   substituteTeacherId?: string;
   roomId?: string;
   reason?: string;
@@ -94,9 +99,14 @@ export function activeAdjustmentOf(
   date: string,
   originalEntryId: string,
 ): Adjustment | undefined {
-  return (adjustments ?? []).find(
-    (item) => item.status === 'active' && item.date === date && item.originalEntryId === originalEntryId,
-  );
+  return (adjustments ?? []).find((item) => {
+    if (item.status !== 'active') return false;
+    if (item.type === 'swap') {
+      const onDate = item.date === date || item.targetDate === date;
+      return onDate && (item.originalEntryId === originalEntryId || item.targetEntryId === originalEntryId);
+    }
+    return item.date === date && item.originalEntryId === originalEntryId;
+  });
 }
 
 /**
@@ -114,7 +124,12 @@ export function isNoopMove(adjustment: Adjustment): boolean {
  * one-adjustment-per-lesson rule.
  */
 export function effectiveAdjustments(adjustments: Adjustment[] | undefined, date: string): Adjustment[] {
-  return activeAdjustments(adjustments, date).filter((item) => !isNoopMove(item));
+  return (adjustments ?? []).filter(
+    (item) =>
+      item.status === 'active' &&
+      !isNoopMove(item) &&
+      (item.date === date || (item.type === 'swap' && item.targetDate === date)),
+  );
 }
 
 function slotDay(slots: AdjustmentData['timeSlots'], slotId: string): number {
@@ -152,7 +167,11 @@ export function effectiveEntries(
     if (slotDay(data.timeSlots, entry.slotId) !== weekday) continue;
     result.set(entry.id, { ...entry });
   }
+  const byId = new Map(data.entries.map((entry) => [entry.id, entry]));
+  // Same-date operations first; cross-date swaps then move one lesson out and
+  // the other lesson in, so both dates keep the class's single room.
   for (const adjustment of active) {
+    if (adjustment.type === 'swap') continue;
     const entry = result.get(adjustment.originalEntryId);
     if (!entry) continue;
     if (adjustment.type === 'cancel') {
@@ -167,6 +186,32 @@ export function effectiveEntries(
     }
     if (adjustment.roomId) entry.roomId = adjustment.roomId;
   }
+  for (const adjustment of active) {
+    if (adjustment.type !== 'swap' || !adjustment.targetEntryId || !adjustment.targetDate) continue;
+    if (adjustment.date === date && adjustment.targetDate === date) {
+      const left = result.get(adjustment.originalEntryId);
+      const right = result.get(adjustment.targetEntryId);
+      if (left && right) {
+        const leftSlot = left.slotId;
+        left.slotId = right.slotId;
+        right.slotId = leftSlot;
+      }
+      continue;
+    }
+    if (adjustment.date === date) {
+      const outgoing = result.get(adjustment.originalEntryId);
+      const incoming = byId.get(adjustment.targetEntryId);
+      if (!outgoing || !incoming) continue;
+      result.delete(outgoing.id);
+      result.set(incoming.id, { ...incoming, slotId: outgoing.slotId, roomId: outgoing.roomId });
+    } else if (adjustment.targetDate === date) {
+      const outgoing = result.get(adjustment.targetEntryId);
+      const incoming = byId.get(adjustment.originalEntryId);
+      if (!outgoing || !incoming) continue;
+      result.delete(outgoing.id);
+      result.set(incoming.id, { ...incoming, slotId: outgoing.slotId, roomId: outgoing.roomId });
+    }
+  }
   return Array.from(result.values());
 }
 
@@ -180,7 +225,10 @@ export type MoveBlockerCode =
   | 'class-busy'
   | 'teacher-busy'
   | 'teacher-unavailable'
-  | 'room-busy';
+  | 'room-busy'
+  | 'same-lesson'
+  | 'class-mismatch'
+  | 'target-date';
 
 export interface MoveBlocker {
   code: MoveBlockerCode;
@@ -250,6 +298,120 @@ function moveBlockers(
   return blockers;
 }
 
+function adjustmentTouchesDate(
+  adjustments: Adjustment[],
+  date: string,
+  entryId: string,
+): boolean {
+  return adjustments.some((item) => {
+    if (item.status !== 'active') return false;
+    const onDate = item.date === date || (item.type === 'swap' && item.targetDate === date);
+    return onDate && (item.originalEntryId === entryId || item.targetEntryId === entryId);
+  });
+}
+
+export interface SwapPlan {
+  kind: 'apply' | 'blocked';
+  targetDate: string;
+  targetEntryId: string;
+  targetSlotId: string;
+  blockers: MoveBlocker[];
+}
+
+/**
+ * Validate swapping one lesson with another lesson of the same class on a
+ * different date. A class normally has one fixed room, so the room is carried
+ * with the class; the decision is based on the two teachers' availability and
+ * the two days' schedules, not on room capacity.
+ */
+export function planSwap(
+  data: AdjustmentData & { entries: AdjustmentEntry[] },
+  input: {
+    date: string;
+    originalEntryId: string;
+    targetDate: string;
+    targetEntryId: string;
+    adjustments?: Adjustment[];
+  },
+): SwapPlan {
+  const adjustments = input.adjustments ?? data.adjustments ?? [];
+  const targetDate = input.targetDate;
+  const targetEntryId = input.targetEntryId;
+  const empty: SwapPlan = { kind: 'blocked', targetDate, targetEntryId, targetSlotId: '', blockers: [] };
+  const source = data.entries.find((entry) => entry.id === input.originalEntryId);
+  if (!source) {
+    return { ...empty, blockers: [{ code: 'missing-entry', text: '找不到这节课程，可能课表已更新' }] };
+  }
+  const target = data.entries.find((entry) => entry.id === targetEntryId);
+  if (!target) {
+    return { ...empty, blockers: [{ code: 'no-target', text: '请选择要与之对调的课程' }] };
+  }
+  const targetSlotId = target.slotId;
+  const sourceWeekday = weekdayOf(input.date);
+  const targetWeekday = weekdayOf(targetDate);
+  if (!sourceWeekday || !targetWeekday) {
+    return { ...empty, targetSlotId, blockers: [{ code: 'invalid-date', text: '日期格式无效（应为 YYYY-MM-DD）' }] };
+  }
+  if (targetDate < input.date) {
+    return { ...empty, targetSlotId, blockers: [{ code: 'target-date', text: '对调目标必须晚于当前日期' }] };
+  }
+  if (targetDate === input.date) {
+    return { ...empty, targetSlotId, blockers: [{ code: 'target-date', text: '对调目标必须是另一天' }] };
+  }
+  if (sourceWeekday === targetWeekday) {
+    return { ...empty, targetSlotId, blockers: [{ code: 'target-date', text: '目标日期与所选日期同星期，周课表会重复；请选择不同星期的课程' }] };
+  }
+  if (source.id === target.id) {
+    return { ...empty, targetSlotId, blockers: [{ code: 'same-lesson', text: '不能与同一节课对调' }] };
+  }
+  if (source.classId !== target.classId) {
+    return { ...empty, targetSlotId, blockers: [{ code: 'class-mismatch', text: '只能与同一班级的课程对调' }] };
+  }
+  if (slotDay(data.timeSlots, source.slotId) !== sourceWeekday) {
+    return { ...empty, targetSlotId, blockers: [{ code: 'invalid-date', text: '这节课程不在所选日期' }] };
+  }
+  if (slotDay(data.timeSlots, target.slotId) !== targetWeekday) {
+    return { ...empty, targetSlotId, blockers: [{ code: 'invalid-date', text: '目标课程不在目标日期' }] };
+  }
+  if (!data.timeSlots.some((slot) => slot.day === targetWeekday)) {
+    return { ...empty, targetSlotId, blockers: [{ code: 'invalid-date', text: '目标日期没有可用时间段' }] };
+  }
+  if (adjustmentTouchesDate(adjustments, input.date, source.id) || adjustmentTouchesDate(adjustments, targetDate, target.id)) {
+    return { ...empty, targetSlotId, blockers: [{ code: 'existing-adjustment', text: '这两节课中至少一节当天已有调整，请先撤销原调整' }] };
+  }
+
+  const effectiveSource = effectiveEntries({ ...data, adjustments }, input.date, adjustments);
+  const effectiveTarget = effectiveEntries({ ...data, adjustments }, targetDate, adjustments);
+  if (!effectiveSource.some((entry) => entry.id === source.id) || !effectiveTarget.some((entry) => entry.id === target.id)) {
+    return { ...empty, targetSlotId, blockers: [{ code: 'missing-entry', text: '这节课程当天不在课表中，无法对调' }] };
+  }
+  const sourceOthers = effectiveSource.filter((entry) => entry.id !== source.id);
+  const targetOthers = effectiveTarget.filter((entry) => entry.id !== target.id);
+  const blockers: MoveBlocker[] = [];
+  const add = (code: MoveBlocker['code'], text: string) => {
+    if (!blockers.some((item) => item.code === code && item.text === text)) blockers.push({ code, text });
+  };
+  if (sourceOthers.some((entry) => entry.slotId === source.slotId && entry.classId === source.classId)) {
+    add('class-busy', classNameOf(data, source.classId) + ' 在该时段已有课程');
+  }
+  if (targetOthers.some((entry) => entry.slotId === target.slotId && entry.classId === source.classId)) {
+    add('class-busy', classNameOf(data, source.classId) + ' 在目标时段已有课程');
+  }
+  if (targetOthers.some((entry) => entry.slotId === target.slotId && entry.teacherId === source.teacherId)) {
+    add('teacher-busy', teacherNameOf(data, source.teacherId) + ' 在目标日期的目标时段已有课程');
+  }
+  if (sourceOthers.some((entry) => entry.slotId === source.slotId && entry.teacherId === target.teacherId)) {
+    add('teacher-busy', teacherNameOf(data, target.teacherId) + ' 在原日期的原时段已有课程');
+  }
+  if ((data.unavailableSlots ?? []).some((item) => item.teacherId === source.teacherId && item.slotId === target.slotId)) {
+    add('teacher-unavailable', teacherNameOf(data, source.teacherId) + ' 在目标时间不可用');
+  }
+  if ((data.unavailableSlots ?? []).some((item) => item.teacherId === target.teacherId && item.slotId === source.slotId)) {
+    add('teacher-unavailable', teacherNameOf(data, target.teacherId) + ' 在原日期原时段不可用');
+  }
+  return { kind: blockers.length ? 'blocked' : 'apply', targetDate, targetEntryId, targetSlotId, blockers };
+}
+
 export type MovePlanKind = 'noop' | 'restore' | 'apply' | 'blocked';
 
 export interface MovePlan {
@@ -279,12 +441,35 @@ export function validateAdjustment(
   if (!base) {
     return { ok: false, errors: ['找不到这节课程，可能课表已更新'] };
   }
-  if (draft.type === 'move' || draft.type === 'cancel') {
+  if (draft.type === 'move' || draft.type === 'cancel' || draft.type === 'swap') {
     if (slotDay(data.timeSlots, base.slotId) !== weekday) errors.push('这节课程不在所选日期');
   }
   if (draft.type === 'substitute' && !draft.substituteTeacherId) errors.push('请选择代课教师');
+  if (draft.type === 'swap') {
+    if (!draft.targetDate) errors.push('请选择目标日期');
+    if (!draft.targetEntryId) errors.push('请选择要对调的课程');
+    if (draft.targetDate) {
+      const targetWeekday = weekdayOf(draft.targetDate);
+      if (!targetWeekday) errors.push('目标日期格式无效（应为 YYYY-MM-DD）');
+      else if (!data.timeSlots.some((slot) => slot.day === targetWeekday)) errors.push('目标日期没有可用时间段');
+    }
+    if (draft.targetDate && draft.targetEntryId) {
+      const plan = planSwap(
+        { ...data, adjustments },
+        {
+          date: draft.date,
+          originalEntryId: draft.originalEntryId,
+          targetDate: draft.targetDate,
+          targetEntryId: draft.targetEntryId,
+          adjustments,
+        },
+      );
+      if (plan.kind === 'blocked') errors.push(...plan.blockers.map((blocker) => blocker.text));
+    }
+    return { ok: errors.length === 0, errors: Array.from(new Set(errors)) };
+  }
 
-  const duplicate = activeAdjustments(adjustments, draft.date).find((item) => item.originalEntryId === draft.originalEntryId);
+  const duplicate = activeAdjustmentOf(adjustments, draft.date, draft.originalEntryId);
   if (duplicate) errors.push('这节课程当天已有调整，请先撤销原调整');
 
   // Effective timetable of that day without the draft being created yet.
@@ -425,6 +610,7 @@ export function substituteCandidates(
 export interface AdjustmentSummary {
   total: number;
   move: number;
+  swap: number;
   substitute: number;
   cancel: number;
   revoked: number;
@@ -435,7 +621,7 @@ export interface AdjustmentSummary {
 }
 
 export function summarizeAdjustments(adjustments: Adjustment[] | undefined): AdjustmentSummary {
-  const summary: AdjustmentSummary = { total: 0, move: 0, substitute: 0, cancel: 0, revoked: 0, noop: 0, substituteByTeacher: {} };
+  const summary: AdjustmentSummary = { total: 0, move: 0, swap: 0, substitute: 0, cancel: 0, revoked: 0, noop: 0, substituteByTeacher: {} };
   for (const adjustment of adjustments ?? []) {
     summary.total += 1;
     if (adjustment.status === 'revoked') {
@@ -457,6 +643,7 @@ export function summarizeAdjustments(adjustments: Adjustment[] | undefined): Adj
 
 export const ADJUSTMENT_LABELS: Record<AdjustmentType, string> = {
   move: '调课',
+  swap: '对调',
   substitute: '代课',
   cancel: '停课',
 };
@@ -568,20 +755,18 @@ export function buildDayLogs(
 ): LessonLog[] {
   const weekday = weekdayOf(date);
   if (weekday === 0) return [];
-  const active = effectiveAdjustments(data.adjustments, date);
   const planById = new Map(data.coursePlans.map((plan) => [plan.id, plan]));
+  const baseById = new Map(data.entries.map((entry) => [entry.id, entry]));
   const slotOrder = new Map(data.timeSlots.map((slot) => [slot.id, slot.day * 1000 + slot.period]));
+  const effective = effectiveEntries(data, date);
+  const effectiveById = new Map(effective.map((entry) => [entry.id, entry]));
   const logs: LessonLog[] = [];
-  for (const entry of data.entries) {
-    const slot = data.timeSlots.find((item) => item.id === entry.slotId);
-    if (!slot || slot.day !== weekday) continue;
+  const logged = new Set<string>();
+  const addLog = (entry: AdjustmentEntry, status: LessonStatus, adjustmentId?: string) => {
+    const base = baseById.get(entry.id) ?? entry;
     const plan = planById.get(entry.coursePlanId);
-    if (!plan) continue;
-    const adjustment = active.find((item) => item.originalEntryId === entry.id);
-    let status: LessonStatus = 'normal';
-    if (adjustment?.type === 'move') status = 'moved';
-    else if (adjustment?.type === 'substitute') status = 'substituted';
-    else if (adjustment?.type === 'cancel') status = 'cancelled';
+    if (!plan || logged.has(entry.id)) return;
+    logged.add(entry.id);
     logs.push({
       id: lessonLogId(date, entry.id),
       date,
@@ -589,13 +774,39 @@ export function buildDayLogs(
       coursePlanId: plan.id,
       classId: entry.classId,
       subjectId: plan.subjectId,
-      slotId: adjustment?.targetSlotId ?? entry.slotId,
-      teacherId: adjustment?.substituteTeacherId ?? entry.teacherId,
-      originalTeacherId: entry.teacherId,
+      slotId: entry.slotId,
+      teacherId: entry.teacherId,
+      originalTeacherId: base.teacherId,
       status,
-      adjustmentId: adjustment?.id,
+      adjustmentId,
       createdAt,
     });
+  };
+  for (const base of data.entries) {
+    const slot = data.timeSlots.find((item) => item.id === base.slotId);
+    if (!slot || slot.day !== weekday) continue;
+    const raw = activeAdjustmentOf(data.adjustments, date, base.id);
+    const adjustment = raw && !isNoopMove(raw) ? raw : undefined;
+    if (adjustment?.type === 'cancel') {
+      addLog(base, 'cancelled', adjustment.id);
+      continue;
+    }
+    if (adjustment?.type === 'swap' && adjustment.date === date && adjustment.targetDate !== date) {
+      // This lesson leaves for the other date; it will be logged there as moved-in.
+      continue;
+    }
+    const entry = effectiveById.get(base.id);
+    if (!entry) continue;
+    let status: LessonStatus = 'normal';
+    if (adjustment?.type === 'move' || adjustment?.type === 'swap') status = 'moved';
+    else if (adjustment?.type === 'substitute') status = 'substituted';
+    addLog(entry, status, adjustment?.id);
+  }
+  for (const entry of effective) {
+    if (logged.has(entry.id)) continue;
+    const raw = activeAdjustmentOf(data.adjustments, date, entry.id);
+    const adjustment = raw && !isNoopMove(raw) ? raw : undefined;
+    addLog(entry, adjustment?.type === 'swap' ? 'moved' : 'normal', adjustment?.id);
   }
   return logs.sort((a, b) => (slotOrder.get(a.slotId) ?? 0) - (slotOrder.get(b.slotId) ?? 0));
 }
@@ -697,6 +908,9 @@ export function buildActualStats(
 export function describeAdjustment(adjustment: Adjustment, data: AdjustmentData): string {
   const base = classNameOf(data, adjustment.classId) + ' ' + slotLabel(data.timeSlots, adjustment.slotId);
   if (adjustment.type === 'move') return base + ' → ' + slotLabel(data.timeSlots, adjustment.targetSlotId ?? '');
+  if (adjustment.type === 'swap') {
+    return base + ' ↔ ' + (adjustment.targetDate ?? '') + ' ' + slotLabel(data.timeSlots, adjustment.targetSlotId ?? '');
+  }
   if (adjustment.type === 'substitute') return base + ' 由 ' + teacherNameOf(data, adjustment.substituteTeacherId ?? '') + ' 代课';
   return base + ' 停课';
 }

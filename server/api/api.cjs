@@ -355,14 +355,27 @@ function validateData(data) {
   if (data.adjustments !== undefined) {
     if (!Array.isArray(data.adjustments)) return 'adjustments 必须是数组';
     const teacherIdsForAdjustment = teacherIds;
+    const entryByIdForAdjustment = new Map([
+      ...((Array.isArray(data.candidate?.entries) ? data.candidate.entries : [])),
+      ...((Array.isArray(data.published?.entries) ? data.published.entries : [])),
+    ].map((entry) => [entry.id, entry]));
     for (const item of data.adjustments) {
       if (!item || typeof item.id !== 'string' || !item.id.trim()) return '调代课记录缺少 ID';
       const adjustment = adjustmentLabel(item);
-      if (!['move', 'substitute', 'cancel'].includes(item.type)) return '调代课记录「' + adjustment + '」的类型无效';
+      if (!['move', 'swap', 'substitute', 'cancel'].includes(item.type)) return '调代课记录「' + adjustment + '」的类型无效';
       if (!/^\d{4}-\d{2}-\d{2}$/.test(String(item.date || ''))) return '调代课记录「' + adjustment + '」的日期无效';
       if (!slotIds.has(item.slotId)) return '调代课记录「' + adjustment + '」引用了不存在的时间段';
       if (!classIds.has(item.classId)) return '调代课记录「' + adjustment + '」引用了不存在的班级';
       if (item.type === 'move' && !slotIds.has(item.targetSlotId || '')) return '调代课记录「' + adjustment + '」的调课目标时间无效';
+      if (item.type === 'swap') {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(item.targetDate || ''))) return '调代课记录「' + adjustment + '」的对调目标日期无效';
+        if (!slotIds.has(item.targetSlotId || '')) return '调代课记录「' + adjustment + '」的对调目标时间无效';
+        const targetEntry = entryByIdForAdjustment.get(item.targetEntryId || '');
+        if (!targetEntry) return '调代课记录「' + adjustment + '」的对调课程不存在';
+        if (targetEntry.classId !== item.classId || targetEntry.slotId !== item.targetSlotId) {
+          return '调代课记录「' + adjustment + '」的对调课程与目标时间不一致';
+        }
+      }
       if (item.type === 'substitute' && !teacherIdsForAdjustment.has(item.substituteTeacherId || '')) return '调代课记录「' + adjustment + '」的代课教师「' + teacherLabel(item.substituteTeacherId) + '」不存在';
       if (item.roomId && !roomIds.has(item.roomId)) return '调代课记录「' + adjustment + '」引用了不存在的教室';
       if (item.status !== 'active' && item.status !== 'revoked') return '调代课记录「' + adjustment + '」的状态无效';

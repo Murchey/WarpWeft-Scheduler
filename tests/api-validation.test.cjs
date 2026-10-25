@@ -98,6 +98,35 @@ test('API validates date adjustments before persistence', () => {
   assert.match(validateData(data), /调课目标.*无效/);
 });
 
+test('API accepts a cross-date swap adjustment and validates its target', () => {
+  const data = {
+    classes: [{ id: 'c1' }], teachers: [{ id: 't1' }], subjects: [{ id: 's1' }],
+    rooms: [{ id: 'r1', capacity: 30 }],
+    timeSlots: [
+      { id: 'slot-1', day: 1, period: 1 },
+      { id: 'slot-2', day: 2, period: 1 },
+    ],
+    coursePlans: [{ id: 'p1', classId: 'c1', teacherId: 't1', subjectId: 's1', weeklyPeriods: 2 }],
+    candidate: { entries: [
+      { id: 'e1', classId: 'c1', teacherId: 't1', roomId: 'r1', slotId: 'slot-1' },
+      { id: 'e2', classId: 'c1', teacherId: 't1', roomId: 'r1', slotId: 'slot-2' },
+    ] },
+    adjustments: [{
+      id: 'a1', date: '2026-10-19', type: 'swap', slotId: 'slot-1', classId: 'c1',
+      originalEntryId: 'e1', targetDate: '2026-10-20', targetSlotId: 'slot-2', targetEntryId: 'e2',
+      createdAt: '2026-10-18T00:00:00.000Z', status: 'active',
+    }],
+  };
+  assert.equal(validateData(data), null);
+  data.adjustments[0].targetDate = '2026/10/20';
+  assert.match(validateData(data), /对调目标日期无效/);
+  data.adjustments[0].targetDate = '2026-10-20';
+  data.adjustments[0].targetEntryId = 'missing-entry';
+  assert.match(validateData(data), /对调课程不存在/);
+  data.adjustments[0].targetEntryId = 'e1';
+  assert.match(validateData(data), /对调课程与目标时间不一致/);
+});
+
 test('API rejects a teacher assigned outside their bound classes', () => {
   const data = {
     classes: [{ id: 'c1', name: '一班' }, { id: 'c2', name: '二班' }],

@@ -9,6 +9,7 @@ import {
   formatClock,
   isNoopMove,
   planMove,
+  planSwap,
   slotWindow,
   substituteCandidates,
   summarizeAdjustments,
@@ -24,6 +25,7 @@ import type {
   AdjustmentEntry,
   AdjustmentType,
   MovePlan,
+  SwapPlan,
 } from '../../../packages/adjustments/src';
 import { KIND_LABELS } from '../../../packages/inspection/src';
 import type { Commit, ScheduleEntry, SchoolData, TimeSlot } from './types';
@@ -34,7 +36,7 @@ import { LessonLogPanel } from './LessonLogPanel';
 import { messageOf, todayLocal, uid } from './utils';
 import { findClass, findRoom, findTeacher, planOf, planSubjectName } from './selectors';
 
-const TYPES: AdjustmentType[] = ['move', 'substitute', 'cancel'];
+const TYPES: AdjustmentType[] = ['move', 'swap', 'substitute', 'cancel'];
 const GRADE_NAMES: Record<string, string> = {
   '1': '一年级',
   '2': '二年级',
@@ -71,6 +73,31 @@ interface RowShadow {
 function weekLabelOf(date: string): string {
   const day = weekdayOf(date);
   return day ? DAYS[day] : '';
+}
+
+function addDays(date: string, days: number): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!match) return date;
+  const value = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  if (Number.isNaN(value.getTime())) return date;
+  value.setDate(value.getDate() + days);
+  return (
+    value.getFullYear() +
+    '-' +
+    String(value.getMonth() + 1).padStart(2, '0') +
+    '-' +
+    String(value.getDate()).padStart(2, '0')
+  );
+}
+
+function nextSchoolDate(date: string, slots: TimeSlot[]): string {
+  const sourceWeekday = weekdayOf(date);
+  for (let offset = 1; offset <= 14; offset += 1) {
+    const candidate = addDays(date, offset);
+    const weekday = weekdayOf(candidate);
+    if (weekday && weekday !== sourceWeekday && slots.some((slot) => slot.day === weekday)) return candidate;
+  }
+  return addDays(date, 1);
 }
 
 function timeText(value?: string): string {
@@ -131,6 +158,7 @@ export function AdjustmentsPage({
 }) {
   const initialDate = new URLSearchParams(window.location.search).get('date') || todayLocal();
   const [date, setDate] = useState(initialDate);
+  const [swapTargetDate, setSwapTargetDate] = useState(() => nextSchoolDate(initialDate, data.timeSlots));
   const [classId, setClassId] = useState(() => resolveInitialClass(data, initialDate));
   const [operator, setOperator] = useState(() => {
     try {
@@ -169,11 +197,25 @@ export function AdjustmentsPage({
     setClassId(resolveInitialClass(data, date));
   }, [classId, data, date]);
 
+  useEffect(() => {
+    setSwapTargetDate(nextSchoolDate(date, data.timeSlots));
+  }, [date, data.timeSlots]);
+
   const result = data.candidate ?? data.published ?? null;
   const adjustments = data.adjustments ?? [];
   const previousAdjustments = useRef({ date, adjustments });
   const weekday = weekdayOf(date);
   const slotById = useMemo(() => new Map(data.timeSlots.map((slot) => [slot.id, slot])), [data.timeSlots]);
+  const slotLabelOf = (slotId?: string) => (slotId ? slotById.get(slotId)?.label ?? slotId : '');
+  const periodOf = (slotId?: string) => slotById.get(slotId ?? '')?.period ?? 0;
+  const swapOtherDate = (adjustment: Adjustment, entryId?: string) =>
+    adjustment.originalEntryId === entryId ? adjustment.targetDate : adjustment.date;
+  const swapOtherSlot = (adjustment: Adjustment, entryId?: string) =>
+    adjustment.originalEntryId === entryId ? adjustment.targetSlotId : adjustment.slotId;
+  const swapOriginDate = (adjustment: Adjustment, entryId?: string) =>
+    adjustment.originalEntryId === entryId ? adjustment.date : adjustment.targetDate;
+  const swapOriginSlot = (adjustment: Adjustment, entryId?: string) =>
+    adjustment.originalEntryId === entryId ? adjustment.slotId : adjustment.targetSlotId;
   const daySlots = useMemo(
     () => data.timeSlots.filter((slot) => slot.day === weekday).slice().sort((a, b) => a.period - b.period),
     [data.timeSlots, weekday],
@@ -216,7 +258,10 @@ export function AdjustmentsPage({
     () => allEffective.filter((entry) => entry.classId === classId),
     [allEffective, classId],
   );
-  const dayAdjustments = useMemo(() => adjustments.filter((item) => item.date === date), [adjustments, date]);
+  const dayAdjustments = useMemo(
+    () => adjustments.filter((item) => item.date === date || (item.type === 'swap' && item.targetDate === date)),
+    [adjustments, date],
+  );
   const effectiveDayAdjustments = useMemo(() => effectiveAdjustments(adjustments, date), [adjustments, date]);
   const noopRecords = useMemo(
     () => dayAdjustments.filter((item) => item.status === 'active' && isNoopMove(item)),
@@ -281,16 +326,11 @@ export function AdjustmentsPage({
   const planForEntry = (entry: { coursePlanId: string }) =>
     data.coursePlans.find((plan) => plan.id === entry.coursePlanId);
   const subjectOfEntry = (entry: { coursePlanId: string }) => planSubjectName(data, planForEntry(entry));
-  const slotLabelOf = (slotId?: string) => (slotId ? slotById.get(slotId)?.label ?? slotId : '');
-  const periodOf = (slotId?: string) => slotById.get(slotId ?? '')?.period ?? 0;
 
   const selected = selectedEntryId ? baseOf(selectedEntryId) : undefined;
   const selectedAdjustment = selected ? activeOf(selected.id) : undefined;
   const selectedEffective = selected ? classEffective.find((entry) => entry.id === selected.id) : undefined;
-  const selectedCurrentSlotId =
-    selected && selectedAdjustment?.type === 'move' && !isNoopMove(selectedAdjustment)
-      ? selectedAdjustment.targetSlotId ?? selected.slotId
-      : selected?.slotId ?? '';
+  const selectedCurrentSlotId = selectedEffective?.slotId ?? selected?.slotId ?? '';
   const selectedTeacherId = selectedEffective?.teacherId ?? selected?.teacherId ?? '';
   const selectedRoomId = selectedEffective?.roomId ?? selected?.roomId ?? '';
 
@@ -333,6 +373,33 @@ export function AdjustmentsPage({
     return { valid, blocked, restore };
   }, [targetPlans]);
 
+  const swapTargetEntries = useMemo(() => {
+    if (!result || !selected) return [];
+    const targetWeekday = weekdayOf(swapTargetDate);
+    if (!targetWeekday) return [];
+    return effectiveEntries({ ...data, entries: baseEntries as AdjustmentEntry[] }, swapTargetDate, adjustments)
+      .filter((entry) => entry.classId === selected.classId)
+      .sort((a, b) => (periodOf(a.slotId) || 99) - (periodOf(b.slotId) || 99));
+  }, [adjustments, baseEntries, data, result, selected, swapTargetDate]);
+
+  const swapPlans = useMemo<{ entry: AdjustmentEntry; plan: SwapPlan }[]>(() => {
+    if (!selected) return [];
+    const source = { ...data, entries: baseEntries as AdjustmentEntry[] };
+    return swapTargetEntries.map((entry) => ({
+      entry,
+      plan: planSwap(source, {
+        date,
+        originalEntryId: selected.id,
+        targetDate: swapTargetDate,
+        targetEntryId: entry.id,
+        adjustments,
+      }),
+    }));
+  }, [adjustments, baseEntries, data, date, selected, swapTargetDate, swapTargetEntries]);
+
+  const swapValidCount = swapPlans.filter((item) => item.plan.kind === 'apply').length;
+  const swapBlockedCount = swapPlans.length - swapValidCount;
+
   const cardsBySlot = useMemo(() => {
     const map = new Map<string, RowCard[]>();
     for (const entry of classEffective) {
@@ -357,6 +424,8 @@ export function AdjustmentsPage({
         adjustment.targetSlotId &&
         adjustment.targetSlotId !== entry.slotId
       ) {
+        shadow = { kind: 'moved', entry, adjustment, slotId: entry.slotId };
+      } else if (adjustment.type === 'swap') {
         shadow = { kind: 'moved', entry, adjustment, slotId: entry.slotId };
       }
       if (!shadow) continue;
@@ -604,6 +673,55 @@ export function AdjustmentsPage({
     });
   };
 
+  const createSwap = (base: ScheduleEntry, target: AdjustmentEntry, targetDate: string) => {
+    const source = { ...data, entries: baseEntries as AdjustmentEntry[] };
+    const plan = planSwap(source, {
+      date,
+      originalEntryId: base.id,
+      targetDate,
+      targetEntryId: target.id,
+      adjustments,
+    });
+    if (plan.kind === 'blocked') {
+      setStatus({
+        tone: 'error',
+        text: '不能对调：' + plan.blockers.map((blocker) => blocker.text).join('；'),
+      });
+      return;
+    }
+    const createdAt = new Date().toISOString();
+    const adjustment: Adjustment = {
+      id: uid('adjust'),
+      date,
+      type: 'swap',
+      slotId: base.slotId,
+      classId: base.classId,
+      originalEntryId: base.id,
+      targetDate,
+      targetSlotId: target.slotId,
+      targetEntryId: target.id,
+      reason: reason.trim() || undefined,
+      createdBy: operator.trim() || undefined,
+      createdAt,
+      status: 'active',
+    };
+    const detail =
+      describeAdjustment(adjustment, data) +
+      (adjustment.reason ? ' · ' + adjustment.reason : '') +
+      ' · 操作人 ' +
+      (adjustment.createdBy ?? '未填写');
+    commit(
+      withAudit({ ...data, adjustments: [...adjustments, adjustment] }, 'ADJUSTMENT_SWAP', detail, createdAt),
+      { immediate: true },
+    );
+    setFailedSlotId('');
+    setStatus({
+      tone: 'success',
+      text: '已对调：' + slotLabelOf(base.slotId) + ' ↔ ' + targetDate + ' ' + slotLabelOf(target.slotId),
+      undo: () => undoCreate(adjustment.id),
+    });
+  };
+
   const retargetMove = (adjustment: Adjustment, targetSlotId: string) => {
     const at = new Date().toISOString();
     const previousTargetSlotId = adjustment.targetSlotId ?? adjustment.slotId;
@@ -790,6 +908,7 @@ export function AdjustmentsPage({
   const revokeAdjustment = (adjustment: Adjustment) => {
     const noop = adjustment.status === 'active' && isNoopMove(adjustment);
     const isMove = adjustment.type === 'move';
+    const isSwap = adjustment.type === 'swap';
     if (adjustment.status === 'active' && isMove && !noop) {
       const restorePlan = restorePlanFor(adjustment);
       if (restorePlan?.kind === 'blocked') {
@@ -804,13 +923,15 @@ export function AdjustmentsPage({
       ? '清理这条原位置调课记录？它不会改变课表，撤销记录会保留在审计里。'
       : isMove
         ? '还原这条调课？课程会回到原时间，撤销记录会保留在审计里。'
-        : '撤销这条调整？撤销记录会保留在审计里。';
+        : isSwap
+          ? '撤销这次对调？两节课都会回到各自的日期和原时间，撤销记录会保留在审计里。'
+          : '撤销这条调整？撤销记录会保留在审计里。';
     if (!window.confirm(prompt)) return;
     const at = new Date().toISOString();
     const detail =
       describeAdjustment(adjustment, data) +
       ' · ' +
-      (noop ? '清理原位置记录' : isMove ? '还原' : '撤销') +
+      (noop ? '清理原位置记录' : isMove ? '还原' : isSwap ? '撤销对调' : '撤销') +
       ' · 操作人 ' +
       (operator.trim() || '未填写');
     commit(
@@ -828,7 +949,7 @@ export function AdjustmentsPage({
               : item,
           ),
         },
-        noop ? 'ADJUSTMENT_CLEANUP' : isMove ? 'ADJUSTMENT_RESTORE' : 'ADJUSTMENT_REVOKE',
+        noop ? 'ADJUSTMENT_CLEANUP' : isMove ? 'ADJUSTMENT_RESTORE' : isSwap ? 'ADJUSTMENT_SWAP_REVOKE' : 'ADJUSTMENT_REVOKE',
         detail,
         at,
       ),
@@ -836,7 +957,7 @@ export function AdjustmentsPage({
     );
     setStatus({
       tone: 'neutral',
-      text: noop ? '已清理原位置记录。' : isMove ? '已还原到原时间。' : '已撤销一条调整。',
+      text: noop ? '已清理原位置记录。' : isMove ? '已还原到原时间。' : isSwap ? '已撤销对调，两节课已回到原日期和时间。' : '已撤销一条调整。',
     });
   };
 
@@ -896,7 +1017,9 @@ export function AdjustmentsPage({
           星期: weekLabelOf(item.date),
           调整类型: ADJUSTMENT_LABELS[item.type],
           原时间: originalSlot,
-          调整后时间: item.targetSlotId ? targetSlot : originalSlot,
+          调整后时间: item.targetSlotId
+            ? (item.type === 'swap' && item.targetDate ? item.targetDate + ' ' : '') + targetSlot
+            : originalSlot,
           班级: data.classes.find((klass) => klass.id === item.classId)?.name ?? item.classId,
           学科: plan ? planSubjectName(data, plan) : '',
           原任课教师: base ? findTeacher(data, base.teacherId)?.name ?? base.teacherId : '',
@@ -936,6 +1059,7 @@ export function AdjustmentsPage({
         类型: ADJUSTMENT_LABELS[item.type],
         班级: data.classes.find((klass) => klass.id === item.classId)?.name ?? item.classId,
         原时间: slotById.get(item.slotId)?.label ?? item.slotId,
+        目标日期: item.type === 'swap' ? item.targetDate ?? '' : '',
         目标时间: item.targetSlotId ? slotById.get(item.targetSlotId)?.label ?? item.targetSlotId : '',
         代课教师: item.substituteTeacherId ? findTeacher(data, item.substituteTeacherId)?.name ?? item.substituteTeacherId : '',
         原因: item.reason ?? '',
@@ -967,6 +1091,57 @@ export function AdjustmentsPage({
       />
     );
   }
+
+  const renderSwapTargets = () => {
+    if (!selected) return null;
+    return (
+      <div className="adjust-swap">
+        <label className="adjust-field">
+          目标日期
+          <input
+            type="date"
+            value={swapTargetDate}
+            min={addDays(date, 1)}
+            onChange={(event) => setSwapTargetDate(event.target.value)}
+          />
+        </label>
+        <div className="adjust-swap-head">
+          <span>{weekLabelOf(swapTargetDate) || '无效日期'} · 目标日 {swapTargetDate}</span>
+          <b>{swapValidCount} 节可对调{swapBlockedCount ? ' · ' + swapBlockedCount + ' 节不可' : ''}</b>
+        </div>
+        <p className="panel-note adjust-swap-note">
+          对调只发生在同一班级；每班使用自己的固定教室，教室随班级走。系统同时检查两天的教师占用和不可用时间。
+        </p>
+        {swapPlans.length === 0 ? (
+          <p className="panel-note">目标日期没有该班课程，换一个日期试试。</p>
+        ) : (
+          <div className="adjust-swap-list">
+            {swapPlans.map(({ entry, plan }) => {
+              const teacher = findTeacher(data, entry.teacherId)?.name ?? entry.teacherId;
+              const room = findRoom(data, entry.roomId)?.name ?? entry.roomId;
+              return (
+                <button
+                  key={entry.id}
+                  type="button"
+                  className={'adjust-swap-target is-' + plan.kind}
+                  disabled={plan.kind !== 'apply'}
+                  title={plan.blockers.map((blocker) => blocker.text).join('；') || '与这节课对调'}
+                  onClick={() => createSwap(selected, entry, swapTargetDate)}
+                >
+                  <span className="adjust-swap-target-time">第{periodOf(entry.slotId)}节</span>
+                  <span className="adjust-swap-target-main">
+                    <b>{subjectOfEntry(entry)}</b>
+                    <small>{teacher} · {room}</small>
+                  </span>
+                  <em>{plan.kind === 'apply' ? '可对调' : plan.blockers[0]?.text ?? '不可对调'}</em>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const renderTargetGrid = () => {
     if (!focusBase || !moveMode) return null;
@@ -1128,6 +1303,12 @@ export function AdjustmentsPage({
                   {findTeacher(data, teacherId)?.name ?? teacherId} · {findRoom(data, roomId)?.name ?? roomId}
                 </span>
                 <span className="tt-card-badges">
+                  {adjustment?.type === 'swap' ? (
+                    <em>
+                      对调 · 来自 {swapOriginDate(adjustment, entry.id)} 第
+                      {periodOf(swapOriginSlot(adjustment, entry.id))}节
+                    </em>
+                  ) : null}
                   {adjustment?.type === 'move' && originalSlot && adjustment.targetSlotId !== adjustment.slotId ? (
                     <em>原第{originalSlot.period}节</em>
                   ) : null}
@@ -1147,11 +1328,32 @@ export function AdjustmentsPage({
                 title={shadowRestoreBlocked ? shadowRestorePlan?.blockers.map((blocker) => blocker.text).join('；') : undefined}
               >
                 <span>
-                  {subjectOfEntry(shadow.entry)} · {shadow.kind === 'moved' ? '已调至第' + periodOf(shadow.adjustment.targetSlotId) + '节' : '已停课'}
+                  {subjectOfEntry(shadow.entry)} ·{' '}
+                  {shadow.kind === 'moved'
+                    ? shadow.adjustment.type === 'swap'
+                      ? (() => {
+                          const otherDate = swapOtherDate(shadow.adjustment, shadow.entry.id);
+                          const otherSlot = swapOtherSlot(shadow.adjustment, shadow.entry.id);
+                          return '已与 ' + (otherDate ?? '目标日') + ' 第' + periodOf(otherSlot) + '节 对调';
+                        })()
+                      : '已调至第' + periodOf(shadow.adjustment.targetSlotId) + '节'
+                    : '已停课'}
                   {shadowRestoreBlocked ? ' · 原位置被占用' : ''}
                 </span>
                 <span className="adjust-shadow-actions">
-                  {shadow.kind === 'moved' && !shadowRestoreBlocked ? (
+                  {shadow.kind === 'moved' && shadow.adjustment.type === 'swap' ? (
+                    <button
+                      type="button"
+                      className="adjust-shadow-action"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        revokeAdjustment(shadow.adjustment);
+                      }}
+                    >
+                      撤销对调
+                    </button>
+                  ) : null}
+                  {shadow.kind === 'moved' && shadow.adjustment.type === 'move' && !shadowRestoreBlocked ? (
                     <button
                       type="button"
                       className="adjust-shadow-action"
@@ -1237,7 +1439,7 @@ export function AdjustmentsPage({
   return (
     <div className="adjust-layout">
       <p className="adjust-lead">
-        调整只作用于所选日期，不改动周课表。选中课程后点击目标节次即可调课，也可以直接拖动课程卡片；绿色可放，红色会说明原因，当前位置不会产生记录。
+        调整只作用于所选日期，不改动周课表。调课用于同一天的空节次，也可以直接拖动课程卡片；对调用于与另一天的同班课程互换，每班固定教室随班级走，系统只检查两天的班级和教师占用。绿色可放，红色会说明原因。
       </p>
 
       <div className="tt-command adjust-command">
@@ -1276,6 +1478,7 @@ export function AdjustmentsPage({
         <span className="adjust-stats-scope">当天</span>
         <div className="tt-stats" aria-label="当天全部班级的调整统计">
           <span><b>{summary.move}</b><em>调课</em></span>
+          <span><b>{summary.swap}</b><em>对调</em></span>
           <span><b>{summary.substitute}</b><em>代课</em></span>
           <span><b>{summary.cancel}</b><em>停课</em></span>
           <span><b>{summary.revoked}</b><em>已撤销</em></span>
@@ -1343,7 +1546,7 @@ export function AdjustmentsPage({
           </>
         ) : (
           <span className="tt-selection-empty">
-            点击左侧课程查看可调目标；选中后点击目标节次，或直接拖动课程放置。调课只在同一班级内进行。
+            点击左侧课程查看可调目标；调课只换同一天的空节次，对调则与另一天的同班课程互换。选中后点击目标节次或拖动课程放置。
           </span>
         )}
       </div>
@@ -1457,8 +1660,8 @@ export function AdjustmentsPage({
             <div className="adjust-guide">
               <p><b>1</b> 选择日期和班级</p>
               <p><b>2</b> 点击课程卡片</p>
-              <p><b>3</b> 点击目标节次，或拖动课程卡片放置</p>
-              <p className="panel-note">目标节次会直接显示可调/不可调及原因；当前位置不会产生调整记录。</p>
+              <p><b>3</b> 调课点目标节次；对调选目标日期和课程</p>
+              <p className="panel-note">目标节次会直接显示可调/不可调及原因；对调只允许不同星期的同班课程，当前位置不会产生调整记录。</p>
             </div>
           ) : (
             <>
@@ -1514,6 +1717,18 @@ export function AdjustmentsPage({
                         </>
                       )}
                     </>
+                  ) : selectedAdjustment.type === 'swap' ? (
+                    <>
+                      <p className="panel-note">
+                        已与{' '}
+                        {swapOtherDate(selectedAdjustment, selected.id) ?? '目标日期'}{' '}
+                        {slotLabelOf(swapOtherSlot(selectedAdjustment, selected.id))}{' '}
+                        对调；两节课互换日期和时间。
+                      </p>
+                      <button type="button" className="ghost-button adjust-wide-button" onClick={() => revokeAdjustment(selectedAdjustment)}>
+                        撤销对调
+                      </button>
+                    </>
                   ) : (
                     <button type="button" className="ghost-button adjust-wide-button" onClick={() => revokeAdjustment(selectedAdjustment)}>
                       {selectedAdjustment.type === 'substitute' ? '撤销代课' : '撤销停课'}
@@ -1550,6 +1765,17 @@ export function AdjustmentsPage({
                       </label>
                       <p className="panel-note">点击目标节次立即生效；也可以直接拖动左侧课程卡片。绿色可放，红色会说明原因。</p>
                       {renderTargetGrid()}
+                    </>
+                  ) : null}
+
+                  {draftType === 'swap' ? (
+                    <>
+                      <label className="adjust-field">
+                        原因（可选）
+                        <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="如：教师出差、课程进度调整" />
+                      </label>
+                      <p className="panel-note">所选日期的这节课与目标日期的同班课程对调；两节课互换日期和时间。</p>
+                      {renderSwapTargets()}
                     </>
                   ) : null}
 

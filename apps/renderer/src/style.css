@@ -887,6 +887,8 @@ html[data-theme='dark'] .rule-warnings{background:#2a2114;color:#fbbf24}
 .missing-reason-title span{font-size:10px;color:var(--danger);white-space:nowrap}
 .missing-reason ul{margin:2px 0 0 16px;padding:0;display:grid;gap:2px;font-size:10px;line-height:1.5;color:var(--muted)}
 .missing-reason p{margin:0;font-size:10px;line-height:1.5;color:var(--muted)}
+.missing-more{align-self:flex-start;display:inline-flex;align-items:center;gap:8px;padding:6px 10px;font-size:10px}
+.missing-more span{font:11px var(--font-ui);color:var(--muted)}
 
 .rules-nl{padding:14px 16px}
 .rules-nl-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
@@ -1120,13 +1122,14 @@ html[data-theme='dark'] .adjust-layout{
 .adjust-selected small{font:10px var(--font-ui);color:var(--muted);line-height:1.5}
 .adjust-selected-flag{display:inline-flex;align-self:flex-start;margin-top:4px;padding:2px 7px;border-radius:999px;background:#d4812a;color:#fff;font:9px var(--font-ui);font-style:normal}
 .adjust-selected-flag.is-substitute{background:#2563eb}
+.adjust-selected-flag.is-swap{background:#12805c}
 .adjust-selected-flag.is-cancel{background:var(--danger)}
 .adjust-existing{margin-top:12px;padding:12px;border:1px solid var(--rule);border-radius:10px;background:var(--paper)}
 .adjust-existing-head{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap}
 .adjust-existing-head b{font-size:13px;line-height:1.45}
 .adjust-existing small{display:block;margin-top:4px;font:10px var(--font-ui);color:var(--muted);line-height:1.5}
 .adjust-existing .panel-note{margin:8px 0 0}
-.adjust-types{display:inline-flex;gap:2px;padding:3px;margin-top:12px;border:1px solid var(--rule);border-radius:9px;background:var(--paper)}
+.adjust-types{display:flex;flex-wrap:wrap;gap:2px;padding:3px;margin-top:12px;border:1px solid var(--rule);border-radius:9px;background:var(--paper)}
 .adjust-types button{border:0;background:transparent;color:var(--muted);padding:7px 12px;border-radius:6px;font:12px var(--font-text);cursor:pointer}
 .adjust-types button:hover{color:var(--ink)}
 .adjust-types button.active{background:var(--ink);color:var(--panel)}
@@ -1148,6 +1151,22 @@ html[data-theme='dark'] .adjust-layout{
 .adjust-target.is-noop{background:var(--adjust-current-bg)}
 .adjust-target.is-restore{border-color:var(--adjust-restore);background:var(--adjust-restore-bg)}
 .adjust-target.is-restore small{color:var(--adjust-restore)}
+.adjust-swap{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.adjust-swap-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;color:var(--muted);font-size:11px}
+.adjust-swap-head b{color:var(--ink);font:700 12px var(--font-ui)}
+.adjust-swap-note{margin:0}
+.adjust-swap-list{display:flex;flex-direction:column;gap:6px;max-height:360px;overflow:auto;padding-right:2px}
+.adjust-swap-target{display:grid;grid-template-columns:48px minmax(0,1fr);gap:2px 9px;align-items:start;width:100%;padding:8px 9px;border:1px solid var(--rule);border-radius:8px;background:var(--panel);color:var(--ink);text-align:left;cursor:pointer}
+.adjust-swap-target:hover:not(:disabled){border-color:var(--ink)}
+.adjust-swap-target:disabled{cursor:not-allowed;opacity:.78}
+.adjust-swap-target-time{align-self:center;font:700 11px var(--font-ui);color:var(--muted);white-space:nowrap}
+.adjust-swap-target-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.adjust-swap-target-main b{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.adjust-swap-target-main small{font:10px var(--font-ui);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.adjust-swap-target em{grid-column:2;font:10px var(--font-text);font-style:normal;line-height:1.4;color:var(--adjust-bad)}
+.adjust-swap-target.is-apply{border-color:var(--adjust-ok);background:var(--adjust-ok-bg)}
+.adjust-swap-target.is-apply em{color:var(--adjust-ok)}
+.adjust-swap-target.is-blocked{border-color:color-mix(in srgb,var(--adjust-bad) 42%,var(--rule));background:var(--adjust-bad-bg)}
 
 .adjust-history{padding:16px 18px}
 .adjust-history-list{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
