@@ -12,6 +12,16 @@ import { isValidSemester, parseDateInput } from '../../../packages/semester/src'
 import { IMPORTANCE_LABELS, RULE_DEFINITIONS } from '../../../packages/constraints/src';
 import type { RuleImportance, RuleInstance, RuleKind, RuleScope, RuleTime } from '../../../packages/constraints/src';
 
+type ResourceCollection = 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots';
+
+const RESOURCE_LABELS: Record<ResourceCollection, string> = {
+  classes: '班级',
+  teachers: '教师',
+  subjects: '学科',
+  rooms: '教室',
+  timeSlots: '时间段',
+};
+
 const SLOT_KIND_MAP: Record<string, SlotKind> = {
   早读: 'morning', morning: 'morning',
   常规: 'regular', 普通: 'regular', regular: 'regular',
@@ -105,6 +115,7 @@ function ResourcesPage({
   const [templateDays, setTemplateDays] = useState<number[]>([2, 3, 4, 5]);
   const [templateMode, setTemplateMode] = useState<'skip' | 'overwrite'>('skip');
   const [workspace, setWorkspace] = useState<null | 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots'>(null);
+  const [lastAdded, setLastAdded] = useState<{ collection: ResourceCollection; id: string } | null>(null);
   const [classPicker, setClassPicker] = useState<{ id: string; selected: string[] } | null>(null);
   const [templateStage, setTemplateStage] = useState<'idle' | 'generating' | 'saving'>('idle');
   const update = (
@@ -231,13 +242,25 @@ function ResourcesPage({
     const rows = (data[collection] as Array<{ id: string }>).filter((row) => row.id !== id);
     const next = pruneDeletedReferences({ ...data, [collection]: rows } as unknown as SchoolData, collection, new Set([id]));
     commit(next, { invalidate: true });
+    if (lastAdded?.collection === collection && lastAdded.id === id) setLastAdded(null);
   };
-  const add = (collection: 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots') => {
+  const add = (collection: ResourceCollection) => {
+    const uniqueName = (base: string) => {
+      const names = new Set(
+        (data[collection] as unknown as Array<{ name?: string }>)
+          .map((item) => (item.name ?? '').trim().toLowerCase())
+          .filter(Boolean),
+      );
+      if (!names.has(base.toLowerCase())) return base;
+      let suffix = 2;
+      while (names.has((base + ' ' + suffix).toLowerCase())) suffix += 1;
+      return base + ' ' + suffix;
+    };
     let row: Record<string, unknown>;
-    if (collection === 'classes') row = { id: uid('class'), name: '新班级', grade: '未设置', size: 40 };
-    else if (collection === 'teachers') row = { id: uid('teacher'), name: '新教师' };
-    else if (collection === 'subjects') row = { id: uid('subject'), name: '新学科' };
-    else if (collection === 'rooms') row = { id: uid('room'), name: '新教室', capacity: 40, type: '普通教室' };
+    if (collection === 'classes') row = { id: uid('class'), name: uniqueName('新班级'), grade: '未设置', size: 40 };
+    else if (collection === 'teachers') row = { id: uid('teacher'), name: uniqueName('新教师') };
+    else if (collection === 'subjects') row = { id: uid('subject'), name: uniqueName('新学科') };
+    else if (collection === 'rooms') row = { id: uid('room'), name: uniqueName('新教室'), capacity: 40, type: '普通教室' };
     else {
       const periods = data.timeSlots.filter((slot) => slot.day === 1).map((slot) => slot.period);
       const period = (periods.length ? Math.max(...periods) : 0) + 1;
@@ -246,7 +269,13 @@ function ResourcesPage({
     commit({ ...data, [collection]: [...(data[collection] as unknown as Array<Record<string, unknown>>), row] } as unknown as SchoolData, {
       invalidate: true,
     });
+    const display = String(row.name ?? row.label ?? '新记录');
+    setLastAdded({ collection, id: String(row.id) });
+    setNotice('已新增' + RESOURCE_LABELS[collection] + '「' + display + '」，可直接在表格中编辑。');
   };
+
+  const highlightFor = (collection: ResourceCollection) =>
+    lastAdded?.collection === collection ? lastAdded.id : undefined;
 
   const removeMany = (
     collection: 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots',
@@ -276,6 +305,7 @@ function ResourcesPage({
     const rows = (data[collection] as Array<{ id: string }>).filter((row) => !selected.has(row.id));
     const next = pruneDeletedReferences({ ...data, [collection]: rows } as unknown as SchoolData, collection, selected);
     commit(next, { invalidate: true, immediate: true });
+    if (lastAdded?.collection === collection && selected.has(lastAdded.id)) setLastAdded(null);
     setNotice('已删除 ' + ids.length + ' 条记录');
   };
 
@@ -1016,6 +1046,7 @@ function ResourcesPage({
           addLabel="新增班级"
           note="班级人数会影响教室容量校验；班主任必须在本班有一节自己可教的课（本班没有该老师所教学科时豁免）；被教学计划引用的班级不能删除。"
           previewCount={6}
+          highlightId={highlightFor('classes')}
           onOpenAll={() => setWorkspace('classes')}
         />
         {workspace === 'classes' ? (
@@ -1079,6 +1110,7 @@ function ResourcesPage({
           addLabel="新增教师"
           note="教师不能在同一时间上两门课；负责班级可多选，留空表示不限制；被教学计划引用的教师不能删除。"
           previewCount={6}
+          highlightId={highlightFor('teachers')}
           onOpenAll={() => setWorkspace('teachers')}
         />
         {workspace === 'teachers' ? (
@@ -1192,8 +1224,9 @@ function ResourcesPage({
           onAdd={() => add('subjects')}
           onRemove={(id) => remove('subjects', id)}
           addLabel="新增学科"
-          note="教学计划通过学科引用课程名称。"
+          note="新增后可直接在表格中修改名称；教学计划通过学科引用课程名称。"
           previewCount={6}
+          highlightId={highlightFor('subjects')}
           onOpenAll={() => setWorkspace('subjects')}
         />
         {workspace === 'subjects' ? (
@@ -1208,7 +1241,7 @@ function ResourcesPage({
             onBatchEdit={(ids, key, value) => batchEdit('subjects', ids, key, value)}
             onRemoveMany={(ids) => removeMany('subjects', ids)}
             onClose={() => setWorkspace(null)}
-            note="学科当前仅支持批量删除；被教学计划引用的学科不能删除。"
+            note="学科名称可直接在表格中修改；被教学计划引用的学科不能删除。"
           />
         ) : null}
       </div>
@@ -1234,6 +1267,7 @@ function ResourcesPage({
           addLabel="新增教室"
           note="教室类型会与教学计划的教室类型要求匹配；容量必须大于等于班级人数。"
           previewCount={6}
+          highlightId={highlightFor('rooms')}
           onOpenAll={() => setWorkspace('rooms')}
         />
         {workspace === 'rooms' ? (
@@ -1447,6 +1481,7 @@ function ResourcesPage({
           addLabel="新增时间段"
           note="修改星期或节次会清空候选课表；请先确认课表结构。"
           previewCount={6}
+          highlightId={highlightFor('timeSlots')}
           onOpenAll={() => setWorkspace('timeSlots')}
         />
         {workspace === 'timeSlots' ? (

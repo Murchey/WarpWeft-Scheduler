@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 
 export const DAYS = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
@@ -33,6 +33,7 @@ function EditableTable<T extends { id: string }>({
   previewCount,
   onOpenAll,
   onEditClasses,
+  highlightId,
 }: {
   title: string;
   english: string;
@@ -47,8 +48,17 @@ function EditableTable<T extends { id: string }>({
   previewCount?: number;
   onOpenAll?: () => void;
   onEditClasses?: (id: string) => void;
+  /** Newly added row: keep it visible even beyond previewCount and focus its first input. */
+  highlightId?: string;
 }) {
-  const visibleRows = previewCount === undefined ? rows : rows.slice(0, Math.max(0, previewCount));
+  const previewRows = previewCount === undefined ? rows : rows.slice(0, Math.max(0, previewCount));
+  const highlightedRow = highlightId ? rows.find((row) => row.id === highlightId) : undefined;
+  const visibleRows =
+    highlightedRow && !previewRows.some((row) => row.id === highlightedRow.id)
+      ? [...previewRows, highlightedRow]
+      : previewRows;
+  const focusColumnKey = columns.find((column) => column.type !== 'select' && column.type !== 'classes')?.key;
+  const selectedOnFocus = useRef<string | null>(null);
   return (
     <section className="section-panel resource-panel">
       <div className="panel-head">
@@ -85,7 +95,7 @@ function EditableTable<T extends { id: string }>({
               </tr>
             ) : (
               visibleRows.map((row) => (
-                <tr key={row.id}>
+                <tr key={row.id} className={row.id === highlightId ? 'is-new' : undefined}>
                   {columns.map((column) => (
                     <td key={column.key}>
                       {column.type === 'classes' ? (
@@ -116,6 +126,13 @@ function EditableTable<T extends { id: string }>({
                           type={column.type === 'number' ? 'number' : 'text'}
                           min={column.type === 'number' ? 0 : undefined}
                           value={String(row[column.key] ?? column.defaultValue ?? '')}
+                          autoFocus={row.id === highlightId && column.key === focusColumnKey}
+                          onFocus={(event) => {
+                            if (row.id === highlightId && column.key === focusColumnKey && selectedOnFocus.current !== row.id) {
+                              selectedOnFocus.current = row.id;
+                              event.currentTarget.select();
+                            }
+                          }}
                           onChange={(event) =>
                             onChange(
                               row.id,
@@ -128,6 +145,7 @@ function EditableTable<T extends { id: string }>({
                     </td>
                   ))}
                   <td className="action-column">
+                    {row.id === highlightId ? <span className="table-new-badge">新增</span> : null}
                     <button className="danger-link" onClick={() => onRemove(row.id)}>
                       删除
                     </button>
