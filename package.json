@@ -18,10 +18,11 @@
     "validate": "node scripts/validate-demo.cjs",
     "load:lan": "node scripts/load-lan.cjs",
     "desktop": "electron .",
-    "build:solver": "powershell -ExecutionPolicy Bypass -File services/solver-java/build.ps1",
+    "build:solver": "node scripts/build-solver.cjs",
     "build:fullsolver": "powershell -ExecutionPolicy Bypass -File server/fullsolver/build.ps1",
     "verify:fullsolver": "powershell -ExecutionPolicy Bypass -File server/fullsolver/verify.ps1",
     "dist:win": "cmd /c build_appliction.bat --local",
+    "dist:linux": "node scripts/build-linux-server.cjs",
     "prebuild": "npm run build:solver",
     "predev:api": "npm run build:solver",
     "prevalidate": "npm run build:solver"

@@ -13,9 +13,13 @@ if /i "%~1"=="--local" (
   set "NONINTERACTIVE=1"
   goto :LOCAL
 )
+if /i "%~1"=="--linux" (
+  set "NONINTERACTIVE=1"
+  goto :LINUX
+)
 if /i "%~1"=="--cloud" (
   set "NONINTERACTIVE=1"
-  goto :CLOUD
+  goto :LINUX
 )
 
 :MENU
@@ -27,13 +31,13 @@ echo   项目目录: %ROOT%
 echo.
 echo   [1] 编译本地版本
 echo       Electron 应用 + NSIS 安装包（安装包使用应用图标）
-echo   [2] 编译云服务端
-echo       预留入口，暂未实现
+echo   [2] 编译 Linux 服务端
+echo       生成 systemd 部署包到 dist\linux-server\
 echo   [0] 退出
 echo.
 choice /c 120 /n /m "请选择 [1/2/0]: "
 if errorlevel 3 goto :EXIT
-if errorlevel 2 goto :CLOUD
+if errorlevel 2 goto :LINUX
 if errorlevel 1 goto :LOCAL
 goto :MENU
 
@@ -159,21 +163,53 @@ echo.
 pause
 goto :MENU
 
-:CLOUD
+:LINUX
 cls
 echo ============================================================
-echo   云服务端构建（预留）
+echo   编译 Linux 服务端部署包
 echo ============================================================
 echo.
-echo   该功能暂未实现，当前留空。
+where node >nul 2>nul
+if errorlevel 1 (
+  echo [错误] 找不到 Node.js，请先安装 Node.js 并加入 PATH。
+  goto :FAIL
+)
+where npm >nul 2>nul
+if errorlevel 1 (
+  echo [错误] 找不到 npm，请先安装 Node.js 并加入 PATH。
+  goto :FAIL
+)
+if not exist "scripts\build-linux-server.cjs" (
+  echo [错误] 找不到 scripts\build-linux-server.cjs。
+  goto :FAIL
+)
+if not exist "guideline.md" (
+  echo [错误] 找不到 guideline.md，部署包不完整。
+  goto :FAIL
+)
+echo [信息] 正在编译渲染进程、Java Solver 和 Linux 部署包…
 echo.
-echo   后续可在此处接入云服务端构建命令。
-echo   预留产物目录: %DIST%\cloud-server\
+call npm run dist:linux
+if errorlevel 1 (
+  echo.
+  echo [错误] Linux 服务端部署包构建失败。
+  goto :FAIL
+)
+if not exist "%DIST%\linux-server\*.tar.gz" (
+  echo [错误] 未找到 dist\linux-server\*.tar.gz。
+  goto :FAIL
+)
+if not exist "%DIST%\linux-server\*.sha256" (
+  echo [错误] 未找到 dist\linux-server\*.sha256。
+  goto :FAIL
+)
 echo.
-echo   TODO:
-echo     - 编译服务端代码
-echo     - 打包运行环境
-echo     - 输出到 dist\cloud-server\
+echo ============================================================
+echo   Linux 服务端部署包构建完成
+echo ============================================================
+echo   产物目录: %DIST%\linux-server\
+for %%F in ("%DIST%\linux-server\*.tar.gz") do echo   部署包: %%~nxF
+for %%F in ("%DIST%\linux-server\*.sha256") do echo   校验文件: %%~nxF
 if defined NONINTERACTIVE goto :EXIT
 echo.
 pause

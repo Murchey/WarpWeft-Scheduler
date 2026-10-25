@@ -1,0 +1,30 @@
+[Unit]
+Description=WarpWeft Scheduler Server
+Documentation=file:/opt/warpweft/guideline.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=warpweft
+Group=warpweft
+WorkingDirectory=/opt/warpweft
+EnvironmentFile=-/etc/warpweft/warpweft.env
+ExecStart=/usr/bin/env node /opt/warpweft/linux_server/server.cjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/warpweft
+UMask=0027
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=warpweft
+
+[Install]
+WantedBy=multi-user.target

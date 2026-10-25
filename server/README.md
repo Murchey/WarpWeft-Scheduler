@@ -7,11 +7,14 @@
 | `server/api/` | HTTP API：数据读写、短时/长时任务、检查点、客户端配额、服务端配置 | 是 |
 | `apps/desktop/main.cjs` | Electron 主进程：窗口、工作区选择、导出文件对话框，启动 `server/api` | 是 |
 | `services/solver-java/` | 启发式排课求解器（Java 21，stdin/stdout JSON） | 是 |
+| `linux_server/` | 独立 Linux Node 入口、systemd/Nginx/安装脚本 | 是，Linux 部署 |
 | `server/fullsolver/` | 命令行规则冲突分析，调用求解器作为启发式 oracle | 否，离线/CLI |
 
 ## API 迁移
 
 2026-10-23 将 `api.cjs`、`database.cjs`、`server-config.cjs` 从 `apps/desktop/` 迁入 `server/api/`。桌面入口、开发 API 脚本、测试和 electron-builder 的 `files` 已同步更新；`main.cjs` 仍以仓库根目录作为 `rootDir`，因此 `resources/solver` 与 `data/` 的路径不变。
+
+Linux 服务端部署见根目录 [guideline.md](../guideline.md)。
 
 本地开发：
 
@@ -22,7 +25,7 @@ npm run dev       # Vite 渲染层
 
 ## 数据版本与能力
 
-- `data-schema.json` 是数据/能力版本的单一来源；当前 version 2，包含 homeroom/roomModes 能力。
+- `data-schema.json` 是数据/能力版本的单一来源；当前 version 3，包含 homeroom/roomModes/lessonKinds/classGapSoftConstraint 能力。
 - `GET /api/health` 返回 `schemaVersion`、`appVersion`、`solverProtocol`、`capabilities`；渲染层启动时比较，服务端版本过旧会阻断保存/排课并提示升级。
 - `server/api` 的 `validateData` 校验班主任、教师负责班级、roomMode 和课表引用；Java `SolverProtocol` 再校验班主任本班课和教师负责班级。
 
