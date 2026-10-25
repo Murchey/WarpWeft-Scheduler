@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { HeroUIProvider, Button, Card, CardBody, Chip, Progress, Select, SelectItem, Tabs, Tab } from '@heroui/react';
 import { validateInput } from '../../../packages/validation/src';
 import { exportCsv, exportWorkbook, readWorkbook } from '../../../packages/import-export/src';
-import { ApiError, cancelServerJob, clearAuthToken, createUser, deleteServerClient, deleteUser, fetchHealth, fetchMe, fetchServerOverview, fetchUsers, getApiBase, getAuthToken, loadData, login, logout, registerUnauthorizedHandler, saveData, setAuthToken, solveSchedule, updateServerConfig, updateUser } from './api';
+import { ApiError, cancelServerJob, clearAuthToken, createUser, DEFAULT_API_BASE, deleteServerClient, deleteUser, fetchHealth, fetchMe, fetchServerOverview, fetchUsers, getApiBase, getAuthToken, loadData, login, logout, registerUnauthorizedHandler, saveData, setAuthToken, solveSchedule, updateServerConfig, updateUser } from './api';
 import { DAYS, SectionHeading } from './components';
 import { PreparePage } from './PreparePage';
 import type { PrepareSection } from './PreparePage';
@@ -31,6 +31,8 @@ import { clearSavedLogins, forgetSavedLogin, readSavedLogins, rememberSavedLogin
 import type { SavedLogin } from './savedLogins';
 import { activeRules, describeRule, matchedPlans, unscheduledHints } from './rules';
 import { RUN_MODE_OPTIONS } from './runConfig';
+import { CLOUD_ENDPOINT_PLACEHOLDER, cleanEndpoint, endpointForMode, initialEndpointForMode, RUNTIME_MODE_KEY, readActiveEndpoint, readEndpointMemory, rememberEndpoint, writeActiveEndpoint, writeEndpointMemory } from './runtimeEndpoint';
+import type { EndpointMemory } from './runtimeEndpoint';
 import type { RunProgress, ShortRunRecord } from './runConfig';
 import { EmptyState, RunProgressView } from './runViews';
 import { findClass, findRoom, findSubject, findTeacher, missingPlans, planOf, planSubjectName } from './selectors';
@@ -75,10 +77,62 @@ type View = PreviewView;
 
 function RuntimeModeDialog({ current, onSave, onClose }: { current: RunMode | null; onSave: (mode: RunMode, endpoint: string) => void; onClose?: () => void }) {
   const [mode, setMode] = useState<RunMode>(current ?? 'single');
-  const [endpoint, setEndpoint] = useState(() => window.localStorage.getItem('warpweft-runtime-endpoint') || (mode === 'cloud' ? 'https://' : getApiBase()));
-  const endpointValid = (() => { try { const url = new URL(endpoint); return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.host); } catch { return false; } })();
-  useEffect(() => { setEndpoint(window.localStorage.getItem('warpweft-runtime-endpoint') || (mode === 'cloud' ? 'https://' : getApiBase())); }, [mode]);
-  return <div className="mode-overlay" role="dialog" aria-modal="true"><div className="mode-dialog"><div className="mode-dialog-head"><span className="kicker">// RUNTIME MODE</span>{onClose ? <button className="banner-close" onClick={onClose} aria-label="关闭设置">×</button> : null}</div><h2>{current ? '运行模式设置' : '选择运行模式'}</h2><p className="mode-lead">先选择数据和排课服务的运行位置，之后可以在设置中修改。</p><div className="mode-options">{RUN_MODE_OPTIONS.map((item) => <button key={item.value} className={'mode-option' + (mode === item.value ? ' selected' : '')} onClick={() => setMode(item.value)}><span className="mode-option-index">0{RUN_MODE_OPTIONS.indexOf(item) + 1}</span><span><b>{item.title}</b><small>{item.description}</small></span></button>)}</div><label className="mode-endpoint">服务地址<input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="http://192.168.1.20:4317" /><small>{mode === 'single' || mode === 'lan-server' ? '本机模式使用默认地址即可。' : '请输入可访问的服务端 API 地址。'}{endpoint && !endpointValid ? ' 地址格式无效。' : ''}</small></label><div className="mode-actions"><button className="ghost-button" onClick={onClose} disabled={!current}>取消</button><button className="action-button" disabled={!endpointValid} onClick={() => onSave(mode, endpoint)}>{current ? '保存设置' : '进入工作台'} <span>↗</span></button></div></div></div>;
+  const [memory] = useState<EndpointMemory>(() => readEndpointMemory(window.localStorage));
+  const [endpoint, setEndpoint] = useState(() => initialEndpointForMode(mode, current ? readActiveEndpoint(window.localStorage) : '', memory, DEFAULT_API_BASE));
+  const endpointValid = (() => {
+    try {
+      const url = new URL(endpoint);
+      return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.host);
+    } catch {
+      return false;
+    }
+  })();
+  // Switching modes must also switch the service address: local modes go back
+  // to the local API, while remote modes keep their own remembered addresses.
+  const chooseMode = (nextMode: RunMode) => {
+    if (nextMode === mode) return;
+    rememberEndpoint(memory, mode, endpoint, DEFAULT_API_BASE);
+    setMode(nextMode);
+    setEndpoint(endpointForMode(nextMode, { current: endpoint, remembered: memory, localBase: DEFAULT_API_BASE }));
+  };
+  const save = () => {
+    const normalized = endpoint.trim().replace(/\/+$/, '');
+    rememberEndpoint(memory, mode, normalized, DEFAULT_API_BASE);
+    writeEndpointMemory(memory, window.localStorage);
+    onSave(mode, normalized);
+  };
+  return (
+    <div className="mode-overlay" role="dialog" aria-modal="true">
+      <div className="mode-dialog">
+        <div className="mode-dialog-head">
+          <span className="kicker">// RUNTIME MODE</span>
+          {onClose ? <button className="banner-close" onClick={onClose} aria-label="关闭设置">×</button> : null}
+        </div>
+        <h2>{current ? '运行模式设置' : '选择运行模式'}</h2>
+        <p className="mode-lead">先选择数据和排课服务的运行位置，之后可以在设置中修改。切换模式会自动换成对应服务地址，云端地址会保留。</p>
+        <div className="mode-options">
+          {RUN_MODE_OPTIONS.map((item) => (
+            <button key={item.value} className={'mode-option' + (mode === item.value ? ' selected' : '')} onClick={() => chooseMode(item.value)}>
+              <span className="mode-option-index">0{RUN_MODE_OPTIONS.indexOf(item) + 1}</span>
+              <span><b>{item.title}</b><small>{item.description}</small></span>
+            </button>
+          ))}
+        </div>
+        <label className="mode-endpoint">
+          服务地址
+          <input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="http://192.168.1.20:4317" />
+          <small>
+            {mode === 'single' || mode === 'lan-server' ? '本机模式使用默认地址即可。' : '请输入可访问的服务端 API 地址。'}
+            {endpoint && !endpointValid ? ' 地址格式无效。' : ''}
+          </small>
+        </label>
+        <div className="mode-actions">
+          <button className="ghost-button" onClick={onClose} disabled={!current}>取消</button>
+          <button className="action-button" disabled={!endpointValid} onClick={save}>{current ? '保存设置' : '进入工作台'} <span>↗</span></button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 
@@ -520,11 +574,25 @@ function App() {
     const forcedEndpoint = params.get('endpoint');
     const modes: RunMode[] = ['single', 'lan-server', 'lan-client', 'cloud'];
     if (forcedMode && modes.includes(forcedMode as RunMode)) {
-      window.localStorage.setItem('warpweft-runtime-mode', forcedMode);
-      if (forcedEndpoint) window.localStorage.setItem('warpweft-runtime-endpoint', forcedEndpoint.replace(/\/+$/, ''));
-      return forcedMode as RunMode;
+      const mode = forcedMode as RunMode;
+      window.localStorage.setItem(RUNTIME_MODE_KEY, mode);
+      const memory = readEndpointMemory(window.localStorage);
+      const forced = cleanEndpoint(forcedEndpoint);
+      if (forced) {
+        writeActiveEndpoint(forced, window.localStorage);
+        rememberEndpoint(memory, mode, forced, DEFAULT_API_BASE);
+      } else {
+        // A mode-only link should not reuse the previous mode's endpoint.
+        const resolved = endpointForMode(mode, { current: readActiveEndpoint(window.localStorage), remembered: memory, localBase: DEFAULT_API_BASE });
+        if (resolved !== CLOUD_ENDPOINT_PLACEHOLDER) {
+          writeActiveEndpoint(resolved, window.localStorage);
+          rememberEndpoint(memory, mode, resolved, DEFAULT_API_BASE);
+        }
+      }
+      writeEndpointMemory(memory, window.localStorage);
+      return mode;
     }
-    const saved = window.localStorage.getItem('warpweft-runtime-mode');
+    const saved = window.localStorage.getItem(RUNTIME_MODE_KEY);
     return saved === 'single' || saved === 'lan-server' || saved === 'lan-client' || saved === 'cloud' ? saved : null;
   });
   const [modeSettingsOpen, setModeSettingsOpen] = useState(false);
@@ -773,8 +841,11 @@ function App() {
 
   const saveRunMode = (nextMode: RunMode, endpoint: string) => {
     const normalized = endpoint.trim().replace(/\/+$/, '');
-    window.localStorage.setItem('warpweft-runtime-mode', nextMode);
-    window.localStorage.setItem('warpweft-runtime-endpoint', normalized || (nextMode === 'cloud' ? 'https://' : getApiBase()));
+    const memory = readEndpointMemory(window.localStorage);
+    rememberEndpoint(memory, nextMode, normalized, DEFAULT_API_BASE);
+    writeEndpointMemory(memory, window.localStorage);
+    window.localStorage.setItem(RUNTIME_MODE_KEY, nextMode);
+    writeActiveEndpoint(normalized || (nextMode === 'cloud' ? CLOUD_ENDPOINT_PLACEHOLDER : DEFAULT_API_BASE), window.localStorage);
     setRunMode(nextMode);
     setModeSettingsOpen(false);
     setApiOnline(null);
@@ -1520,6 +1591,8 @@ function App() {
     }
   };
 
+  const modeDialog = modeSettingsOpen ? <RuntimeModeDialog current={runMode} onSave={saveRunMode} onClose={() => setModeSettingsOpen(false)} /> : null;
+
   if (!runMode) {
     return <RuntimeModeDialog current={null} onSave={saveRunMode} />;
   }
@@ -1536,19 +1609,27 @@ function App() {
 
   if (authRequired && !authUser) {
     return (
-      <LoginScreen
-        needsSetup={authNeedsSetup}
-        busy={authBusy}
-        error={authError}
-        onLogin={handleLogin}
-        onSettings={() => setRunMode(null)}
-      />
+      <>
+        <LoginScreen
+          needsSetup={authNeedsSetup}
+          busy={authBusy}
+          error={authError}
+          onLogin={handleLogin}
+          onSettings={() => setModeSettingsOpen(true)}
+        />
+        {modeDialog}
+      </>
     );
   }
 
   if (!data) {
     if (apiOnline === false) {
-      return <EmptyDataScreen message={loadError} onRetry={() => window.location.reload()} onSettings={() => setRunMode(null)} />;
+      return (
+        <>
+          <EmptyDataScreen message={loadError} onRetry={() => window.location.reload()} onSettings={() => setModeSettingsOpen(true)} />
+          {modeDialog}
+        </>
+      );
     }
     return (
       <div className="boot-screen">
@@ -1807,7 +1888,7 @@ function App() {
           onConfirm={exportTimetable}
         />
       ) : null}
-      {modeSettingsOpen ? <RuntimeModeDialog current={runMode} onSave={saveRunMode} onClose={() => setModeSettingsOpen(false)} /> : null}
+      {modeDialog}
     </div>
   );
 }
@@ -2737,7 +2818,7 @@ function SettingsPage({
   onClearToastLogs: () => void;
 }) {
   const mode = RUN_MODE_OPTIONS.find((item) => item.value === runMode);
-  const endpoint = window.localStorage.getItem('warpweft-runtime-endpoint') || getApiBase();
+  const endpoint = readActiveEndpoint(window.localStorage) || getApiBase();
   const toneLabels: Record<ToastTone, string> = {
     error: '错误',
     success: '完成',

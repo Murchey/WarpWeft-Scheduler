@@ -808,6 +808,8 @@ sudo systemctl restart warpweft
 - `lan-client`：连接另一个服务端；
 - `cloud`：连接远端 HTTPS API。
 
+切换模式时会自动更换服务地址：单机/局域网服务端回到本机 API（Electron 为 `http://127.0.0.1:4317`），局域网客户端和云端恢复各自最近使用的地址；云端地址会单独保留，切回“链接云端”时不需要重新输入。
+
 Linux 管理员可以使用：
 
 ```text
