@@ -90,4 +90,4 @@ if [ "${1:-}" = "workspace" ] && { [ "${2:-}" = "clear" ] || [ "${2:-}" = "reset
   exit 0
 fi
 
-exec run_cli "$@"
+run_cli "$@"
