@@ -121,9 +121,19 @@ function PlansPage({
 
   const batchEdit = (ids: string[], key: string, value: string | number) => {
     const selectedIds = new Set(ids);
-    const plans = data.coursePlans.map((plan) =>
-      selectedIds.has(plan.id) ? ({ ...plan, [key]: value } as CoursePlan) : plan,
-    );
+    const plans = data.coursePlans.map((plan) => {
+      if (!selectedIds.has(plan.id)) return plan;
+      const next: CoursePlan = { ...plan, [key]: value } as CoursePlan;
+      if ((key === 'roomType' || key === 'pairId') && String(value).trim() === '') {
+        delete next[key];
+      }
+      if (key === 'consecutive') {
+        const consecutive = Number(value);
+        if (!Number.isInteger(consecutive) || consecutive < 2) delete next.consecutive;
+        else next.consecutive = consecutive;
+      }
+      return next;
+    });
     commit({ ...data, coursePlans: plans }, { invalidate: true, immediate: true });
   };
 

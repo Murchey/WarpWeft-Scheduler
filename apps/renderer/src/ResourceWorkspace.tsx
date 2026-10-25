@@ -5,7 +5,7 @@ import { useColumnWidths } from './resizableTable';
 export interface BatchField {
   key: string;
   label: string;
-  type: 'text' | 'number' | 'select';
+  type: 'text' | 'number' | 'select' | 'classes';
   options?: { value: string; label: string }[];
   placeholder?: string;
 }
@@ -52,6 +52,7 @@ function ResourceWorkspace<T extends { id: string }>({
   const [selected, setSelected] = useState<string[]>([]);
   const [batchKey, setBatchKey] = useState('');
   const [batchValue, setBatchValue] = useState<string>('');
+  const [batchClasses, setBatchClasses] = useState<string[]>([]);
   const [feedback, setFeedback] = useState('');
   const tableLayout = useColumnWidths(
     columns.length + 1,
@@ -101,6 +102,7 @@ function ResourceWorkspace<T extends { id: string }>({
   useEffect(() => {
     const field = batchFields.find((item) => item.key === batchKey);
     setBatchValue(field?.type === 'select' ? field.options?.[0]?.value ?? '' : '');
+    setBatchClasses([]);
   }, [batchKey]);
 
   const toggleRow = (id: string) => {
@@ -117,11 +119,20 @@ function ResourceWorkspace<T extends { id: string }>({
 
   const applyBatch = () => {
     if (!batchField || selected.length === 0) return;
-    const value = batchField.type === 'number' ? Number(batchValue) : batchValue;
+    const value = batchField.type === 'classes'
+      ? batchClasses.join('、')
+      : batchField.type === 'number'
+        ? Number(batchValue)
+        : batchValue;
     if (batchField.type === 'number' && !Number.isFinite(value)) return;
     onBatchEdit(selected, batchField.key, value);
-    setFeedback('已把 ' + selected.length + ' 条记录的「' + batchField.label + '」改为 ' + String(value) + '。');
+    setFeedback(
+      batchField.type === 'classes' && batchClasses.length === 0
+        ? '已清空 ' + selected.length + ' 条记录的「' + batchField.label + '」。'
+        : '已把 ' + selected.length + ' 条记录的「' + batchField.label + '」改为 ' + String(value) + '。',
+    );
     setBatchValue(batchField.type === 'select' ? batchField.options?.[0]?.value ?? '' : '');
+    setBatchClasses([]);
   };
 
   const removeSelected = () => {
@@ -185,7 +196,29 @@ function ResourceWorkspace<T extends { id: string }>({
               ))}
             </select>
             {batchField ? (
-              batchField.type === 'select' ? (
+              batchField.type === 'classes' ? (
+                <details className="resource-batch-classes">
+                  <summary>{batchClasses.length ? '已选 ' + batchClasses.length + ' 个班级' : '选择班级（留空=不限）'}</summary>
+                  <div className="resource-batch-classes-panel">
+                    {batchField.options?.map((option) => (
+                      <label key={option.value}>
+                        <input
+                          type="checkbox"
+                          checked={batchClasses.includes(option.value)}
+                          onChange={() => setBatchClasses((current) =>
+                            current.includes(option.value) ? current.filter((item) => item !== option.value) : [...current, option.value],
+                          )}
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    ))}
+                    <div className="resource-batch-classes-actions">
+                      <button type="button" className="resource-workspace-link" onClick={() => setBatchClasses(batchField.options?.map((option) => option.value) ?? [])}>全选</button>
+                      <button type="button" className="resource-workspace-link" onClick={() => setBatchClasses([])}>清空</button>
+                    </div>
+                  </div>
+                </details>
+              ) : batchField.type === 'select' ? (
                 <select value={batchValue} onChange={(event) => setBatchValue(event.target.value)} aria-label="批量修改值">
                   {batchField.options?.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>

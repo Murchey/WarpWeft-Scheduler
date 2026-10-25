@@ -26,6 +26,16 @@ test('import template uses the new headers and required position notes', async (
   assert.ok(notes.some((row) => row[0] === '【教学计划】'));
   assert.ok(notes.some((row) => row[0] === '每周课时' && row[1] === '是'));
   assert.ok(notes.some((row) => row[0] === '课程类型' && String(row[2]).includes('自习') && String(row[2]).includes('课后服务')));
+  assert.ok(notes.some((row) => row[0] === '【快速上手】'));
+  assert.ok(notes.some((row) => row[0] === '【批量填写示例】'));
+  assert.ok(notes.some((row) => row[0] === '【填写细节】'));
+  assert.ok(notes.some((row) => row[0] === '【规则参数示例】'));
+  assert.ok(notes.some((row) => row[0] === '【常见错误】'));
+  assert.ok(notes.some((row) => row[0] === '【导入行为】'));
+  assert.ok(notes.some((row) => row[0] === '【导入前检查】'));
+  assert.ok(notes.some((row) => row[0] === '配对组' && String(row[2]).includes('不同班')));
+  assert.ok(notes.some((row) => row[0] === '时间偏好' && String(row[2]).includes('留空表示不限')));
+  assert.ok(notes.some((row) => row[0] === '规则类型' && String(row[2]).includes('教师每日上限')));
   assert.equal(notes.some((row) => row.some((cell) => /\bA2\b/.test(String(cell)))), false);
 
   const optionRows = XLSX.utils.sheet_to_json(workbook.Sheets['_选项'], { header: 1 });

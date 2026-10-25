@@ -106,12 +106,66 @@ function PlanTable({
     onSortChange({ key, dir: sort.key === key && sort.dir === 'asc' ? 'desc' : 'asc' });
   };
 
-  const batchField = batchKey;
   const applyBatch = () => {
     if (!selected.length) return;
-    const value = batchField === 'weeklyPeriods' ? Number(batchValue) : batchValue;
-    if (batchField === 'weeklyPeriods' && (!Number.isFinite(value) || Number(value) <= 0)) return;
-    onBatch(batchField, value);
+    const numeric = batchKey === 'weeklyPeriods' || batchKey === 'consecutive';
+    const value = numeric ? Number(batchValue) : batchValue;
+    if (batchKey === 'weeklyPeriods' && (!Number.isFinite(value) || Number(value) <= 0)) return;
+    if (batchKey === 'consecutive' && (!Number.isInteger(value) || Number(value) < 0 || Number(value) > 4)) return;
+    onBatch(batchKey, value);
+  };
+  const batchInvalid =
+    ((batchKey === 'classId' || batchKey === 'subjectId' || batchKey === 'weeklyPeriods' || batchKey === 'weeks' || batchKey === 'kind') && !batchValue) ||
+    (batchKey === 'weeklyPeriods' && Number(batchValue) <= 0) ||
+    (batchKey === 'consecutive' && (!Number.isInteger(Number(batchValue)) || Number(batchValue) < 0 || Number(batchValue) > 4));
+  const renderBatchValue = () => {
+    switch (batchKey) {
+      case 'classId':
+        return (
+          <select value={batchValue} onChange={(event) => setBatchValue(event.target.value)} aria-label="批量班级">
+            <option value="">选择班级</option>
+            {classes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+        );
+      case 'subjectId':
+        return (
+          <select value={batchValue} onChange={(event) => setBatchValue(event.target.value)} aria-label="批量学科">
+            <option value="">选择学科</option>
+            {subjects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+        );
+      case 'teacherId':
+        return (
+          <select value={batchValue} onChange={(event) => setBatchValue(event.target.value)} aria-label="批量教师">
+            <option value="">未指定</option>
+            {teachers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+        );
+      case 'weeklyPeriods':
+        return <input type="number" min={1} value={batchValue} onChange={(event) => setBatchValue(event.target.value)} placeholder="节/周" aria-label="批量每周课时" />;
+      case 'weeks':
+        return (
+          <select value={batchValue} onChange={(event) => setBatchValue(event.target.value)} aria-label="批量周次">
+            <option value="">选择周次</option>
+            {PLAN_WEEK_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+          </select>
+        );
+      case 'kind':
+        return (
+          <select value={batchValue} onChange={(event) => setBatchValue(event.target.value)} aria-label="批量课程类型">
+            <option value="">选择类型</option>
+            {PLAN_KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{KIND_LABELS[kind] ?? kind}</option>)}
+          </select>
+        );
+      case 'roomType':
+        return <input value={batchValue} onChange={(event) => setBatchValue(event.target.value)} list="plan-room-types" placeholder="教室类型（留空=不限）" aria-label="批量教室类型" />;
+      case 'consecutive':
+        return <input type="number" min={0} max={4} value={batchValue} onChange={(event) => setBatchValue(event.target.value)} placeholder="0–4（0=不连堂）" aria-label="批量连堂节数" />;
+      case 'pairId':
+        return <input value={batchValue} onChange={(event) => setBatchValue(event.target.value)} placeholder="配对组（留空=清除）" aria-label="批量配对组" />;
+      default:
+        return null;
+    }
   };
 
   const renderCell = (column: PlanColumnDef, plan: CoursePlan) => {
@@ -229,37 +283,21 @@ function PlanTable({
         <div className="plan-batch-bar">
           <span className="plan-batch-count"><b>{selected.length}</b> 条已选</span>
           <select value={batchKey} onChange={(event) => { setBatchKey(event.target.value); setBatchValue(''); }} aria-label="批量修改字段">
+            <option value="classId">班级</option>
+            <option value="subjectId">学科</option>
             <option value="teacherId">教师</option>
             <option value="weeklyPeriods">每周课时</option>
             <option value="weeks">周次</option>
             <option value="kind">课程类型</option>
+            <option value="roomType">教室类型</option>
+            <option value="consecutive">连堂节数</option>
+            <option value="pairId">配对组</option>
           </select>
-          {batchKey === 'teacherId' ? (
-            <select value={batchValue} onChange={(event) => setBatchValue(event.target.value)} aria-label="批量教师">
-              <option value="">未指定</option>
-              {teachers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          ) : batchKey === 'weeklyPeriods' ? (
-            <input type="number" min={1} value={batchValue} onChange={(event) => setBatchValue(event.target.value)} placeholder="节/周" aria-label="批量每周课时" />
-          ) : batchKey === 'weeks' ? (
-            <select value={batchValue} onChange={(event) => setBatchValue(event.target.value)} aria-label="批量周次">
-              <option value="">选择周次</option>
-              {PLAN_WEEK_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-            </select>
-          ) : (
-            <select value={batchValue} onChange={(event) => setBatchValue(event.target.value)} aria-label="批量课程类型">
-              <option value="">选择类型</option>
-              {PLAN_KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{KIND_LABELS[kind] ?? kind}</option>)}
-            </select>
-          )}
-          <button
-            type="button"
-            className="mini-button"
-            onClick={applyBatch}
-            disabled={(batchKey === 'weeklyPeriods' || batchKey === 'weeks' || batchKey === 'kind') && !batchValue}
-          >
+          {renderBatchValue()}
+          <button type="button" className="mini-button" onClick={applyBatch} disabled={batchInvalid}>
             应用
           </button>
+          <span className="plan-batch-hint">可选多条后一次修改；留空的选填字段会清除；班级/教师/学科改动会触发数据检查。</span>
           <button type="button" className="plan-batch-link" onClick={onSelectAllFiltered}>全选筛选结果</button>
           <button type="button" className="danger-link" onClick={onBatchDelete}>删除选中</button>
           <button type="button" className="plan-batch-link" onClick={onClearSelection}>取消</button>

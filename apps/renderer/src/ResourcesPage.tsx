@@ -433,9 +433,9 @@ function ResourcesPage({
       const slotRows = takeRows(['时间段', 'slot']);
       const planRows = takeRows(['教学计划', 'plan']);
       const ruleRows = takeRows(['排课规则', 'rules']);
-      const planSheetFound = [...grouped.keys()].some((sheet) => sheet.includes('教学计划') || sheet.includes('plan'));
-      const ruleSheetFound = [...grouped.keys()].some((sheet) => sheet.includes('排课规则') || sheet.includes('rules'));
-      const teacherTimeSheetFound = [...grouped.keys()].some((sheet) => sheet.includes('教师时间') || sheet.includes('teachertime'));
+      const planSheetFound = planRows.length > 0;
+      const ruleSheetFound = ruleRows.length > 0;
+      const teacherTimeSheetFound = teacherTimeRows.length > 0;
       if (![...schoolRows, ...semesterRows, ...classRows, ...teacherRows, ...subjectRows, ...roomRows, ...slotRows, ...planRows, ...ruleRows, ...teacherTimeRows].length) {
         const emptyMessage = '未识别到可导入的工作表。请使用模板中的“班级/教师/学科/教室/时间段/教学计划”表头。';
         setImportFeedback({ tone: 'error', text: emptyMessage });
@@ -1173,7 +1173,7 @@ function ResourcesPage({
             />
             <span>简化模式（每班一间固定教室，不需要教室表）</span>
           </label>
-          <p className="panel-note">仅支持 Excel（.xlsx/.xls）；简化模式模板不包含“教室”表，教学计划也不需要教室类型；完整模式保留教室表。教师表填写负责班级后，排课和自动分配都只使用这些班级；班级表可填班主任。模板第 2 行是灰色示例行，导入前请删除。测试完整数据集时建议勾选上方清空选项。</p>
+          <p className="panel-note">仅支持 Excel（.xlsx/.xls）；简化模式模板不包含“教室”表，教学计划也不需要教室类型；完整模式保留教室表。教师表填写负责班级后，排课和自动分配都只使用这些班级；班级表可填班主任。模板第 2 行是灰色示例行，导入前请删除。教学计划 / 教师时间 / 排课规则为空表时保留现有数据；要整体重置请勾选上方“导入前清空当前工作区”。</p>
         </section>
       </div>
     );
@@ -1278,7 +1278,12 @@ function ResourcesPage({
             english="TEACHER REGISTER"
             rows={data.teachers}
             columns={columns}
-            batchFields={[]}
+            batchFields={[
+              { key: 'grade', label: '负责年级', type: 'text', placeholder: '如 1;2;6' },
+              { key: 'subject', label: '主要学科', type: 'text', placeholder: '如 数学' },
+              { key: 'subject2', label: '其他学科', type: 'text', placeholder: '如 物理、化学' },
+              { key: 'classes', label: '负责班级', type: 'classes', options: data.classes.map((klass) => ({ value: klass.name, label: klass.name })) },
+            ]}
             searchText={(row) => [row.name, row.grade, row.subject, row.subject2, row.classes].filter(Boolean).join(' ')}
             onChange={(id, key, value) => update('teachers', id, key, value)}
             onBatchEdit={(ids, key, value) => batchEdit('teachers', ids, key, value)}
@@ -1290,7 +1295,7 @@ function ResourcesPage({
               })
             }
             onClose={() => setWorkspace(null)}
-            note="负责班级留空表示不限制；被教学计划引用的教师不能删除；教师当前仅支持批量删除，改名请逐条编辑。"
+            note="负责班级留空表示不限制；可批量设置负责年级/主要学科/其他学科/负责班级。批量修改负责班级会受现有教学计划约束：与计划不一致时，保存会被数据检查拦截。被教学计划引用的教师不能删除，改名请逐条编辑。"
           />
         ) : null}
         {classPicker ? (
@@ -1408,13 +1413,19 @@ function ResourcesPage({
             english="SUBJECT REGISTER"
             rows={data.subjects}
             columns={columns}
-            batchFields={[]}
+            batchFields={[
+              { key: 'preference', label: '时间偏好', type: 'select', options: [
+                { value: '', label: '不限' },
+                { value: 'morning', label: '上午' },
+                { value: 'afternoon', label: '下午' },
+              ] },
+            ]}
             searchText={(row) => row.name}
             onChange={(id, key, value) => update('subjects', id, key, value)}
             onBatchEdit={(ids, key, value) => batchEdit('subjects', ids, key, value)}
             onRemoveMany={(ids) => removeMany('subjects', ids)}
             onClose={() => setWorkspace(null)}
-            note="学科名称和时间偏好可直接修改；被教学计划引用的学科不能删除。"
+            note="学科名称和时间偏好可直接修改，也可勾选多个学科批量设置时间偏好；被教学计划引用的学科不能删除。"
           />
         ) : null}
       </div>
