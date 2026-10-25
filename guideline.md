@@ -511,7 +511,7 @@ WARPVEFT_VERIFY_USERNAME=admin WARPVEFT_VERIFY_PASSWORD='你的密码' \
   bash /opt/warpweft/linux_server/verify.sh
 ```
 
-浏览器打开 `https://scheduler.example.edu/?mode=lan-server`，完成登录、用户管理、一次真实短时排课和一次长时任务。Electron 客户端连接同一个 HTTPS 地址时只显示登录框，不显示“用户与密码”，这是预期行为。
+浏览器打开 `https://scheduler.example.edu/?mode=lan-server`，完成登录、用户管理、一次真实短时排课和一次长时任务。Electron 客户端连接同一个 HTTPS 地址时只显示登录框，不显示“用户与密码”，这是预期行为；具体填写方式见 6.7。
 
 证书检查：
 
@@ -557,7 +557,8 @@ real_ip_recursive on;
 | --- | --- | --- | --- |
 | 公网 IP + HTTP | 能 | 否 | 临时验收、受控测试 |
 | 公网 IP + 自签 HTTPS | 能，但浏览器报警告 | 是 | 内部测试，不推荐 |
-| 公网 IP + 公共 CA 的 IP 证书 | 支持有限、兼容性差 | 是 | 一般不可行 |
+| 公网 IP + 公共 CA 的 IP 证书 | 支持有限、兼容性差 | 是 | 新申请一般不推荐 |
+| 已有覆盖公网 IP 的有效证书 | 可复用，单独开端口 | 是 | 无域名过渡 |
 | SSH 隧道 + localhost | 能 | SSH 加密 | 一位管理员 |
 | VPN + 私网 IP | 能 | VPN 加密 | 小范围固定用户 |
 | 域名 + TLS | 能 | 是 | 正式使用，推荐 |
@@ -566,6 +567,7 @@ real_ip_recursive on;
 
 - 只给一位管理员临时管理：优先 **SSH 隧道**，不开放 80/443。
 - 给多位老师/学生正式使用：优先 **域名 + HTTPS**；没有域名就用 **VPN + 私网 IP**。
+- 如果已经有覆盖公网 IP 的有效证书，可复用它单独开 8443，见 6.6.7。
 - 公网 IP + HTTP 只用于临时测试，必须限制来源 IP，测试完立即关闭。
 
 #### 6.6.2 临时用公网 IP + HTTP
@@ -682,6 +684,89 @@ ssh -L 14317:127.0.0.1:4317 user@<公网IP>
 - 用 VPN 把访问限制在固定用户群，公网不开放 Web；
 - 免费 DDNS/二级域名只适合临时测试，稳定性和备案都不如自有域名；
 - Cloudflare Tunnel、Tailscale Funnel 等隧道能提供 HTTPS 地址，但流量经过第三方，国内可达性和合规性要单独评估，不能默认当成学校正式服务。
+
+#### 6.6.7 已有公网 IP 证书时：单独开 8443
+
+如果服务器上已经有一个覆盖公网 IP 的有效公共 CA 证书（例如现有博客的证书），可以复用它给 WarpWeft 开独立端口。**不要让 WarpWeft 和博客同时抢 443 的同一个 server_name。**
+
+Nginx 增加一个独立 server：
+
+```nginx
+server {
+    listen 8443 ssl http2;
+    listen [::]:8443 ssl http2;
+    server_name <公网IP>;
+
+    ssl_certificate /etc/letsencrypt/live/<证书名>/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/<证书名>/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    client_max_body_size 8m;
+    location / {
+        proxy_pass http://127.0.0.1:4317;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_read_timeout 900s;
+        proxy_send_timeout 900s;
+        proxy_buffering off;
+    }
+}
+```
+
+然后：
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+在云安全组和 `ufw` 中放行 8443（尽量限制来源 IP），访问：
+
+```text
+https://<公网IP>:8443/
+```
+
+Electron 的服务地址也填这个地址。
+
+证书续期后必须让 Nginx 重新加载证书，否则它会继续使用内存中的旧证书：
+
+```bash
+sudo install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+printf '#!/bin/sh\nsystemctl reload nginx\n' | sudo tee /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+sudo chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+```
+
+用 `sudo certbot certificates` 确认证书的 SAN 包含该公网 IP；不包含就不能用于 `https://IP`。短期证书要确认续期和 reload 都正常。
+
+### 6.7 本地 Electron 通过 HTTPS 连接服务器
+
+前提：在本地浏览器打开 `https://<域名或IP>:<端口>/`，看到的是 **WarpWeft 登录页**，不是博客、Nginx 默认页或 404；证书不能有警告。
+
+1. 打开 Electron，点击顶部“运行：…”按钮。
+2. 选择 **“链接云端”**（HTTPS 远端服务），不要选“单机”或“局域网（服务端）”。
+3. 服务地址只填 origin，不带 `/api`、`/index.html` 或多余路径：
+
+```text
+https://scheduler.example.edu
+https://118.89.77.164:8443
+```
+
+4. 保存后会出现 Linux 登录页，输入服务器账号密码。
+5. 登录成功后可以正常读写课表；Electron 端仍然不会显示“用户与密码”，这是设计限制。
+
+如果选错端点，常见现象：
+
+| 现象 | 原因 |
+| --- | --- |
+| 打开是博客 | 443 被现有站点占用，WarpWeft 没有自己的 443/端口 |
+| 证书警告 | 用了自签证书，或证书 SAN 不包含当前域名/IP |
+| 连接超时 | 安全组/`ufw` 没放行该端口，或服务没监听 |
+| 401 | 账号密码错误、账号被禁用，或连到了另一个服务端 |
+| 地址格式无效 | 填了 `/api`、路径或多余空格；只填 `https://host[:port]` |
 
 ## 7. 配置项
 
