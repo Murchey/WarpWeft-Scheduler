@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { Column } from './components';
+import { useColumnWidths } from './resizableTable';
 
 export interface BatchField {
   key: string;
@@ -52,6 +53,24 @@ function ResourceWorkspace<T extends { id: string }>({
   const [batchKey, setBatchKey] = useState('');
   const [batchValue, setBatchValue] = useState<string>('');
   const [feedback, setFeedback] = useState('');
+  const tableLayout = useColumnWidths(
+    columns.length + 1,
+    'warpweft.workspace.columnWidths.v1:' + title,
+    [44, ...columns.map(() => 84)],
+  );
+  const resizer = (index: number, label: string) => (
+    <span
+      className="col-resizer"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={'调整「' + label.replace(/（选填）/g, '') + '」列宽'}
+      title="拖动调整列宽"
+      onPointerDown={tableLayout.start(index)}
+      onPointerMove={tableLayout.move}
+      onPointerUp={tableLayout.end}
+      onPointerCancel={tableLayout.end}
+    />
+  );
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -152,6 +171,11 @@ function ResourceWorkspace<T extends { id: string }>({
           <button type="button" className="ghost-button" onClick={selectAllFiltered} disabled={filtered.length === 0}>
             全选筛选结果
           </button>
+          {tableLayout.widths ? (
+            <button type="button" className="ghost-button" onClick={tableLayout.reset} title="恢复默认列宽">
+              重置列宽
+            </button>
+          ) : null}
 
           <div className="resource-workspace-batch">
             <select value={batchKey} onChange={(event) => setBatchKey(event.target.value)} aria-label="批量修改字段">
@@ -187,10 +211,18 @@ function ResourceWorkspace<T extends { id: string }>({
         </div>
 
         <div className="resource-workspace-table">
-          <table className="data-table resource-workspace-data">
+          <table className="data-table resource-workspace-data" style={tableLayout.tableStyle}>
+            {tableLayout.widths ? (
+              <colgroup>
+                {tableLayout.widths.map((width, index) => (
+                  <col key={index} style={{ width }} />
+                ))}
+              </colgroup>
+            ) : null}
             <thead>
               <tr>
                 <th className="resource-workspace-check">
+                  {resizer(0, '选择')}
                   <input
                     type="checkbox"
                     checked={allVisibleSelected}
@@ -199,8 +231,11 @@ function ResourceWorkspace<T extends { id: string }>({
                     disabled={visible.length === 0}
                   />
                 </th>
-                {columns.map((column) => (
-                  <th key={column.key} style={{ width: column.width }}>{column.label}</th>
+                {columns.map((column, index) => (
+                  <th key={column.key} style={tableLayout.widths ? undefined : { width: column.width }}>
+                    {column.label}
+                    {resizer(index + 1, column.label)}
+                  </th>
                 ))}
               </tr>
             </thead>

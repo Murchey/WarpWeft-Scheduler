@@ -8,8 +8,27 @@ import { GradePlanComposer } from './GradePlanComposer';
 import { FixedSlotsDialog } from './FixedSlotsDialog';
 import { uid } from './utils';
 import { fixedSlotIdsOf } from '../../../packages/contracts/src';
+import { useColumnWidths, usePanelResize } from './resizableTable';
 
 const PLAN_PREVIEW = 8;
+
+/** Header labels double as the table's column list for drag-to-resize. */
+const PLAN_TABLE_HEADERS = [
+  '班级',
+  '学科',
+  '教师（选填）',
+  '每周课时',
+  '周次（选填）',
+  '课程类型（选填）',
+  '教室类型（选填）',
+  '固定时间（选填）',
+  '连堂（选填）',
+  '配对组（选填）',
+  '操作',
+];
+const PLAN_COLUMN_MIN_WIDTHS = [112, 90, 108, 76, 86, 104, 104, 144, 64, 96, 66];
+const PLAN_COLUMN_WIDTH_KEY = 'warpweft.plans.columnWidths.v1';
+const PLAN_PANEL_SIZE_KEY = 'warpweft.plans.panelSize.v1';
 
 function planPeriodsInWeeks(plan: CoursePlan, weeks: number): number {
   const weekly = Number(plan.weeklyPeriods || 0);
@@ -39,6 +58,13 @@ function PlansPage({
   const [gradeComposerOpen, setGradeComposerOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [fixedEditor, setFixedEditor] = useState<string | null>(null);
+  const columnLayout = useColumnWidths(PLAN_TABLE_HEADERS.length, PLAN_COLUMN_WIDTH_KEY, PLAN_COLUMN_MIN_WIDTHS);
+  const panelLayout = usePanelResize(PLAN_PANEL_SIZE_KEY, { minWidth: 640, minHeight: 300 });
+  const layoutCustomised = Boolean(columnLayout.widths || panelLayout.size);
+  const resetLayout = () => {
+    columnLayout.reset();
+    panelLayout.reset();
+  };
   const total = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
   const [matrixMode, setMatrixMode] = useState<'class' | 'grade'>('class');
   const [duration, setDuration] = useState(1);
@@ -156,10 +182,20 @@ function PlansPage({
     return [klass, subject, teacher, plan.roomType ?? ''].join(' ');
   };
   return (
-    <section className="section-panel table-panel">
+    <section
+      ref={panelLayout.panelRef}
+      className={'section-panel table-panel plan-panel' + (panelLayout.size ? ' is-sized' : '')}
+      style={panelLayout.style}
+    >
+      <div className="plan-panel-body">
       <div className="panel-head">
         <SectionHeading english="COURSE PLAN REGISTER" title="教学计划明细" />
         <div className="panel-head-actions">
+          {layoutCustomised ? (
+            <button className="ghost-button" type="button" onClick={resetLayout} title="恢复默认列宽和面板大小">
+              重置布局
+            </button>
+          ) : null}
           <button className="ghost-button" onClick={() => setWorkspaceOpen(true)}>
             查看全部（{data.coursePlans.length}）
           </button>
@@ -245,20 +281,32 @@ function PlansPage({
         </p>
       </div>
       <div className="table-scroll">
-        <table className="data-table plan-table">
+        <table className="data-table plan-table" style={columnLayout.tableStyle}>
+          {columnLayout.widths ? (
+            <colgroup>
+              {columnLayout.widths.map((width, index) => (
+                <col key={index} style={{ width }} />
+              ))}
+            </colgroup>
+          ) : null}
           <thead>
             <tr>
-              <th>班级</th>
-              <th>学科</th>
-              <th>教师（选填）</th>
-              <th>每周课时</th>
-              <th>周次（选填）</th>
-              <th>课程类型（选填）</th>
-              <th>教室类型（选填）</th>
-              <th>固定时间（选填）</th>
-              <th>连堂（选填）</th>
-              <th>配对组（选填）</th>
-              <th className="action-column">操作</th>
+              {PLAN_TABLE_HEADERS.map((label, index) => (
+                <th key={label} className={index === PLAN_TABLE_HEADERS.length - 1 ? 'action-column' : undefined}>
+                  <span className="plan-th-label">{label}</span>
+                  <span
+                    className="col-resizer"
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label={'调整「' + label.replace(/（选填）/g, '') + '」列宽'}
+                    title="拖动调整列宽"
+                    onPointerDown={columnLayout.start(index)}
+                    onPointerMove={columnLayout.move}
+                    onPointerUp={columnLayout.end}
+                    onPointerCancel={columnLayout.end}
+                  />
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -422,6 +470,18 @@ function PlansPage({
       ) : null}
       {composerOpen ? <PlanComposer data={data} commit={commit} setError={setError} onClose={() => setComposerOpen(false)} /> : null}
       {gradeComposerOpen ? <GradePlanComposer data={data} commit={commit} setError={setError} onClose={() => setGradeComposerOpen(false)} /> : null}
+      </div>
+      <div
+        className="panel-resize-handle"
+        role="separator"
+        aria-label="拖动调整教学计划面板大小"
+        title="拖动调整面板大小；双击重置"
+        onPointerDown={panelLayout.start}
+        onPointerMove={panelLayout.move}
+        onPointerUp={panelLayout.end}
+        onPointerCancel={panelLayout.end}
+        onDoubleClick={panelLayout.reset}
+      />
     </section>
   );
 }
