@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import type { SchoolData, SolverOutput } from './types';
 import { SectionHeading } from './components';
-import { buildTimetableGrid, exportEntityName, VIEW_LABELS } from './timetableExport';
-import type { ExportView, TimetableExportSettings } from './timetableExport';
+import { batchTimetableFileName, buildTimetableGrid, exportEntityName, VIEW_LABELS } from './timetableExport';
+import type { BatchTimetableSelection, ExportView, TimetableExportSettings } from './timetableExport';
 import { semesterWeeks } from '../../../packages/semester/src';
 
 export function TimetableExportDialog({
@@ -11,19 +11,29 @@ export function TimetableExportDialog({
   initialView,
   initialEntityId,
   initialWeekNo,
+  initialBatch = false,
   mode,
   onClose,
   onConfirm,
+  onBatchConfirm,
 }: {
   data: SchoolData;
   result: SolverOutput;
   initialView: ExportView;
   initialEntityId: string;
   initialWeekNo?: number | null;
+  initialBatch?: boolean;
   mode: 'export' | 'publish';
   onClose: () => void;
   onConfirm: (settings: TimetableExportSettings, onStage: (stage: 'generating' | 'writing') => void) => Promise<boolean>;
+  onBatchConfirm?: (
+    settings: TimetableExportSettings,
+    selection: BatchTimetableSelection,
+    onStage: (stage: 'generating' | 'writing') => void,
+    onProgress: (done: number, total: number) => void,
+  ) => Promise<boolean>;
 }) {
+  const canBatch = mode === 'export' && Boolean(onBatchConfirm);
   const entities = initialView === 'teacher' ? data.teachers : initialView === 'room' ? data.rooms : data.classes;
   const initialEntity = entities.some((item) => item.id === initialEntityId) ? initialEntityId : entities[0]?.id || '';
   const [settings, setSettings] = useState<TimetableExportSettings>({
@@ -39,12 +49,17 @@ export function TimetableExportDialog({
     showRoom: true,
     showWeeks: true,
   });
+  const [batch, setBatch] = useState(Boolean(initialBatch) && canBatch);
+  const [batchClasses, setBatchClasses] = useState(true);
+  const [batchTeachers, setBatchTeachers] = useState(true);
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<'idle' | 'generating' | 'writing'>('idle');
   const [error, setError] = useState('');
   const weeks = semesterWeeks(data.semester);
   const entityOptions = settings.view === 'teacher' ? data.teachers : settings.view === 'room' ? data.rooms : data.classes;
   const entityLabel = settings.view === 'teacher' ? '教师' : settings.view === 'room' ? '教室' : '班级';
+  const batchCount = (batchClasses ? data.classes.length : 0) + (batchTeachers ? data.teachers.length : 0);
   const grid = useMemo(() => {
     try {
       return buildTimetableGrid(data, result, settings);
@@ -53,13 +68,38 @@ export function TimetableExportDialog({
     }
   }, [data, result, settings]);
 
+  const switchBatch = (next: boolean) => {
+    if (!canBatch) return;
+    setBatch(next);
+    setError('');
+    setBatchProgress(null);
+    if (next) setSettings((current) => ({ ...current, scope: 'single' }));
+  };
+
   const confirm = async () => {
+    if (batch && (!batchClasses && !batchTeachers)) {
+      setError('请至少选择班级课表或教师课表。');
+      return;
+    }
+    if (batch && !onBatchConfirm) return;
     setBusy(true);
     setStage('generating');
     setError('');
+    setBatchProgress(null);
     try {
       await new Promise((resolve) => window.setTimeout(resolve, 40));
-      const ok = await onConfirm(settings, (next) => setStage(next));
+      let ok = false;
+      if (batch && onBatchConfirm) {
+        const batchSettings: TimetableExportSettings = { ...settings, scope: 'single' };
+        ok = await onBatchConfirm(
+          batchSettings,
+          { classes: batchClasses, teachers: batchTeachers },
+          (next) => setStage(next),
+          (done, total) => setBatchProgress({ done, total }),
+        );
+      } else {
+        ok = await onConfirm(settings, (next) => setStage(next));
+      }
       if (ok) onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -69,57 +109,97 @@ export function TimetableExportDialog({
     }
   };
 
+  const progressPercent =
+    stage === 'writing'
+      ? 92
+      : batch && batchProgress
+        ? Math.min(88, 8 + Math.round((batchProgress.done / Math.max(1, batchProgress.total)) * 80))
+        : batch
+          ? 8
+          : 40;
+  const fileName = batch
+    ? batchTimetableFileName(
+        data,
+        { schoolName: settings.schoolName, weeks: settings.weeks, weekNo: settings.weekNo },
+        { classes: batchClasses, teachers: batchTeachers },
+      )
+    : (settings.schoolName || data.school.name) + '-' + exportEntityName(data, settings) + '-' + (settings.title || '课表') + (settings.weekNo ? '-第' + settings.weekNo + '周' : '') + '-日期.xlsx';
+
   return (
     <div className="export-overlay" role="dialog" aria-modal="true" aria-label="导出课表">
       <div className="export-dialog">
         <header className="export-head">
-          <SectionHeading english="EXPORT & LAYOUT" title={mode === 'publish' ? '保存正式版' : '导出课表'} />
-          <button type="button" className="resource-workspace-close" onClick={onClose} aria-label="关闭">×</button>
+          <SectionHeading english="EXPORT & LAYOUT" title={mode === 'publish' ? '保存正式版' : batch ? '批量导出课表' : '导出课表'} />
+          <button type="button" className="resource-workspace-close" onClick={onClose} aria-label="关闭" disabled={busy}>×</button>
         </header>
-        <p className="panel-note">使用选定的纵向/横向课表模板导出，保留模板的字体、边框与页面布局（自动调整为 1 页宽）；不附加软件元数据。</p>
+        <p className="panel-note">
+          {batch
+            ? '一次生成一个 Excel 文件，每个班级/教师一张工作表；仍使用选定模板的字体、边框与页面布局（自动调整为 1 页宽）。'
+            : '使用选定的纵向/横向课表模板导出，保留模板的字体、边框与页面布局（自动调整为 1 页宽）；不附加软件元数据。'}
+        </p>
+
+        {canBatch ? (
+          <div className="export-mode-switch" role="group" aria-label="导出方式">
+            <button type="button" className={batch ? '' : 'active'} onClick={() => switchBatch(false)} disabled={busy}>单个课表</button>
+            <button type="button" className={batch ? 'active' : ''} onClick={() => switchBatch(true)} disabled={busy}>批量导出</button>
+          </div>
+        ) : null}
 
         <div className="export-form">
           <label>学校名称<input value={settings.schoolName} onChange={(event) => setSettings({ ...settings, schoolName: event.target.value })} /></label>
-          <label>标题<input value={settings.title} onChange={(event) => setSettings({ ...settings, title: event.target.value })} /></label>
+          {batch ? null : <label>标题<input value={settings.title} onChange={(event) => setSettings({ ...settings, title: event.target.value })} /></label>}
           <label>版式
             <select value={settings.layout} onChange={(event) => setSettings({ ...settings, layout: event.target.value as 'vertical' | 'horizontal' })}>
               <option value="vertical">纵向（A4 纵向）</option>
               <option value="horizontal">横向（A4 横向）</option>
             </select>
           </label>
-          <label>范围
-            <select
-              value={settings.scope}
-              onChange={(event) => setSettings({ ...settings, scope: event.target.value as 'single' | 'semester' })}
-            >
-              <option value="single">单周/当前课表</option>
-              <option value="semester" disabled={weeks.length === 0}>整学期（相同周次合并）</option>
-            </select>
-          </label>
-          <label>视图
-            <select
-              value={settings.view}
-              onChange={(event) => {
-                const nextView = event.target.value as ExportView;
-                const nextOptions = nextView === 'teacher' ? data.teachers : nextView === 'room' ? data.rooms : data.classes;
-                setSettings({
-                  ...settings,
-                  view: nextView,
-                  entityId: nextOptions[0]?.id ?? '',
-                  title: VIEW_LABELS[nextView],
-                });
-              }}
-            >
-              <option value="class">班级课表</option>
-              <option value="teacher">教师课表</option>
-              <option value="room">教室课表</option>
-            </select>
-          </label>
-          <label>{entityLabel}
-            <select value={settings.entityId} onChange={(event) => setSettings({ ...settings, entityId: event.target.value })}>
-              {entityOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          </label>
+          {batch ? (
+            <div className="export-batch-scope">
+              <span>批量范围</span>
+              <div className="export-batch-options">
+                <label><input type="checkbox" checked={batchClasses} onChange={(event) => setBatchClasses(event.target.checked)} /> 班级课表 <b>{data.classes.length}</b></label>
+                <label><input type="checkbox" checked={batchTeachers} onChange={(event) => setBatchTeachers(event.target.checked)} /> 教师课表 <b>{data.teachers.length}</b></label>
+              </div>
+              <small>{batchCount ? '共 ' + batchCount + ' 张工作表' : '请至少选择一种课表'}</small>
+            </div>
+          ) : (
+            <>
+              <label>范围
+                <select
+                  value={settings.scope}
+                  onChange={(event) => setSettings({ ...settings, scope: event.target.value as 'single' | 'semester' })}
+                >
+                  <option value="single">单周/当前课表</option>
+                  <option value="semester" disabled={weeks.length === 0}>整学期（相同周次合并）</option>
+                </select>
+              </label>
+              <label>视图
+                <select
+                  value={settings.view}
+                  onChange={(event) => {
+                    const nextView = event.target.value as ExportView;
+                    const nextOptions = nextView === 'teacher' ? data.teachers : nextView === 'room' ? data.rooms : data.classes;
+                    setSettings({
+                      ...settings,
+                      view: nextView,
+                      entityId: nextOptions[0]?.id ?? '',
+                      title: VIEW_LABELS[nextView],
+                    });
+                  }}
+                >
+                  <option value="class">班级课表</option>
+                  <option value="teacher">教师课表</option>
+                  <option value="room">教室课表</option>
+                </select>
+              </label>
+              <label>{entityLabel}
+                <select value={settings.entityId} onChange={(event) => setSettings({ ...settings, entityId: event.target.value })}>
+                  {entityOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              </label>
+            </>
+          )}
           {settings.scope === 'single' ? (
             <>
               <label>周次
@@ -145,12 +225,14 @@ export function TimetableExportDialog({
           ) : null}
         </div>
 
-        {settings.scope === 'semester' ? (
+        {batch ? (
+          <p className="panel-note">批量导出按当前周次/单双周设置生成，每个班级/教师一张工作表；不支持整学期拆分。</p>
+        ) : settings.scope === 'semester' ? (
           <p className="panel-note">整学期导出会按实际课表去重：完全相同的周只生成一张工作表，有差异的周按周次标注。</p>
         ) : null}
 
         <div className="export-toggles">
-          {settings.view !== 'teacher' ? (
+          {batch || settings.view !== 'teacher' ? (
             <label><input type="checkbox" checked={settings.showTeacher} onChange={(event) => setSettings({ ...settings, showTeacher: event.target.checked })} /> 显示教师</label>
           ) : null}
           <label><input type="checkbox" checked={settings.showRoom} onChange={(event) => setSettings({ ...settings, showRoom: event.target.checked })} /> 显示教室</label>
@@ -158,6 +240,7 @@ export function TimetableExportDialog({
         </div>
 
         <div className="export-preview">
+          {batch ? <p className="panel-note">下方为当前单个视图的样式预览；批量导出会按同一模板生成所有选中工作表。</p> : null}
           {grid ? (
             <table className="export-preview-table">
               <tbody>
@@ -175,33 +258,30 @@ export function TimetableExportDialog({
         {busy ? (
           <div className="export-progress" role="status" aria-live="polite">
             <div className="export-progress-head">
-              <b>{stage === 'writing' ? '正在写入文件…' : '正在生成课表…'}</b>
+              <b>{stage === 'writing' ? '正在写入文件…' : batch ? '正在生成批量课表…' : '正在生成课表…'}</b>
               <span>
                 {stage === 'writing'
                   ? '请等待保存完成后再打开文件，否则可能看到未写完的文件。'
-                  : '正在生成 Excel 网格与明细。'}
+                  : batch
+                    ? batchProgress
+                      ? '已完成 ' + batchProgress.done + '/' + batchProgress.total + ' 张工作表。'
+                      : '正在按模板生成班级/教师课表…'
+                    : '正在生成 Excel 网格与明细。'}
               </span>
             </div>
             <div className="export-progress-track">
-              <span style={{ width: stage === 'writing' ? '85%' : '40%' }} />
+              <span style={{ width: progressPercent + '%' }} />
             </div>
           </div>
         ) : null}
         <footer className="export-actions">
-          <span>
-            文件名：{settings.schoolName || data.school.name}-
-            {exportEntityName(data, settings)}-{settings.title || '课表'}
-            {settings.weekNo ? '-第' + settings.weekNo + '周' : ''}-日期.xlsx
-          </span>
+          <span>文件名：{fileName}</span>
           <button type="button" className="ghost-button" onClick={onClose} disabled={busy}>取消</button>
-          <button type="button" className="action-button" onClick={() => void confirm()} disabled={busy}>
-            {busy ? '正在导出…' : mode === 'publish' ? '导出并保存为正式版' : '导出 Excel'} <span>↗</span>
+          <button type="button" className="action-button" onClick={() => void confirm()} disabled={busy || (batch && batchCount === 0)}>
+            {busy ? '正在导出…' : batch ? '批量导出 ' + batchCount + ' 张课表' : mode === 'publish' ? '导出并保存为正式版' : '导出 Excel'} <span>↗</span>
           </button>
         </footer>
       </div>
     </div>
   );
 }
-
-
-

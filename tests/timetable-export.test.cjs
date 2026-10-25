@@ -1,4 +1,4 @@
-﻿const test = require('node:test');
+const test = require('node:test');
 const assert = require('node:assert/strict');
 
 async function loadExport() {
@@ -88,6 +88,17 @@ test('a concrete school week overrides the odd/even filter', async () => {
   assert.match(String(evenWeek.rows[2][0]), /第2周/);
   const oddWeek = buildTimetableGrid(data, result, { ...settings, weekNo: 1 });
   assert.match(String(oddWeek.rows[6][2]), /单周/);
+});
+
+test('batch timetable file name reflects the selected views and week', async () => {
+  const { batchTimetableFileName } = await loadExport();
+  const { data } = fixture();
+  const both = batchTimetableFileName(data, { schoolName: '测试学校', weeks: 'all', weekNo: 3 }, { classes: true, teachers: true });
+  assert.match(both, /^测试学校-批量课表-班级\+教师-第3周-\d{4}-\d{2}-\d{2}\.xlsx$/);
+  const classes = batchTimetableFileName(data, { schoolName: '', weeks: 'odd', weekNo: null }, { classes: true, teachers: false });
+  assert.match(classes, /^测试学校-批量课表-班级课表-单周-\d{4}-\d{2}-\d{2}\.xlsx$/);
+  const teachers = batchTimetableFileName(data, { schoolName: '测试学校', weeks: 'all', weekNo: null }, { classes: false, teachers: true });
+  assert.match(teachers, /批量课表-教师课表-/);
 });
 
 

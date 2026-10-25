@@ -1397,6 +1397,19 @@ html[data-theme='dark'] .tt-warning.is-danger{background:#2b1717;color:#fca5a5}
 .export-form{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:12px 0}
 .export-form label{display:flex;flex-direction:column;gap:5px;font:10px var(--font-ui);color:var(--muted);letter-spacing:.06em}
 .export-form input,.export-form select{height:34px;border:1px solid var(--rule);border-radius:7px;background:var(--panel);color:var(--ink);padding:0 9px;font:12px var(--font-text)}
+.export-mode-switch{display:inline-flex;border:1px solid var(--rule);border-radius:8px;overflow:hidden;margin:4px 0 2px}
+.export-mode-switch button{border:0;background:transparent;color:var(--muted);padding:7px 16px;font:11px var(--font-ui);letter-spacing:.06em;cursor:pointer}
+.export-mode-switch button:hover{color:var(--ink)}
+.export-mode-switch button.active{background:var(--ink);color:var(--paper)}
+.export-mode-switch button:disabled{opacity:.5;cursor:not-allowed}
+.export-batch-scope{grid-column:1/-1;display:flex;flex-direction:column;gap:6px;border:1px solid var(--rule);border-radius:8px;padding:9px 12px;background:var(--panel)}
+.export-batch-scope > span{font:10px var(--font-ui);color:var(--muted);letter-spacing:.06em}
+.export-batch-options{display:flex;gap:18px;flex-wrap:wrap;font-size:12px}
+.export-batch-options label{display:inline-flex;align-items:center;gap:6px;flex-direction:row;color:var(--ink);font:12px var(--font-text);letter-spacing:0}
+.export-batch-options b{font-weight:700;color:var(--muted)}
+.export-batch-options input[type="checkbox"]{height:auto;width:auto;border:0;background:transparent;padding:0;margin:0;accent-color:var(--signal);cursor:pointer}
+.export-batch-scope small{font-size:11px;color:var(--muted)}
+
 .export-toggles{display:flex;gap:16px;font-size:12px;margin-bottom:10px;flex-wrap:wrap}
 .export-preview{border:1px solid var(--rule);border-radius:10px;overflow:auto;background:var(--panel);padding:10px}
 .export-preview-table{border-collapse:collapse;width:100%;font-size:11px}

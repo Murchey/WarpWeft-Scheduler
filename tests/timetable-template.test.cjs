@@ -1,4 +1,4 @@
-﻿const test = require('node:test');
+const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -147,4 +147,37 @@ test('semester export creates one sheet per distinct week pattern', async () => 
   assert.equal(workbook.getWorksheet('第3周').getCell('A1').value, '模板测试中学');
   assert.equal(filled.pageSetup.fitToWidth, 1);
   assert.equal(workbook.getWorksheet('第1-2周').pageSetup.orientation, 'portrait');
+});
+
+test('batch export creates one formatted sheet per class/teacher with unique names', async () => {
+  const { fillBatchTimetableTemplate } = await import('../apps/renderer/src/timetableTemplate.ts');
+  const { data, result, settings } = fixture();
+  const template = fs.readFileSync(templates.vertical);
+  const progress = [];
+  const filled = await fillBatchTimetableTemplate(
+    template,
+    data,
+    result,
+    [
+      { sheetName: '班-七年级1班', tabColor: 'FF1F4E78', settings: { ...settings, view: 'class', title: '班级课表' } },
+      { sheetName: '师-王老师', tabColor: 'FF2E7D32', settings: { ...settings, view: 'teacher', entityId: 't1', title: '教师课表' } },
+      { sheetName: '班-七年级1班', settings: { ...settings, view: 'class', title: '班级课表' } },
+    ],
+    (done, total) => progress.push([done, total]),
+  );
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(filled.buffer);
+  assert.equal(workbook.worksheets.length, 3);
+  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ['班-七年级1班', '师-王老师', '班-七年级1班·2']);
+  assert.deepEqual(progress, [[1, 3], [2, 3], [3, 3]]);
+  assert.equal(workbook.getWorksheet('班-七年级1班').getCell('A1').value, '模板测试中学');
+  assert.equal(workbook.getWorksheet('班-七年级1班').getCell('A2').value, '班级课表');
+  assert.equal(workbook.getWorksheet('班-七年级1班').getCell('A3').value, '七年级1班');
+  assert.equal(workbook.getWorksheet('师-王老师').getCell('A3').value, '王老师');
+  assert.match(String(workbook.getWorksheet('师-王老师').getCell('B5').value), /七年级1班/);
+  assert.equal(workbook.getWorksheet('班-七年级1班').getCell('A8').value, '第4节');
+  assert.equal(workbook.getWorksheet('班-七年级1班').getCell('B5').font?.name, '宋体');
+  assert.equal(workbook.getWorksheet('班-七年级1班').getCell('B5').border?.top?.style, 'thin');
+  assert.equal(workbook.getWorksheet('班-七年级1班').pageSetup.orientation, 'portrait');
+  assert.equal(filled.pageSetup.fitToWidth, 1);
 });

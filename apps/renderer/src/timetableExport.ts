@@ -22,6 +22,28 @@ export interface TimetableExportSettings {
   scope?: 'single' | 'semester';
 }
 
+
+export interface BatchTimetableSelection {
+  classes: boolean;
+  teachers: boolean;
+}
+
+/** File name for one workbook containing many class/teacher timetables. */
+export function batchTimetableFileName(
+  data: SchoolData,
+  settings: Pick<TimetableExportSettings, 'schoolName' | 'weeks' | 'weekNo'>,
+  selection: BatchTimetableSelection,
+): string {
+  const parts = [settings.schoolName || data.school.name, '批量课表'];
+  if (selection.classes && selection.teachers) parts.push('班级+教师');
+  else if (selection.classes) parts.push('班级课表');
+  else parts.push('教师课表');
+  if (settings.weekNo) parts.push('第' + settings.weekNo + '周');
+  else if (settings.weeks !== 'all') parts.push(settings.weeks === 'odd' ? '单周' : '双周');
+  parts.push(new Date().toISOString().slice(0, 10));
+  return parts.join('-').replace(/[\/:*?"<>|]/g, '_').slice(0, 120) + '.xlsx';
+}
+
 export interface TimetableGrid {
   rows: (string | number)[][];
   merges: { s: { r: number; c: number }; e: { r: number; c: number } }[];

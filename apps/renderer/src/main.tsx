@@ -10,10 +10,11 @@ import type { PrepareSection } from './PreparePage';
 import { download, exportMessage } from './download';
 import type { ExportResult } from './download';
 import { TimetableExportDialog } from './TimetableExportDialog';
-import { timetableFileName, VIEW_LABELS } from './timetableExport';
+import { batchTimetableFileName, timetableFileName, VIEW_LABELS } from './timetableExport';
 import { loadTimetableTemplate } from './timetableTemplateLoader';
-import { fillSemesterTemplate, fillTimetableTemplate } from './timetableTemplate';
-import type { TimetableExportSettings } from './timetableExport';
+import { fillBatchTimetableTemplate, fillSemesterTemplate, fillTimetableTemplate } from './timetableTemplate';
+import type { BatchTimetableItem } from './timetableTemplate';
+import type { BatchTimetableSelection, TimetableExportSettings } from './timetableExport';
 import { checkMove, checkSwap } from './dnd';
 import { semesterWeeks, weekOfDate } from '../../../packages/semester/src';
 import { adjustedWeekEntries, semesterPatterns } from './semesterTimetable';
@@ -701,6 +702,7 @@ function App() {
   const [selectedEntryId, setSelectedEntryId] = useState('');
   const [exportOpen, setExportOpen] = useState<null | 'export' | 'publish'>(null);
   const [exportWeek, setExportWeek] = useState<number | null>(null);
+  const [exportBatch, setExportBatch] = useState(false);
   const [history, setHistory] = useState<SolverOutput[]>([]);
   const [timeLimit, setTimeLimit] = useState(30);
   const saveTimer = useRef<number | null>(null);
@@ -1469,6 +1471,7 @@ function App() {
       setTab('最终课表');
       return;
     }
+    setExportBatch(false);
     setExportOpen('publish');
   };
 
@@ -1523,6 +1526,15 @@ function App() {
     if (!data) return;
     if (!(result ?? data.published)) return;
     setExportWeek(null);
+    setExportBatch(false);
+    setExportOpen('export');
+  };
+
+  const openBatchExport = () => {
+    if (!data) return;
+    if (!(result ?? data.published)) return;
+    setExportWeek(null);
+    setExportBatch(true);
     setExportOpen('export');
   };
 
@@ -1535,6 +1547,7 @@ function App() {
       return;
     }
     setExportWeek(week);
+    setExportBatch(false);
     setExportOpen('export');
   };
 
@@ -1587,6 +1600,69 @@ function App() {
       return true;
     } catch (cause) {
       setError('导出课表失败：' + messageOf(cause));
+      return false;
+    }
+  };
+
+  const exportBatchTimetables = async (
+    settings: TimetableExportSettings,
+    selection: BatchTimetableSelection,
+    onStage: (stage: 'generating' | 'writing') => void,
+    onProgress: (done: number, total: number) => void,
+  ): Promise<boolean> => {
+    if (!data) return false;
+    const target = result ?? data.published;
+    if (!target) return false;
+    if (!selection.classes && !selection.teachers) {
+      setError('请至少选择班级课表或教师课表。');
+      return false;
+    }
+    const batchSettings: TimetableExportSettings = { ...settings, scope: 'single' };
+    const items: BatchTimetableItem[] = [];
+    if (selection.classes) {
+      for (const klass of data.classes) {
+        items.push({
+          sheetName: '班-' + klass.name,
+          tabColor: 'FF1F4E78',
+          settings: { ...batchSettings, view: 'class', entityId: klass.id, title: '班级课表' },
+        });
+      }
+    }
+    if (selection.teachers) {
+      for (const teacher of data.teachers) {
+        items.push({
+          sheetName: '师-' + teacher.name,
+          tabColor: 'FF2E7D32',
+          settings: { ...batchSettings, view: 'teacher', entityId: teacher.id, title: '教师课表' },
+        });
+      }
+    }
+    try {
+      const weekStart = batchSettings.weekNo
+        ? semesterWeeks(data.semester).find((week) => week.index === batchSettings.weekNo)?.startDate
+        : null;
+      const batchTarget = weekStart
+        ? { ...target, entries: adjustedWeekEntries(data, target, data.adjustments ?? [], weekStart) }
+        : target;
+      onStage('generating');
+      const template = await loadTimetableTemplate(batchSettings.layout);
+      const filled = await fillBatchTimetableTemplate(template, data, batchTarget, items, onProgress);
+      onStage('writing');
+      const outcome = await download(
+        filled.buffer,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        batchTimetableFileName(data, batchSettings, selection),
+      );
+      const message = exportMessage(outcome, '批量课表');
+      if (!message) return false;
+      if (message.tone === 'error') {
+        setError(message.text);
+        return false;
+      }
+      setNotice(message.text + '（共 ' + items.length + ' 张工作表）');
+      return true;
+    } catch (cause) {
+      setError('批量导出课表失败：' + messageOf(cause));
       return false;
     }
   };
@@ -1805,6 +1881,7 @@ function App() {
             onInspect={() => setTab('最终课表')}
             onExportCsv={exportCsvFile}
             onExportExcel={openTimetableExport}
+            onBatchExport={openBatchExport}
             onQuickExport={quickExportTimetable}
             onPrint={() => window.print()}
           />
@@ -1883,9 +1960,11 @@ function App() {
           initialView={view}
           initialEntityId={entityId || selectedClassId || data.classes[0]?.id || ''}
           initialWeekNo={exportWeek}
+          initialBatch={exportBatch}
           mode={exportOpen}
-          onClose={() => setExportOpen(null)}
+          onClose={() => { setExportOpen(null); setExportBatch(false); }}
           onConfirm={exportTimetable}
+          onBatchConfirm={exportBatchTimetables}
         />
       ) : null}
       {modeDialog}
@@ -2916,6 +2995,7 @@ function TimetablePage({
   onInspect,
   onExportCsv,
   onExportExcel,
+  onBatchExport,
   onQuickExport,
   onPrint,
 }: {
@@ -2943,6 +3023,7 @@ function TimetablePage({
   onInspect: () => void;
   onExportCsv: () => void;
   onExportExcel: () => void;
+  onBatchExport: () => void;
   onQuickExport: (view: 'class' | 'teacher', entityId: string, weekNo: number | null) => void;
   onPrint: () => void;
 }) {
@@ -3260,6 +3341,9 @@ function TimetablePage({
           </button>
           <button type="button" className="tt-btn tt-btn-quiet" onClick={onExportExcel}>
             导出设置…
+          </button>
+          <button type="button" className="tt-btn tt-btn-quiet" onClick={onBatchExport} title="批量导出全部班级和教师课表">
+            批量导出…
           </button>
           {view !== 'room' ? (
             <button type="button" className="tt-btn tt-btn-quiet" onClick={() => onQuickExport(view, entityId, weekNo)} title="按当前视图、当前周直接导出，不需要再选设置">

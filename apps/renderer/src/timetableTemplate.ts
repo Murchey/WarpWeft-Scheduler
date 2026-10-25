@@ -1,4 +1,4 @@
-﻿import type { ScheduleEntry, SchoolData, SolverOutput } from './types';
+import type { ScheduleEntry, SchoolData, SolverOutput } from './types';
 import type { TimetableExportSettings } from './timetableExport';
 import { entryCellText, entryMatchesView, exportEntityName } from './timetableExport.ts';
 import { planOf } from './selectors.ts';
@@ -20,6 +20,19 @@ export interface FilledTemplate {
   pageSetup: PageSetupSummary;
 }
 
+export interface BatchTimetableItem {
+  /** Worksheet tab name (kept unique and <= 31 characters by the filler). */
+  sheetName: string;
+  settings: TimetableExportSettings;
+  tabColor?: string;
+}
+
+export interface FilledBatch {
+  buffer: Uint8Array;
+  pageSetup: PageSetupSummary;
+  sheets: { name: string }[];
+}
+
 const DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 const WEEK_LABEL: Record<string, string> = { all: '全周', odd: '单周', even: '双周' };
 const TEMPLATE_FIRST_DATA_ROW = 5;
@@ -34,21 +47,12 @@ function entryWeeks(entry: ScheduleEntry, data: SchoolData): 'all' | 'odd' | 'ev
  * borders, merged title rows and page layout. The template's "fit to width"
  * settings are read first and re-applied explicitly.
  */
-export async function fillTimetableTemplate(
-  templateBuffer: ArrayBuffer | Uint8Array,
+function fillTimetableSheet(
+  sheet: import('exceljs').Worksheet,
   data: SchoolData,
   result: SolverOutput,
   settings: TimetableExportSettings,
-): Promise<FilledTemplate> {
-  const ExcelJS = (await import('exceljs')).default;
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(templateBuffer as ArrayBuffer);
-  for (const sheet of [...workbook.worksheets]) {
-    if (sheet.name !== '班级课表') workbook.removeWorksheet(sheet.id);
-  }
-  const sheet = workbook.getWorksheet('班级课表') ?? workbook.worksheets[0];
-  if (!sheet) throw new Error('课表模板缺少工作表');
-
+): PageSetupSummary {
   const setup = sheet.pageSetup;
   const pageSetup: PageSetupSummary = {
     orientation: String(setup.orientation ?? 'portrait'),
@@ -133,6 +137,29 @@ export async function fillTimetableTemplate(
     }
   }
 
+  return pageSetup;
+}
+
+/**
+ * Fill the approved template once for a single timetable. Batch export reuses
+ * the same sheet filler so every generated sheet keeps the template layout.
+ */
+export async function fillTimetableTemplate(
+  templateBuffer: ArrayBuffer | Uint8Array,
+  data: SchoolData,
+  result: SolverOutput,
+  settings: TimetableExportSettings,
+): Promise<FilledTemplate> {
+  const ExcelJS = (await import('exceljs')).default;
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(templateBuffer as ArrayBuffer);
+  for (const sheet of [...workbook.worksheets]) {
+    if (sheet.name !== '班级课表') workbook.removeWorksheet(sheet.id);
+  }
+  const sheet = workbook.getWorksheet('班级课表') ?? workbook.worksheets[0];
+  if (!sheet) throw new Error('课表模板缺少工作表');
+
+  const pageSetup = fillTimetableSheet(sheet, data, result, settings);
   const output = await workbook.xlsx.writeBuffer();
   const buffer = output instanceof Uint8Array ? output : new Uint8Array(output as ArrayBuffer);
   return { buffer, pageSetup };
@@ -167,6 +194,68 @@ function copySheet(source: import('exceljs').Worksheet, target: import('exceljs'
     });
   });
   for (const range of source.model.merges ?? []) target.mergeCells(range);
+}
+
+function uniqueSheetName(base: string, used: Set<string>): string {
+  const cleaned = String(base || '课表')
+    .replace(/[\\/?*\[\]:]/g, ' ')
+    .replace(/[\u0000-\u001f]/g, '')
+    .trim()
+    .slice(0, 31) || '课表';
+  let name = cleaned;
+  let suffix = 2;
+  while (used.has(name)) {
+    const tail = '·' + suffix;
+    name = cleaned.slice(0, Math.max(1, 31 - tail.length)) + tail;
+    suffix += 1;
+  }
+  used.add(name);
+  return name;
+}
+
+/**
+ * Fill the same approved template for many classes/teachers in one workbook.
+ * Every sheet is a full copy of the template, so fonts, borders and page setup
+ * stay identical to the single-timetable export.
+ */
+export async function fillBatchTimetableTemplate(
+  templateBuffer: ArrayBuffer | Uint8Array,
+  data: SchoolData,
+  result: SolverOutput,
+  items: BatchTimetableItem[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<FilledBatch> {
+  if (items.length === 0) throw new Error('没有可导出的课表');
+  const ExcelJS = (await import('exceljs')).default;
+  const templateWorkbook = new ExcelJS.Workbook();
+  await templateWorkbook.xlsx.load(templateBuffer as ArrayBuffer);
+  for (const sheet of [...templateWorkbook.worksheets]) {
+    if (sheet.name !== '班级课表') templateWorkbook.removeWorksheet(sheet.id);
+  }
+  const source = templateWorkbook.getWorksheet('班级课表') ?? templateWorkbook.worksheets[0];
+  if (!source) throw new Error('课表模板缺少工作表');
+
+  const output = new ExcelJS.Workbook();
+  const used = new Set<string>();
+  const sheets: { name: string }[] = [];
+  let pageSetup: PageSetupSummary | null = null;
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    const name = uniqueSheetName(item.sheetName, used);
+    const target = output.addWorksheet(name);
+    if (item.tabColor) target.properties.tabColor = { argb: item.tabColor };
+    copySheet(source, target);
+    const setup = fillTimetableSheet(target, data, result, item.settings);
+    if (!pageSetup) pageSetup = setup;
+    sheets.push({ name });
+    onProgress?.(index + 1, items.length);
+    // Let React paint the progress text while a large batch is being written.
+    if ((index + 1) % 8 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  if (!pageSetup) throw new Error('没有可导出的课表');
+  const written = await output.xlsx.writeBuffer();
+  const buffer = written instanceof Uint8Array ? written : new Uint8Array(written as ArrayBuffer);
+  return { buffer, pageSetup, sheets };
 }
 
 /**
