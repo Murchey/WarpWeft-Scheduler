@@ -9,6 +9,8 @@ upstream warpweft_server {
 
 server {
     listen 80;
+    # 公网部署改成自己的域名，例如 scheduler.example.edu；
+    # 再用 certbot --nginx 申请证书并跳转 HTTPS。
     server_name _;
 
     # The whole workspace is saved as one JSON document (server cap is 5 MiB).
@@ -28,8 +30,8 @@ server {
         proxy_buffering off;
     }
 
-    # For public/VPN access, put TLS + authentication in front of the app.
-    # The application itself has no login by design.
+    # Public/VPN access must use TLS in front of the app. The application has
+    # its own account login; Basic Auth is only an optional second layer.
     #
     # auth_basic "WarpWeft";
     # auth_basic_user_file /etc/nginx/.htpasswd;
