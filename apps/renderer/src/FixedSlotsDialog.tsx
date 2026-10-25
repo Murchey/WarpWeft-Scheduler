@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import type { TimeSlot } from './types';
 
 const DAY_NAMES = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -29,6 +29,13 @@ function FixedSlotsDialog({
       .sort((a, b) => a[0] - b[0])
       .map(([day, list]) => ({ day, slots: [...list].sort((a, b) => a.period - b.period) }));
   }, [slots]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
   const selected = new Set(value);
   const limit = Math.max(0, max);
   const toggle = (slotId: string) => {
