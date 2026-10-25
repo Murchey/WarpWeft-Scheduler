@@ -31,8 +31,8 @@ echo   项目目录: %ROOT%
 echo.
 echo   [1] 编译本地版本
 echo       Electron 应用 + NSIS 安装包（安装包使用应用图标）
-echo   [2] 编译 Linux 服务端
-echo       生成 systemd 部署包到 dist\linux-server\
+echo   [2] 编译 Linux 服务端（含登录）
+echo       生成 systemd 部署包到 dist\linux-server\；说明见 guideline.md
 echo   [0] 退出
 echo.
 choice /c 120 /n /m "请选择 [1/2/0]: "
@@ -187,7 +187,11 @@ if not exist "guideline.md" (
   echo [错误] 找不到 guideline.md，部署包不完整。
   goto :FAIL
 )
-echo [信息] 正在编译渲染进程、Java Solver 和 Linux 部署包…
+if not exist "linux_server\user-cli.cjs" (
+  echo [错误] 找不到 linux_server\user-cli.cjs，登录初始化脚本缺失。
+  goto :FAIL
+)
+echo [信息] 正在编译渲染进程、Java Solver 和 Linux 部署包（含登录/用户管理）…
 echo.
 call npm run dist:linux
 if errorlevel 1 (

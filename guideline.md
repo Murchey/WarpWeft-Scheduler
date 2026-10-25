@@ -22,6 +22,7 @@ Nginx（可选：TLS、Basic Auth、访问日志）
 linux_server/server.cjs（Node，HTTP API + 静态文件）
         ├── /var/lib/warpweft/warpweft.json     工作区数据
         ├── /var/lib/warpweft/server-config.json 服务端限额
+        ├── /var/lib/warpweft/users.json         Linux 用户与密码哈希
         ├── /var/lib/warpweft/solve-jobs/        长时任务与检查点
         └── resources/solver/warpweft-solver.jar（Java 21）
                     │ stdin/stdout JSON
@@ -36,15 +37,16 @@ linux_server/server.cjs（Node，HTTP API + 静态文件）
 
 ## 3. 安全边界（先读）
 
-**应用层没有登录/账号系统。** 只要网络能访问服务端端口，就能读取和修改工作区、取消任务、修改服务端限额。浏览器生成的 `X-Client-Id` 只用于连接计数和配额，不是身份认证。
+**Linux 服务端默认启用账号登录。** 除 `/api/health` 和登录接口外，所有 API 都需要登录后获得的 Bearer token；用户管理只允许管理员操作。
 
-因此：
-
-- 默认只监听 `127.0.0.1`，适合“Nginx 同机反代”或 SSH 隧道管理。
-- 直连局域网时，必须用防火墙限制来源网段，并且只放在可信校园网/VLAN。
-- 不要把 4317 端口直接暴露到公网。公网访问请使用 Nginx TLS + Basic Auth，或 VPN。
+- **Linux 端**：有用户、密码、角色；管理员可以在 Linux 服务端的“用户与密码”页添加用户/重置密码，也可以用 `user-cli.cjs`。
+- **Electron 端**：本机桌面 API 不启用登录，也不创建用户文件；Electron 连接 Linux 服务端时只出现登录界面，不显示用户管理。
+- `X-Client-Id` 仍只用于连接计数/配额，**不是身份认证**；真正的身份是登录 token。
+- 默认只监听 `127.0.0.1`，适合“Nginx 同机反代”或 SSH 隧道管理。直连局域网必须用防火墙限制来源网段，并只在可信校园网/VLAN 使用。
+- 不要把 4317 端口直接暴露到公网。公网必须使用 Nginx TLS；Basic Auth 可作为第二层保护，但不是替代应用登录。
+- 账号 token 默认 12 小时后过期；服务端重启会清空内存中的会话，所有人需要重新登录。
 - 同一时间建议只保留一位编辑者。当前保存是整库覆盖，多人同时编辑不会自动合并。
-- 备份/恢复必须包含整个 `/var/lib/warpweft`，尤其是 `solve-jobs/`。
+- 备份/恢复必须包含整个 `/var/lib/warpweft`，尤其是 `users.json` 和 `solve-jobs/`。
 
 ## 4. 先决条件
 
@@ -111,7 +113,7 @@ npm run build
 npm run dist:linux
 ```
 
-如果已经在 CI 中构建过 `dist/` 和 JAR，可以跳过重复构建：
+如果已经在本地构建过 `dist/` 和 JAR，可以跳过重复构建：
 
 ```bash
 npm run dist:linux -- --skip-build
@@ -178,6 +180,8 @@ journalctl -u warpweft -n 50 --no-pager
 bash /opt/warpweft/linux_server/verify.sh
 ```
 
+登录启用时，`verify.sh` 默认只检查 health 和页面；设置 `WARPVEFT_VERIFY_USERNAME`/`WARPVEFT_VERIFY_PASSWORD` 后会额外登录并检查 `/api/data`。
+
 ### 6.1 只通过 Nginx 访问（推荐）
 
 保持服务端 `127.0.0.1`，在服务器上安装 Nginx：
@@ -224,7 +228,7 @@ http://<服务器域名或IP>/
 
 ### 6.3 Nginx + TLS + Basic Auth（公网/VPN 前置）
 
-应用自身不做认证。公网必须额外加一层：
+应用已有 Linux 账号登录；公网仍建议在 Nginx 再加一层 TLS + Basic Auth（或 VPN）：
 
 ```bash
 sudo apt install -y apache2-utils
@@ -238,7 +242,82 @@ sudo certbot --nginx -d scheduler.example.edu
 WARPVEFT_TRUST_PROXY=1
 ```
 
-不要让 4317 暴露在公网。Basic Auth 只是最低限度保护，正式公网部署仍建议 VPN/零信任网关。
+不要让 4317 暴露在公网。Basic Auth 只是最低限度保护，正式公网部署仍建议 VPN/零信任网关；应用自身仍有账号登录。
+
+### 6.4 初始化管理员、登录和用户管理
+
+安装后先创建第一位管理员（密码至少 8 位）：
+
+```bash
+sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
+  node /opt/warpweft/linux_server/user-cli.cjs create-admin admin
+```
+
+命令会提示输入两次密码。也可以先创建普通用户：
+
+```bash
+sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
+  node /opt/warpweft/linux_server/user-cli.cjs add-user teacher1
+```
+
+常用用户命令：
+
+```bash
+# 查看用户（不显示密码哈希）
+sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
+  node /opt/warpweft/linux_server/user-cli.cjs list
+
+# 重置密码
+sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
+  node /opt/warpweft/linux_server/user-cli.cjs reset-password teacher1
+
+# 禁用/启用/删除
+sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
+  node /opt/warpweft/linux_server/user-cli.cjs disable teacher1
+sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
+  node /opt/warpweft/linux_server/user-cli.cjs enable teacher1
+sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
+  node /opt/warpweft/linux_server/user-cli.cjs remove teacher1
+```
+
+- 用户文件：`/var/lib/warpweft/users.json`，密码用 `scrypt` 哈希保存，文件权限 0600。
+- 角色：`admin` 可管理用户；`user` 可使用排课功能但不能管理账号。
+- 最后一位管理员不能被删除、禁用或降级。
+- 命令执行后不需要重启服务；服务端会检测 `users.json` 变化。登录页如果没有自动刷新，点“重新检测”。
+- 自动化脚本可通过 `WARPVEFT_USER_PASSWORD` 提供密码，但不要把密码写进 shell 历史或仓库。
+
+**在 UI 中登录**：
+
+1. 浏览器打开 `http://<服务器>/`（管理员建议加 `?mode=lan-server`）。
+2. 首次会显示“登录 Linux 服务端”，输入用户名和密码。
+3. 登录后 Linux 管理员进入“服务端 → 用户与密码”，可以新增用户、改角色、启用/停用、重置密码、删除用户。
+4. 普通用户登录后只看到排课界面，不显示“用户与密码”。
+5. Electron 客户端连接 Linux 时只显示登录框；即使账号是管理员，Electron 也不显示“用户与密码”，用户和密码只能在 Linux 服务端管理。
+
+**验证登录**：
+
+```bash
+# health 是公开接口
+curl -fsS http://127.0.0.1:4317/api/health
+
+# 带账号检查数据接口（生产请使用不进入 shell 历史的方式）
+curl -fsS -X POST http://127.0.0.1:4317/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"你的密码"}'
+
+# verify.sh 也支持同一组变量
+WARPVEFT_VERIFY_USERNAME=admin WARPVEFT_VERIFY_PASSWORD='你的密码' \
+  bash /opt/warpweft/linux_server/verify.sh
+```
+
+登录返回的 `token` 用于后续请求：
+
+```bash
+curl -fsS http://127.0.0.1:4317/api/data \
+  -H "Authorization: Bearer <token>"
+```
+
+> 密码不要直接写在命令行历史里；上面的 JSON 只是示例，生产请用交互式 CLI 或受保护的脚本变量。
 
 ## 7. 配置项
 
@@ -253,7 +332,8 @@ sudo systemctl restart warpweft
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `WARPVEFT_PORT` | `4317` | HTTP 端口，修改后同步 Nginx/防火墙。 |
-| `WARPVEFT_DATA_DIR` | `/var/lib/warpweft` | 工作区、服务端配置和长时任务目录；必须可写。 |
+| `WARPVEFT_DATA_DIR` | `/var/lib/warpweft` | 工作区、服务端配置、用户文件和长时任务目录；必须可写。 |
+| `WARPVEFT_AUTH` | `1` | Linux 端启用账号登录；生产不要设为 0。Electron 桌面版不读取此变量。 |
 | `WARPVEFT_HOST` | 不设置 | 可选强制监听地址。不设置时由 `server-config.json`/UI 决定；设置后覆盖 UI 的持久化监听设置。 |
 | `WARPVEFT_SOLVER_JAR` | `/opt/warpweft/resources/solver/warpweft-solver.jar` | 自定义 JAR 路径。 |
 | `JAVA_HOME` | 自动 PATH | 指向 JDK/JRE 21；找不到 Java 时健康页会显示未就绪。 |
@@ -268,7 +348,8 @@ sudo systemctl restart warpweft
 - 最大并发 Solver 数（还会受物理内存钳制）；
 - 队列容量、单客户端在跑/排队上限；
 - 短时任务超时；
-- 允许网段（IPv4 CIDR，留空表示全部允许）。
+- 允许网段（IPv4 CIDR，留空表示全部允许）；
+- **用户与密码**（仅 Linux 管理员；可新增用户、改角色、启用/停用、重置密码、删除；Electron 客户端不显示此区域）。
 
 这些值保存在 `/var/lib/warpweft/server-config.json`，重启后保留。修改监听模式会短暂断连并自动重绑；如果设置了 `WARPVEFT_HOST`，重启后以环境变量为准。
 
@@ -291,6 +372,53 @@ http://<服务器>/?mode=lan-server
 
 ## 8. 日常运维
 
+### 8.0 常用命令速查
+
+服务管理：
+
+```bash
+sudo systemctl start warpweft      # 启动
+sudo systemctl stop warpweft       # 停止
+sudo systemctl restart warpweft    # 重启（改环境文件后）
+sudo systemctl status warpweft     # 状态
+sudo systemctl enable warpweft     # 开机自启
+sudo systemctl disable warpweft    # 取消自启
+```
+
+日志与健康：
+
+```bash
+journalctl -u warpweft -n 80 --no-pager
+journalctl -u warpweft -f
+curl -fsS http://127.0.0.1:4317/api/health
+bash /opt/warpweft/linux_server/verify.sh
+```
+
+账号（Linux 专用；详见 6.4）：
+
+```bash
+sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
+  node /opt/warpweft/linux_server/user-cli.cjs list
+sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
+  node /opt/warpweft/linux_server/user-cli.cjs reset-password teacher1
+```
+
+网络与 Nginx：
+
+```bash
+ss -ltnp | grep 4317
+sudo nginx -t
+sudo systemctl reload nginx
+sudo ufw status
+```
+
+数据目录：
+
+```bash
+sudo ls -lah /var/lib/warpweft
+sudo ls -lah /var/lib/warpweft/solve-jobs
+```
+
 ### 8.1 健康检查
 
 ```bash
@@ -298,7 +426,7 @@ curl -fsS http://127.0.0.1:4317/api/health
 bash /opt/warpweft/linux_server/verify.sh
 ```
 
-`verify.sh` 会检查 Node、Java、健康接口、首页和数据接口；任一项失败返回非 0。
+`verify.sh` 会检查 Node、Java、健康接口和首页；设置 `WARPVEFT_VERIFY_USERNAME`/`WARPVEFT_VERIFY_PASSWORD` 后会登录并检查数据接口；任一项失败返回非 0。
 
 ### 8.2 日志
 
@@ -332,6 +460,7 @@ sudo systemctl start warpweft
 
 - `/var/lib/warpweft/warpweft.json`
 - `/var/lib/warpweft/server-config.json`
+- `/var/lib/warpweft/users.json`
 - `/var/lib/warpweft/solve-jobs/`
 
 ### 8.4 升级
@@ -373,6 +502,14 @@ sudo bash /opt/warpweft/linux_server/uninstall.sh --purge-data
 | 切换局域网后重启又变回仅本机 | 环境文件里设置了 `WARPVEFT_HOST=127.0.0.1`，删除/注释它，让 `server-config.json` 生效。 |
 | systemd 报只读文件系统 | 自定义 `WARPVEFT_DATA_DIR` 后同步修改 unit 的 `ReadWritePaths`，或使用默认 `/var/lib/warpweft`。 |
 | 浏览器仍请求 `127.0.0.1` | 设置页“服务地址”残留旧值；清空/改为当前访问地址后保存；确认 UI 包是新构建。 |
+| 登录页一直显示“尚未初始化管理员” | 运行 `user-cli.cjs create-admin`；确认 `WARPVEFT_DATA_DIR` 与 service 一致；刷新/重新检测。 |
+| 用户名密码正确但 401 | 确认账号未禁用；确认登录的是当前 Linux 服务地址；看 `journalctl -u warpweft` 的“登录失败”日志。 |
+| 登录尝试过多 429 | 同一 IP/用户 5 次失败后限流 5 分钟；等待或从服务端排查账号。 |
+| 管理员看不到“用户与密码” | 确认账号 role=admin；确认页面来自 Linux 服务端而不是 Electron；Electron 客户端永远不显示用户管理。 |
+| user-cli 提示 Permission denied | 用 service 用户执行：`sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft node ...`；不要用 root 直接写 `users.json`。 |
+| 新建用户后登录不了 | 检查用户名/密码、角色、disabled；服务端会检测文件变化，仍不行则刷新登录页或重启服务。 |
+| 删除/降级管理员被拒绝 | 至少保留一位启用状态的管理员；先创建另一位管理员。 |
+| 服务重启后所有人都要重新登录 | 这是设计：会话保存在内存，12 小时过期且重启清空；账号仍在 `users.json`。 |
 
 ## 10. 验收清单
 
@@ -387,22 +524,32 @@ journalctl -u warpweft -n 30 --no-pager
 curl -fsS http://127.0.0.1:4317/api/health
 curl -fsS http://127.0.0.1:4317/ | head
 
-# 3. 数据读写
-curl -fsS http://127.0.0.1:4317/api/data | head -c 300
+# 3. 登录与数据读写
+curl -fsS -X POST http://127.0.0.1:4317/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"你的密码"}'
+# 从返回 JSON 取 token 后：
+curl -fsS http://127.0.0.1:4317/api/data \
+  -H "Authorization: Bearer <token>" | head -c 300
 
-# 4. UI
+# 4. UI 与登录
 # 浏览器打开 http://<服务器>/ 或 https://<域名>/
-# 确认首页、排课准备、排课任务、课表预览可加载
+# 登录后确认首页、排课准备、排课任务、课表预览可加载
 
-# 5. 真实排课
+# 5. 用户管理（Linux 管理员）
+# 打开“服务端 → 用户与密码”，新增一个普通用户并用它登录
+# Electron 客户端登录同账号，确认看不到“用户与密码”
+
+# 6. 真实排课
 # 导入/打开工作区，启动一次短时排课，确认生成候选课表并保存
 
-# 6. 长时任务
+# 7. 长时任务
 # 启动长时任务，暂停、继续、刷新页面后按任务 UUID 找回
 
-# 7. 重启恢复
+# 8. 重启恢复与重新登录
 sudo systemctl restart warpweft
 # 长时任务应显示“已中断（可继续）”，可继续
+# 会话在内存中，重启后需要重新登录；用户仍在 users.json
 ```
 
 Nginx/TLS 部署还要验证：
@@ -415,7 +562,8 @@ Nginx/TLS 部署还要验证：
 ## 11. 已知限制
 
 - 单工作区整库保存，没有多用户合并；多人同时编辑会互相覆盖。
-- 没有应用层账号/权限/审计登录；依赖网络边界或 Nginx Basic Auth。
+- Linux 端有账号/密码和 admin/user 两种角色；没有更细粒度的权限、登录审计或 SSO。Electron 本机桌面模式不启用登录。
+- 登录会话在内存中，服务端重启后需要重新登录；账号数据在 users.json。
 - 同一时间只允许一个长时任务；短时任务按队列串行/并发配置执行。
 - JSON 存储适合小规模；大规模并发/多租户时应迁移数据库。
 - 本指南的 systemd 方案以 Ubuntu/Debian 为主；其他发行版需相应调整包名和路径。

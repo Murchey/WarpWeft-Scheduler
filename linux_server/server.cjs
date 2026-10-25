@@ -49,6 +49,7 @@ function startFromEnv(env = process.env, overrides = {}) {
     overrides.solverJar || env.WARPVEFT_SOLVER_JAR || path.join(rootDir, 'resources', 'solver', 'warpweft-solver.jar'),
   );
   const trustProxy = overrides.trustProxy ?? readBoolean(env.WARPVEFT_TRUST_PROXY, true);
+  const authEnabled = overrides.authEnabled ?? readBoolean(env.WARPVEFT_AUTH, true);
   ensureWritableDir(dataDir);
   if (!fs.existsSync(solverJar)) {
     console.warn('[warn] Java solver jar not found: ' + solverJar);
@@ -56,7 +57,7 @@ function startFromEnv(env = process.env, overrides = {}) {
   }
 
   const extra = {};
-  for (const key of ['solverCommand', 'solverArgs', 'clientTtlMs', 'timeoutSecondsOverride']) {
+  for (const key of ['solverCommand', 'solverArgs', 'clientTtlMs', 'timeoutSecondsOverride', 'authSessionTtlMs']) {
     if (overrides[key] !== undefined) extra[key] = overrides[key];
   }
   const server = startApi({
@@ -68,9 +69,10 @@ function startFromEnv(env = process.env, overrides = {}) {
     solverJar,
     configFile: path.join(dataDir, 'server-config.json'),
     trustProxy,
+    authEnabled,
     ...extra,
   });
-  return { server, rootDir, dataDir, port, host, solverJar, trustProxy };
+  return { server, rootDir, dataDir, port, host, solverJar, trustProxy, authEnabled };
 }
 
 function printReady(server, context) {
@@ -80,6 +82,7 @@ function printReady(server, context) {
   console.log('WarpWeft Linux server: http://' + displayHost + ':' + actualPort);
   console.log('Workspace data: ' + context.dataDir);
   console.log('Solver jar: ' + context.solverJar);
+  console.log('Authentication: ' + (context.authEnabled ? 'enabled (Linux users)' : 'disabled'));
 }
 
 function main() {

@@ -6,12 +6,39 @@ export const DEFAULT_API_BASE = resolveDefaultApiBase(Boolean(import.meta.env.DE
 
 const CLIENT_ID_KEY = 'warpweft-client-id';
 const CLIENT_ID_PATTERN = /^[A-Za-z0-9_.:-]{3,64}$/;
+const AUTH_TOKEN_PREFIX = 'warpweft-auth-token:';
 
 let fallbackClientId: string | null = null;
+let unauthorizedHandler: (() => void) | null = null;
 
 export function getApiBase(): string {
   const saved = window.localStorage.getItem('warpweft-runtime-endpoint');
   return normalizeApiEndpoint(saved, DEFAULT_API_BASE);
+}
+
+export function getAuthToken(base = getApiBase()): string {
+  try {
+    return window.localStorage.getItem(AUTH_TOKEN_PREFIX + base) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setAuthToken(token: string, base = getApiBase()): void {
+  try {
+    if (token) window.localStorage.setItem(AUTH_TOKEN_PREFIX + base, token);
+    else window.localStorage.removeItem(AUTH_TOKEN_PREFIX + base);
+  } catch {
+    // localStorage may be unavailable in hardened browser modes.
+  }
+}
+
+export function clearAuthToken(base = getApiBase()): void {
+  setAuthToken('', base);
+}
+
+export function registerUnauthorizedHandler(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
 }
 
 function createClientId(): string {
@@ -99,8 +126,15 @@ async function request(url: string, init: RequestInit, timeoutMs: number): Promi
   const timer = timeoutMs > 0 ? window.setTimeout(() => controller.abort(), timeoutMs) : 0;
   const headers = new Headers(init.headers);
   headers.set('X-Client-Id', getClientId());
+  const token = getAuthToken();
+  if (token) headers.set('Authorization', 'Bearer ' + token);
   try {
-    return await fetch(url, { ...init, headers, signal: controller.signal });
+    const response = await fetch(url, { ...init, headers, signal: controller.signal });
+    if (response.status === 401 && !url.includes('/api/auth/login')) {
+      clearAuthToken();
+      unauthorizedHandler?.();
+    }
+    return response;
   } finally {
     if (timer) window.clearTimeout(timer);
   }
@@ -119,7 +153,29 @@ export interface ServerHealth {
   schemaVersion?: number;
   solverProtocol?: string;
   capabilities?: string[];
+  auth?: {
+    required?: boolean;
+    userManagement?: boolean;
+    needsSetup?: boolean;
+    mode?: 'linux' | 'desktop' | string;
+  };
   java?: { available?: boolean; version?: string | null };
+}
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  displayName: string;
+  role: 'admin' | 'user' | string;
+  disabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuthSession {
+  token: string;
+  expiresAt: string;
+  user: AuthUser;
 }
 
 export async function fetchHealth(): Promise<ServerHealth> {
@@ -142,6 +198,46 @@ export async function saveData(data: SchoolData): Promise<SchoolData> {
   const text = await response.text();
   if (!response.ok) throw failure(response, text);
   return withFixedClassRooms(JSON.parse(text) as SchoolData);
+}
+
+export async function login(username: string, password: string): Promise<AuthSession> {
+  return sendJson<AuthSession>('/api/auth/login', 'POST', { username, password }, 15000);
+}
+
+export async function fetchMe(): Promise<{ user: AuthUser; expiresAt: string }> {
+  return getJson<{ user: AuthUser; expiresAt: string }>('/api/auth/me', 8000);
+}
+
+export async function logout(): Promise<{ ok: boolean }> {
+  return sendJson<{ ok: boolean }>('/api/auth/logout', 'POST', undefined, 8000);
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<{ ok: boolean }> {
+  return sendJson<{ ok: boolean }>('/api/auth/password', 'PUT', { currentPassword, newPassword }, 10000);
+}
+
+export async function fetchUsers(): Promise<{ users: AuthUser[] }> {
+  return getJson<{ users: AuthUser[] }>('/api/users', 10000);
+}
+
+export async function createUser(input: {
+  username: string;
+  password: string;
+  displayName?: string;
+  role?: 'admin' | 'user';
+}): Promise<{ user: AuthUser }> {
+  return sendJson<{ user: AuthUser }>('/api/users', 'POST', input, 15000);
+}
+
+export async function updateUser(
+  id: string,
+  patch: { displayName?: string; password?: string; role?: 'admin' | 'user'; disabled?: boolean },
+): Promise<{ user: AuthUser }> {
+  return sendJson<{ user: AuthUser }>('/api/users/' + encodeURIComponent(id), 'PUT', patch, 15000);
+}
+
+export async function deleteUser(id: string): Promise<{ deleted: boolean; user: AuthUser }> {
+  return sendJson<{ deleted: boolean; user: AuthUser }>('/api/users/' + encodeURIComponent(id), 'DELETE', undefined, 10000);
 }
 
 export interface ServerAddress {

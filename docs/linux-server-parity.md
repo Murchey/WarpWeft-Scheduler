@@ -19,6 +19,8 @@
 | 工作区路径选择 | Electron bridge；浏览器回退为服务端数据目录说明 | 不阻塞 Linux |
 | 打开任务文件所在文件夹 | Electron bridge；浏览器回退为复制路径 | 不阻塞 Linux；服务器路径由服务端返回 |
 | 服务端静态页面 | `rootDir/dist` | 匹配；Linux 包内包含构建后的 dist |
+| Linux 登录 | `/api/auth/login`、`/api/auth/me`、`/api/auth/logout` | 新增；Electron 本机不启用 |
+| Linux 用户管理 | `/api/users`（管理员） | 新增；仅 Linux 浏览器管理页显示 |
 
 没有发现 UI 调用但服务端未实现的路由。
 
@@ -29,11 +31,12 @@
 3. **长时任务所有权**：列表只返回当前 `clientId` 的任务；读取/暂停/继续/取消/删除和 taskUuid 复用均做 owner 校验；旧的无 owner 任务只对回环管理请求可见。
 4. **Linux 运行/构建**：新增 `linux_server/server.cjs`、systemd 单元、安装/卸载/验证脚本，以及跨平台 Solver 构建 wrapper。
 5. **服务端提示**：将“本机服务端”改为“服务端”，增加当前访问地址和“多人同时编辑会整库覆盖”的提示。
+6. **Linux 登录架构**：`users.json`、scrypt 密码哈希、Bearer session、登录页；只有 Linux 服务端显示“用户与密码”，Electron 客户端不显示。
 
 ## 3. 已知限制（未在本轮改变）
 
 - 单个 JSON 工作区，保存是整库覆盖，最后写入者获胜；不做多用户合并。部署指南要求同一时间只保留一位编辑者。
-- 应用层没有账号系统；`X-Client-Id` 只用于计数/配额，不是认证。公网必须经 Nginx TLS + Basic Auth 或 VPN。
+- Linux 端有账号/密码（admin/user），登录 token 默认 12 小时；Electron 本机桌面版不启用登录，连接 Linux 时只显示登录、不显示用户管理。`X-Client-Id` 仍只用于计数/配额，不是认证。公网必须经 Nginx TLS/VPN。
 - 同一时间只允许一个长时任务；短时任务按服务端队列/并发配置执行。
 - 没有 SQLite/数据库迁移、Docker 镜像、自动更新或集中日志。
 - 浏览器无法打开服务器文件管理器，只能复制服务端路径；这是浏览器安全边界。

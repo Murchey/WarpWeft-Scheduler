@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { openDatabase } = require('./database.cjs');
+const { SessionStore, UserStore, publicUser } = require('./auth.cjs');
 const SCHEMA = require('../../data-schema.json');
 const PKG = require('../../package.json');
 const {
@@ -31,7 +32,7 @@ const LONG_JOB_MAX_STAGNATION = 60 * 60;
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Client-Id');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Client-Id, Authorization');
   res.setHeader('Cache-Control', 'no-store');
 }
 
@@ -486,8 +487,13 @@ function startApi({
   clientTtlMs = CLIENT_TTL_MS,
   timeoutSecondsOverride = null,
   trustProxy = true,
+  authEnabled = false,
+  authSessionTtlMs,
 }) {
   const store = openDatabase(rootDir, dataDir);
+  const authStore = authEnabled ? new UserStore(path.join(dataDir, 'users.json')) : null;
+  const authSessions = authEnabled ? new SessionStore({ ttlMs: authSessionTtlMs }) : null;
+  const loginFailures = new Map();
   const resolvedConfigFile = configFile || path.join(dataDir, 'server-config.json');
   const loaded = loadConfig(resolvedConfigFile);
   let config = loaded.config;
@@ -582,6 +588,53 @@ function startApi({
     const ip = trustProxy ? forwardedClientIp(req.headers, remote) : remote;
     if (/^[A-Za-z0-9_.:-]{3,64}$/.test(raw)) return { id: raw, ip, anonymous: false };
     return { id: 'ip:' + (ip || 'unknown'), ip, anonymous: true };
+  }
+
+  function bearerToken(req) {
+    const raw = String(req.headers.authorization || '');
+    const match = raw.match(/^Bearer\s+(.+)$/i);
+    return match ? match[1].trim() : '';
+  }
+
+  function authenticateRequest(req) {
+    if (!authEnabled || !authStore || !authSessions) return null;
+    const token = bearerToken(req);
+    if (!token) return null;
+    const session = authSessions.get(token);
+    if (!session) return null;
+    const user = authStore.findById(session.userId);
+    if (!user || user.disabled) {
+      authSessions.destroy(token);
+      return null;
+    }
+    return { token, user, expiresAt: session.expiresAt };
+  }
+
+  function loginKey(ip, username) {
+    return String(ip || '') + '|' + String(username || '').trim().toLowerCase();
+  }
+
+  function loginAllowed(key) {
+    const entry = loginFailures.get(key);
+    if (!entry) return true;
+    if (Date.now() - entry.firstAt > 5 * 60 * 1000) {
+      loginFailures.delete(key);
+      return true;
+    }
+    return entry.count < 5;
+  }
+
+  function recordLoginFailure(key) {
+    const current = loginFailures.get(key);
+    if (!current || Date.now() - current.firstAt > 5 * 60 * 1000) {
+      loginFailures.set(key, { count: 1, firstAt: Date.now() });
+    } else {
+      current.count += 1;
+    }
+  }
+
+  function userApiFailure(res, error) {
+    return fail(res, error.statusCode || 400, error.message, error.code || 'INVALID_USER');
   }
 
   function touchClient(req, res, enforce = true) {
@@ -1448,6 +1501,9 @@ function startApi({
           schemaVersion: Number(SCHEMA.version) || 1,
           solverProtocol: SCHEMA.solverProtocol || '1.0',
           capabilities: Array.isArray(SCHEMA.features) ? SCHEMA.features : [],
+          auth: authEnabled
+            ? { required: true, userManagement: true, needsSetup: authStore.needsSetup(), mode: 'linux' }
+            : { required: false, userManagement: false, needsSetup: false, mode: 'desktop' },
           java: javaInfo,
           queue: queueCounts(),
           server: { host: bindHost, port, config },
@@ -1455,6 +1511,131 @@ function startApi({
           effective,
         });
       }
+      if (req.method === 'POST' && url.pathname === '/api/auth/login') {
+        if (!authEnabled || !authStore || !authSessions) {
+          return fail(res, 404, '当前服务未启用登录', 'AUTH_DISABLED');
+        }
+        if (authStore.needsSetup()) {
+          return fail(res, 503, '尚未创建管理员，请先在服务器上运行 user-cli.cjs create-admin', 'AUTH_NOT_INITIALIZED');
+        }
+        let body;
+        try {
+          body = JSON.parse(await readBody(req));
+        } catch {
+          return fail(res, 400, '请求不是有效 JSON', 'INVALID_BODY');
+        }
+        const username = String(body?.username ?? '').trim();
+        const password = String(body?.password ?? '');
+        const key = loginKey(client && client.ip, username);
+        if (!loginAllowed(key)) {
+          log('warn', '登录尝试过多：' + (client && client.ip), null);
+          return fail(res, 429, '登录尝试过多，请 5 分钟后再试', 'AUTH_RATE_LIMITED');
+        }
+        if (!username || !password) {
+          recordLoginFailure(key);
+          return fail(res, 401, '用户名或密码错误', 'AUTH_FAILED');
+        }
+        const user = authStore.verify(username, password);
+        if (!user) {
+          recordLoginFailure(key);
+          log('warn', '登录失败：' + username + '（' + (client && client.ip) + '）');
+          return fail(res, 401, '用户名或密码错误', 'AUTH_FAILED');
+        }
+        loginFailures.delete(key);
+        const session = authSessions.create(user.id);
+        log('info', '用户登录：' + user.username + '（' + (client && client.ip) + '）');
+        return send(res, 200, { ...session, user: publicUser(user) });
+      }
+
+      const authSession = authenticateRequest(req);
+      if (authEnabled && isApi && !authSession) {
+        return fail(res, 401, '请先登录服务端', 'AUTH_REQUIRED');
+      }
+
+      if (req.method === 'GET' && url.pathname === '/api/auth/me') {
+        if (!authEnabled || !authSession) return fail(res, 404, '当前服务未启用登录', 'AUTH_DISABLED');
+        return send(res, 200, { user: publicUser(authSession.user), expiresAt: new Date(authSession.expiresAt).toISOString() });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
+        if (!authEnabled || !authSession) return fail(res, 404, '当前服务未启用登录', 'AUTH_DISABLED');
+        authSessions.destroy(authSession.token);
+        log('info', '用户退出：' + authSession.user.username);
+        return send(res, 200, { ok: true });
+      }
+      if (req.method === 'PUT' && url.pathname === '/api/auth/password') {
+        if (!authEnabled || !authSession) return fail(res, 404, '当前服务未启用登录', 'AUTH_DISABLED');
+        let body;
+        try {
+          body = JSON.parse(await readBody(req));
+        } catch {
+          return fail(res, 400, '请求不是有效 JSON', 'INVALID_BODY');
+        }
+        if (!authStore.verify(authSession.user.username, String(body?.currentPassword ?? ''))) {
+          return fail(res, 401, '当前密码不正确', 'AUTH_FAILED');
+        }
+        try {
+          authStore.update(authSession.user.id, { password: body?.newPassword });
+          authSessions.destroyUser(authSession.user.id, authSession.token);
+        } catch (error) {
+          return userApiFailure(res, error);
+        }
+        return send(res, 200, { ok: true });
+      }
+
+      const userRoute = url.pathname.match(/^\/api\/users\/([^/]+)$/);
+      if (authEnabled && (url.pathname === '/api/users' || userRoute)) {
+        if (!authSession || authSession.user.role !== 'admin') {
+          return fail(res, 403, '只有管理员可以管理用户', 'FORBIDDEN');
+        }
+        try {
+          if (req.method === 'GET' && url.pathname === '/api/users') {
+            return send(res, 200, { users: authStore.list() });
+          }
+          if (req.method === 'POST' && url.pathname === '/api/users') {
+            const body = JSON.parse(await readBody(req));
+            if (body?.role !== undefined && body.role !== 'admin' && body.role !== 'user') {
+              return fail(res, 400, '角色只能是 admin 或 user', 'INVALID_ROLE');
+            }
+            const user = authStore.create({
+              username: body?.username,
+              password: body?.password,
+              displayName: body?.displayName,
+              role: body?.role,
+            });
+            log('info', '管理员创建用户：' + user.username);
+            return send(res, 201, { user });
+          }
+          if (userRoute && req.method === 'PUT') {
+            const body = JSON.parse(await readBody(req));
+            if (body?.role !== undefined && body.role !== 'admin' && body.role !== 'user') {
+              return fail(res, 400, '角色只能是 admin 或 user', 'INVALID_ROLE');
+            }
+            if (body?.disabled !== undefined && typeof body.disabled !== 'boolean') {
+              return fail(res, 400, 'disabled 必须是布尔值', 'INVALID_USER');
+            }
+            const user = authStore.update(decodeURIComponent(userRoute[1]), {
+              displayName: body?.displayName,
+              role: body?.role,
+              disabled: body?.disabled,
+              password: body?.password,
+            });
+            if (body?.password !== undefined || body?.disabled === true) {
+              authSessions.destroyUser(user.id, user.id === authSession.user.id ? authSession.token : '');
+            }
+            log('info', '管理员更新用户：' + user.username);
+            return send(res, 200, { user });
+          }
+          if (userRoute && req.method === 'DELETE') {
+            const user = authStore.remove(decodeURIComponent(userRoute[1]));
+            authSessions.destroyUser(user.id);
+            log('info', '管理员删除用户：' + user.username);
+            return send(res, 200, { deleted: true, user });
+          }
+        } catch (error) {
+          return userApiFailure(res, error);
+        }
+      }
+
       if (req.method === 'GET' && url.pathname === '/api/server/stats') {
         return send(res, 200, serverStats());
       }

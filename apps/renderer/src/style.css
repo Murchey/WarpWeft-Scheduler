@@ -620,6 +620,19 @@ html[data-theme='dark'] .server-config-warnings{background:#2a2114;color:#fbbf24
 .server-inline-btn:disabled{opacity:.45;cursor:not-allowed}
 html[data-theme='dark'] .server-inline-btn{color:#93c5fd}
 html[data-theme='dark'] .server-inline-btn:hover:not(:disabled){color:#bfdbfe}
+.auth-dialog{width:min(520px,100%)}
+.auth-dialog .server-warning{margin:14px 0}
+.auth-dialog .server-warning code{display:block;margin-top:6px;font-size:10px;line-height:1.5;white-space:normal;word-break:break-all}
+.auth-user{padding:8px 10px;border:1px solid var(--rule);border-radius:8px;font-size:11px}
+.server-user-table td small{display:block;margin-top:3px;color:var(--muted);font-size:10px}
+.server-user-table select{height:30px;border:1px solid var(--rule);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 6px;font-size:11px}
+.server-user-password{display:flex;align-items:center;gap:6px}
+.server-user-password input{min-width:100px;width:118px;height:30px;border:1px solid var(--rule);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 7px;font-size:11px}
+.server-user-check{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted)}
+.server-user-check input{width:14px;height:14px;accent-color:#2563eb}
+.server-user-add{margin-top:18px;padding-top:16px;border-top:1px solid var(--rule)}
+.server-user-add .panel-head{margin-bottom:10px}
+.server-user-add .mini-button{margin-top:10px}
 .server-client-tag{display:inline-block;margin-left:6px;padding:2px 5px;border-radius:999px;background:var(--chip);color:var(--muted);font:9px var(--font-ui);font-style:normal;letter-spacing:.06em}
 .server-job-table.is-wide{min-width:900px}
 .server-client-table td .tt-btn,.server-job-table td .tt-btn{min-height:28px;padding:0 9px;font-size:10px}

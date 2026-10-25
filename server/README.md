@@ -5,6 +5,7 @@
 | 路径 | 角色 | 是否在运行路径 |
 | --- | --- | --- |
 | `server/api/` | HTTP API：数据读写、短时/长时任务、检查点、客户端配额、服务端配置 | 是 |
+| `server/api/auth.cjs` | Linux 用户/密码哈希/会话；桌面模式默认不启用 | Linux 是，桌面否 |
 | `apps/desktop/main.cjs` | Electron 主进程：窗口、工作区选择、导出文件对话框，启动 `server/api` | 是 |
 | `services/solver-java/` | 启发式排课求解器（Java 21，stdin/stdout JSON） | 是 |
 | `linux_server/` | 独立 Linux Node 入口、systemd/Nginx/安装脚本 | 是，Linux 部署 |
@@ -26,7 +27,7 @@ npm run dev       # Vite 渲染层
 ## 数据版本与能力
 
 - `data-schema.json` 是数据/能力版本的单一来源；当前 version 3，包含 homeroom/roomModes/lessonKinds/classGapSoftConstraint 能力。
-- `GET /api/health` 返回 `schemaVersion`、`appVersion`、`solverProtocol`、`capabilities`；渲染层启动时比较，服务端版本过旧会阻断保存/排课并提示升级。
+- `GET /api/health` 返回 `schemaVersion`、`appVersion`、`solverProtocol`、`capabilities` 和 `auth`（Linux 登录要求/是否已初始化管理员）；渲染层启动时比较，服务端版本过旧会阻断保存/排课并提示升级。
 - `server/api` 的 `validateData` 校验班主任、教师负责班级、roomMode 和课表引用；Java `SolverProtocol` 再校验班主任本班课和教师负责班级。
 
 ## FullSolver 的判定语义

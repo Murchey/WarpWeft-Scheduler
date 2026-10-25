@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { once } = require('node:events');
 const { startFromEnv, readPort, readHost } = require('../linux_server/server.cjs');
+const { UserStore } = require('../server/api/auth.cjs');
 
 const root = path.resolve(__dirname, '..');
 const fakeSolver = path.join(__dirname, 'fixtures', 'fake-solver.cjs');
@@ -16,6 +17,7 @@ async function close(server) {
 
 test('Linux entry starts the API from environment variables', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'warpweft-linux-'));
+  new UserStore(path.join(dataDir, 'users.json')).create({ username: 'linux-admin', password: 'linux-admin-pass', role: 'admin' });
   const context = startFromEnv(
     { WARPVEFT_DATA_DIR: dataDir, WARPVEFT_PORT: '0' },
     { rootDir: root, solverCommand: process.execPath, solverArgs: [fakeSolver] },
@@ -32,8 +34,22 @@ test('Linux entry starts the API from environment variables', async () => {
     assert.equal(body.ok, true);
     assert.ok(body.appVersion);
     assert.ok(body.schemaVersion >= 1);
+    assert.equal(body.auth.required, true);
+    assert.equal(body.auth.mode, 'linux');
 
-    const data = await fetch('http://127.0.0.1:' + port + '/api/data');
+    const unauthorized = await fetch('http://127.0.0.1:' + port + '/api/data');
+    assert.equal(unauthorized.status, 401);
+
+    const loginResponse = await fetch('http://127.0.0.1:' + port + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'linux-admin', password: 'linux-admin-pass' }),
+    });
+    assert.equal(loginResponse.status, 200);
+    const session = await loginResponse.json();
+    const data = await fetch('http://127.0.0.1:' + port + '/api/data', {
+      headers: { Authorization: 'Bearer ' + session.token },
+    });
     assert.equal(data.status, 200);
     assert.equal((await data.json()).school.name, '未设置学校');
 

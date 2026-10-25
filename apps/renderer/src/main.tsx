@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { HeroUIProvider, Button, Card, CardBody, Chip, Progress, Select, SelectItem, Tabs, Tab } from '@heroui/react';
 import { validateInput } from '../../../packages/validation/src';
 import { exportCsv, exportWorkbook, readWorkbook } from '../../../packages/import-export/src';
-import { ApiError, cancelServerJob, deleteServerClient, fetchHealth, fetchServerOverview, getApiBase, loadData, saveData, solveSchedule, updateServerConfig } from './api';
+import { ApiError, cancelServerJob, clearAuthToken, createUser, deleteServerClient, deleteUser, fetchHealth, fetchMe, fetchServerOverview, fetchUsers, getApiBase, getAuthToken, loadData, login, logout, registerUnauthorizedHandler, saveData, setAuthToken, solveSchedule, updateServerConfig, updateUser } from './api';
 import { DAYS, SectionHeading } from './components';
 import { PreparePage } from './PreparePage';
 import type { PrepareSection } from './PreparePage';
@@ -44,7 +44,7 @@ import { buildStats, classRowsForExport, subjectRowsForExport, teacherRowsForExp
 import type { StatsReport } from '../../../packages/statistics/src';
 import { ADJUSTMENT_LABELS, LESSON_STATUS_LABELS, effectiveAdjustments, buildActualStats, effectiveEntries, isNoopMove, weekdayOf } from '../../../packages/adjustments/src';
 import type { ActualStats } from '../../../packages/adjustments/src';
-import type { ServerClient, ServerConfig, ServerConfigResult, ServerEffective, ServerJob, ServerLog, ServerStats } from './api';
+import type { AuthUser, ServerClient, ServerConfig, ServerConfigResult, ServerEffective, ServerJob, ServerLog, ServerStats } from './api';
 import type { LongJobDetail } from './api';
 import type {
   ClassRoom,
@@ -80,6 +80,52 @@ function RuntimeModeDialog({ current, onSave, onClose }: { current: RunMode | nu
 }
 
 
+
+function LoginScreen({
+  needsSetup,
+  busy,
+  error,
+  onLogin,
+  onSettings,
+}: {
+  needsSetup: boolean;
+  busy: boolean;
+  error: string;
+  onLogin: (username: string, password: string) => void;
+  onSettings: () => void;
+}) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  return (
+    <div className="mode-overlay">
+      <form
+        className="mode-dialog auth-dialog"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!busy && !needsSetup && username.trim() && password) onLogin(username.trim(), password);
+        }}
+      >
+        <div className="mode-dialog-head"><span className="kicker">// SIGN IN</span></div>
+        <h2>登录 Linux 服务端</h2>
+        <p className="mode-lead">该服务端启用了用户登录。桌面 Electron 只作为客户端登录，不提供用户管理。</p>
+        {needsSetup ? (
+          <div className="server-warning">
+            尚未初始化管理员。请在服务器上执行：
+            <code>sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft node /opt/warpweft/linux_server/user-cli.cjs create-admin admin</code>
+          </div>
+        ) : null}
+        <label className="mode-endpoint">用户名<input autoFocus value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" disabled={busy || needsSetup} /></label>
+        <label className="mode-endpoint">密码<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" disabled={busy || needsSetup} /></label>
+        {error ? <p className="server-save-error">{error}</p> : null}
+        <div className="mode-actions">
+          <button type="button" className="ghost-button" onClick={onSettings}>连接设置</button>
+          <button type="button" className="ghost-button" onClick={() => window.location.reload()}>重新检测</button>
+          <button className="action-button" disabled={busy || needsSetup || !username.trim() || !password}>{busy ? '登录中…' : '登录'} <span>↗</span></button>
+        </div>
+      </form>
+    </div>
+  );
+}
 
 function fmtTime(value?: string): string {
   if (!value) return '—';
@@ -389,6 +435,7 @@ function EmptyDataScreen({ message, onRetry, onSettings }: { message: string; on
 
 function App() {
   const params = new URLSearchParams(window.location.search);
+  const electronShell = Boolean((window as unknown as { warpweft?: unknown }).warpweft);
   const requestedTab = params.get('tab');
   const normalizedTab = requestedTab === '基础资料' || requestedTab === '教学计划' ? '排课准备' : requestedTab;
   const initialTheme = params.get('theme');
@@ -431,6 +478,12 @@ function App() {
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [serverSchema, setServerSchema] = useState<number | null>(null);
   const [serverBlocked, setServerBlocked] = useState(false);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authNeedsSetup, setAuthNeedsSetup] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState('');
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<RunProgress>({ phase: 'idle', message: '等待开始排课' });
@@ -537,37 +590,124 @@ function App() {
     savePreviewPrefs(window.localStorage, { view, entityId, weekFilter, weekNo, overlayDate });
   }, [view, entityId, weekFilter, weekNo, overlayDate]);
 
+  const loadWorkspace = useCallback(async () => {
+    const loaded = await loadData();
+    setData(loaded);
+    setLoadError('');
+    setApiOnline(true);
+    setSelectedClassId(loaded.classes[0]?.id ?? '');
+    setResult(loaded.candidate ?? loaded.published ?? null);
+  }, []);
+
   useEffect(() => {
-    if (!runMode) return;
+    registerUnauthorizedHandler(() => {
+      setAuthUser(null);
+      setData(null);
+      setResult(null);
+      setAuthRequired(true);
+      setAuthError('登录已过期，请重新登录。');
+    });
+    return () => registerUnauthorizedHandler(null);
+  }, []);
+
+  useEffect(() => {
+    if (!runMode) {
+      setAuthChecking(false);
+      return;
+    }
     let cancelled = false;
-    loadData()
-      .then((loaded) => {
+    const bootstrap = async () => {
+      setAuthChecking(true);
+      setAuthError('');
+      setApiOnline(null);
+      try {
+        const health = await fetchHealth();
         if (cancelled) return;
-        setData(loaded);
-        setLoadError('');
         setApiOnline(true);
-        setSelectedClassId(loaded.classes[0]?.id ?? '');
-        setResult(loaded.candidate ?? loaded.published ?? null);
-        fetchHealth()
-          .then((health) => {
+        const schema = Number(health.schemaVersion) || 1;
+        setServerSchema(schema);
+        setServerBlocked(schema < MIN_SERVER_SCHEMA);
+        const required = Boolean(health.auth?.required);
+        setAuthRequired(required);
+        setAuthNeedsSetup(Boolean(health.auth?.needsSetup));
+        if (required) {
+          const token = getAuthToken();
+          if (!token) {
+            setAuthUser(null);
+            return;
+          }
+          try {
+            const me = await fetchMe();
             if (cancelled) return;
-            const schema = Number(health.schemaVersion) || 1;
-            setServerSchema(schema);
-            setServerBlocked(schema < MIN_SERVER_SCHEMA);
-          })
-          .catch(() => {
-            if (!cancelled) setServerBlocked(true);
-          });
-      })
-      .catch(() => {
+            setAuthUser(me.user);
+          } catch {
+            clearAuthToken();
+            if (!cancelled) setAuthUser(null);
+            return;
+          }
+        } else {
+          setAuthUser(null);
+        }
+        try {
+          await loadWorkspace();
+        } catch (cause) {
+          if (cancelled) return;
+          if (cause instanceof ApiError && cause.status === 401) {
+            setAuthUser(null);
+            return;
+          }
+          throw cause;
+        }
+      } catch {
         if (cancelled) return;
         setApiOnline(false);
+        setAuthUser(null);
         setLoadError('服务端未连接，当前没有加载任何测试数据。');
-      });
+      } finally {
+        if (!cancelled) setAuthChecking(false);
+      }
+    };
+    void bootstrap();
     return () => {
       cancelled = true;
     };
-  }, [runMode]);
+  }, [runMode, loadWorkspace]);
+
+  const handleLogin = async (username: string, password: string) => {
+    setAuthBusy(true);
+    setAuthError('');
+    try {
+      const session = await login(username, password);
+      setAuthToken(session.token);
+      setAuthUser(session.user);
+      setAuthRequired(true);
+      setAuthNeedsSetup(false);
+      setAuthChecking(true);
+      await loadWorkspace();
+    } catch (cause) {
+      setAuthUser(null);
+      setAuthError(messageOf(cause));
+    } finally {
+      setAuthBusy(false);
+      setAuthChecking(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch {
+      // The local token is cleared even if the old session is already gone.
+    } finally {
+      clearAuthToken();
+      setAuthUser(null);
+      setData(null);
+      setResult(null);
+      setAuthError('');
+      setApiOnline(true);
+      setAuthChecking(false);
+    }
+  };
 
   const saveRunMode = (nextMode: RunMode, endpoint: string) => {
     const normalized = endpoint.trim().replace(/\/+$/, '');
@@ -1317,6 +1457,28 @@ function App() {
     return <RuntimeModeDialog current={null} onSave={saveRunMode} />;
   }
 
+  if (authChecking) {
+    return (
+      <div className="boot-screen">
+        <div className="boot-mark">W</div>
+        <strong>WARPWEFT</strong>
+        <span>正在验证服务端登录…</span>
+      </div>
+    );
+  }
+
+  if (authRequired && !authUser) {
+    return (
+      <LoginScreen
+        needsSetup={authNeedsSetup}
+        busy={authBusy}
+        error={authError}
+        onLogin={handleLogin}
+        onSettings={() => setRunMode(null)}
+      />
+    );
+  }
+
   if (!data) {
     if (apiOnline === false) {
       return <EmptyDataScreen message={loadError} onRetry={() => window.location.reload()} onSettings={() => setRunMode(null)} />;
@@ -1394,6 +1556,11 @@ function App() {
             <button className="mode-pill" onClick={() => setModeSettingsOpen(true)} title="修改运行模式">
               运行：{RUN_MODE_OPTIONS.find((item) => item.value === runMode)?.title}
             </button>
+            {authUser ? (
+              <button className="ghost-button auth-user" onClick={() => void handleLogout()} title="退出当前服务端账号">
+                退出 {authUser.username}
+              </button>
+            ) : null}
             <button
               className="theme-toggle"
               onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
@@ -1532,7 +1699,13 @@ function App() {
             onTimetable={() => setTab('课表预览')}
           />
         ) : null}
-        {tab === '服务端' && runMode === 'lan-server' ? <ServerPage apiOnline={apiOnline} /> : null}
+        {tab === '服务端' && runMode === 'lan-server' ? (
+            <ServerPage
+              apiOnline={apiOnline}
+              authUser={authUser}
+              showUserManagement={authRequired && !electronShell}
+            />
+          ) : null}
         {tab === '设置' ? (
           <SettingsPage
             runMode={runMode}
@@ -1943,7 +2116,7 @@ function ServerConfigCard({
           {config.bindAddress === 'lan' ? '局域网可访问' : '仅本机'}
         </span>
       </div>
-      <div className="server-warning">局域网内不做身份验证：同网段任何人都能读写本工作区数据，请只在可信网络使用。多人同时编辑会整库覆盖，建议同一时间只保留一位编辑者。</div>
+      <div className="server-warning">Linux 服务端启用账号登录后，未登录用户不能读写工作区；Electron 本机桌面模式不启用登录。多人同时编辑会整库覆盖，建议同一时间只保留一位编辑者。</div>
       <p className="server-config-hint">
         当前访问地址：<code>{window.location.origin}</code>
         <button type="button" className="server-inline-btn" onClick={() => void copyCurrentAddress()}>
@@ -2045,6 +2218,175 @@ function ServerConfigCard({
   );
 }
 
+function UsersCard({ currentUser }: { currentUser: AuthUser }) {
+  const [users, setUsers] = useState<AuthUser[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [form, setForm] = useState({ username: '', displayName: '', password: '', role: 'user' as 'admin' | 'user' });
+  const [passwords, setPasswords] = useState<Record<string, string>>({});
+
+  const refresh = useCallback(async () => {
+    try {
+      const result = await fetchUsers();
+      setUsers(result.users);
+      setError('');
+    } catch (cause) {
+      setError('读取用户失败：' + messageOf(cause));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const addUser = async () => {
+    if (busy) return;
+    setBusy('add');
+    setError('');
+    setNotice('');
+    try {
+      await createUser({
+        username: form.username.trim(),
+        displayName: form.displayName.trim() || undefined,
+        password: form.password,
+        role: form.role,
+      });
+      setForm({ username: '', displayName: '', password: '', role: 'user' });
+      setNotice('用户已创建');
+      await refresh();
+    } catch (cause) {
+      setError('创建用户失败：' + messageOf(cause));
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const patchUser = async (user: AuthUser, patch: { displayName?: string; password?: string; role?: 'admin' | 'user'; disabled?: boolean }, label: string) => {
+    if (busy) return false;
+    setBusy(user.id + ':' + label);
+    setError('');
+    setNotice('');
+    try {
+      await updateUser(user.id, patch);
+      setNotice('用户已更新：' + user.username);
+      await refresh();
+      return true;
+    } catch (cause) {
+      setError('更新用户失败：' + messageOf(cause));
+      return false;
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const removeUser = async (user: AuthUser) => {
+    if (busy) return;
+    if (!window.confirm('删除用户「' + user.username + '」？该用户将立即失去登录权限。')) return;
+    setBusy(user.id + ':delete');
+    setError('');
+    setNotice('');
+    try {
+      await deleteUser(user.id);
+      setNotice('用户已删除：' + user.username);
+      await refresh();
+    } catch (cause) {
+      setError('删除用户失败：' + messageOf(cause));
+    } finally {
+      setBusy('');
+    }
+  };
+
+  return (
+    <section className="section-panel">
+      <div className="panel-head">
+        <SectionHeading english="LINUX USERS" title="用户与密码" />
+        <span className="status-tag muted">{users.length} 个账号</span>
+      </div>
+      <div className="server-warning">用户管理只在 Linux 服务端的管理页面出现；Electron 客户端不提供添加用户或修改密码的入口。</div>
+      {notice ? <p className="server-config-hint success-note">{notice}</p> : null}
+      {error ? <p className="server-save-error">{error}</p> : null}
+      {loading ? <p className="server-config-hint">正在读取用户…</p> : (
+        <div className="table-scroll">
+          <table className="data-table server-user-table">
+            <thead>
+              <tr><th>用户</th><th>角色</th><th>状态</th><th>重置密码</th><th>操作</th></tr>
+            </thead>
+            <tbody>
+              {users.map((user) => (
+                <tr key={user.id}>
+                  <td><b>{user.username}</b><small>{user.displayName}{user.id === currentUser.id ? ' · 当前账号' : ''}</small></td>
+                  <td>
+                    <select
+                      value={user.role === 'admin' ? 'admin' : 'user'}
+                      disabled={Boolean(busy) || user.id === currentUser.id}
+                      onChange={(event) => void patchUser(user, { role: event.target.value === 'admin' ? 'admin' : 'user' }, 'role')}
+                    >
+                      <option value="user">普通用户</option>
+                      <option value="admin">管理员</option>
+                    </select>
+                  </td>
+                  <td>
+                    <label className="server-user-check">
+                      <input
+                        type="checkbox"
+                        checked={!user.disabled}
+                        disabled={Boolean(busy) || user.id === currentUser.id}
+                        onChange={(event) => void patchUser(user, { disabled: !event.target.checked }, 'disabled')}
+                      />
+                      启用
+                    </label>
+                  </td>
+                  <td>
+                    <div className="server-user-password">
+                      <input
+                        type="password"
+                        value={passwords[user.id] ?? ''}
+                        onChange={(event) => setPasswords((current) => ({ ...current, [user.id]: event.target.value }))}
+                        placeholder="至少 8 位"
+                        autoComplete="new-password"
+                        disabled={Boolean(busy)}
+                      />
+                      <button
+                        type="button"
+                        className="tt-btn tt-btn-quiet"
+                        disabled={Boolean(busy) || (passwords[user.id] ?? '').length < 8}
+                        onClick={() => void patchUser(user, { password: passwords[user.id] }, 'password').then((ok) => {
+                          if (ok) setPasswords((current) => ({ ...current, [user.id]: '' }));
+                        })}
+                      >
+                        重置
+                      </button>
+                    </div>
+                  </td>
+                  <td>
+                    <button type="button" className="danger-link" disabled={Boolean(busy) || user.id === currentUser.id} onClick={() => void removeUser(user)}>
+                      删除
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="server-user-add">
+        <div className="panel-head"><SectionHeading english="ADD USER" title="添加用户" /><span className="status-tag muted">仅 Linux</span></div>
+        <div className="server-config-grid">
+          <label className="server-field"><span>用户名</span><input value={form.username} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))} placeholder="字母、数字、_ . -，3–32 位" autoComplete="off" /></label>
+          <label className="server-field"><span>显示名称</span><input value={form.displayName} onChange={(event) => setForm((current) => ({ ...current, displayName: event.target.value }))} placeholder="可选" autoComplete="off" /></label>
+          <label className="server-field"><span>初始密码</span><input type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} placeholder="至少 8 位" autoComplete="new-password" /></label>
+          <label className="server-field"><span>角色</span><select value={form.role} onChange={(event) => setForm((current) => ({ ...current, role: event.target.value === 'admin' ? 'admin' : 'user' }))}><option value="user">普通用户</option><option value="admin">管理员</option></select></label>
+        </div>
+        <button type="button" className="mini-button" disabled={Boolean(busy) || !form.username.trim() || form.password.length < 8} onClick={() => void addUser()}>{busy === 'add' ? '创建中…' : '添加用户'}</button>
+      </div>
+    </section>
+  );
+}
+
 function ServerClientsCard({
   clients,
   active,
@@ -2100,7 +2442,15 @@ function ServerClientsCard({
   );
 }
 
-function ServerPage({ apiOnline }: { apiOnline: boolean | null }) {
+function ServerPage({
+  apiOnline,
+  authUser,
+  showUserManagement,
+}: {
+  apiOnline: boolean | null;
+  authUser: AuthUser | null;
+  showUserManagement: boolean;
+}) {
   const [stats, setStats] = useState<ServerStats | null>(null);
   const [jobs, setJobs] = useState<ServerJob[]>([]);
   const [logs, setLogs] = useState<ServerLog[]>([]);
@@ -2242,6 +2592,7 @@ function ServerPage({ apiOnline }: { apiOnline: boolean | null }) {
             {stats.warnings.length > 0 ? <div className="server-warning">{stats.warnings.join('；')}</div> : null}
           </section>
           {config && effective ? <ServerConfigCard stats={stats} config={config} effective={effective} onSaved={handleConfigSaved} /> : null}
+          {showUserManagement && authUser?.role === 'admin' ? <UsersCard currentUser={authUser} /> : null}
           <ServerClientsCard clients={clients} active={stats.clients.active} max={stats.clients.max} busyId={busyClientId} onDisconnect={(id) => void disconnectClient(id)} />
           <section className="section-panel">
             <div className="panel-head">
