@@ -26,6 +26,7 @@ if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload
 fi
 rm -rf "$APP_DIR"
+rm -f /usr/local/bin/warpweft
 
 if [ "$PURGE_DATA" -eq 1 ]; then
   rm -rf "$DATA_DIR"

@@ -60,6 +60,7 @@ fi
 chown root:warpweft "$ENV_FILE"
 chmod 0640 "$ENV_FILE"
 install -m 0644 "$APP_DIR/linux_server/warpweft.service" "$SERVICE_FILE"
+install -m 0755 "$APP_DIR/linux_server/warpweft" /usr/local/bin/warpweft
 
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
@@ -71,5 +72,5 @@ echo "  data:        $DATA_DIR"
 echo "  environment: $ENV_FILE"
 echo "  service:     systemctl status $SERVICE_NAME"
 echo "  create admin:"
-echo "    sudo -u warpweft env WARPVEFT_DATA_DIR=$DATA_DIR node $APP_DIR/linux_server/user-cli.cjs create-admin admin"
+echo "    sudo warpweft user add admin --admin"
 echo "Check:       bash $APP_DIR/linux_server/verify.sh"

@@ -191,6 +191,14 @@ if not exist "linux_server\user-cli.cjs" (
   echo [错误] 找不到 linux_server\user-cli.cjs，登录初始化脚本缺失。
   goto :FAIL
 )
+if not exist "linux_server\admin-cli.cjs" (
+  echo [错误] 找不到 linux_server\admin-cli.cjs，短命令脚本缺失。
+  goto :FAIL
+)
+if not exist "linux_server\warpweft" (
+  echo [错误] 找不到 linux_server\warpweft，短命令入口缺失。
+  goto :FAIL
+)
 echo [信息] 正在编译渲染进程、Java Solver 和 Linux 部署包（含登录/用户管理）…
 echo.
 call npm run dist:linux

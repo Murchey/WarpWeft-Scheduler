@@ -525,6 +525,8 @@ export interface LongJob {
   bestFile?: string | null;
   taskUuid?: string | null;
   snapshotId?: string | null;
+  /** Linux account that started the job; null for desktop/old jobs. */
+  createdBy?: string | null;
 }
 
 export interface LongJobDetail extends LongJob {

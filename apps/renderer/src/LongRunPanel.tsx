@@ -372,6 +372,20 @@ export function LongRunPanel({
     onApplyResult(job);
   };
 
+  const previousStatusRef = useRef<string | null>(null);
+  const promptedCompletionRef = useRef('');
+  useEffect(() => {
+    const status = job?.status ?? null;
+    const previous = previousStatusRef.current;
+    previousStatusRef.current = status;
+    if (!job || status !== 'completed' || previous === 'completed') return;
+    if (!job.bestEntries || job.bestEntries.length === 0) return;
+    const key = job.id + ':' + (job.bestUpdatedAt || '');
+    if (promptedCompletionRef.current === key) return;
+    promptedCompletionRef.current = key;
+    if (window.confirm('长时排课任务已完成。是否载入最佳课表？')) applyBest();
+  }, [job, applyBest]);
+
   return (
     <section className="section-panel long-run">
       <div className="panel-head">

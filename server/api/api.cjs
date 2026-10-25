@@ -5,6 +5,7 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { openDatabase } = require('./database.cjs');
 const { SessionStore, UserStore, publicUser } = require('./auth.cjs');
+const { AuditLog } = require('./audit.cjs');
 const SCHEMA = require('../../data-schema.json');
 const PKG = require('../../package.json');
 const {
@@ -492,6 +493,11 @@ function startApi({
 }) {
   const store = openDatabase(rootDir, dataDir);
   const authStore = authEnabled ? new UserStore(path.join(dataDir, 'users.json')) : null;
+  const auditLog = new AuditLog(path.join(dataDir, 'audit.log'));
+  const audit = authEnabled
+    ? (actor, action, target, detail, ip) =>
+        auditLog.append({ actor: actor || 'unknown', action, target, detail, ip })
+    : () => {};
   const authSessions = authEnabled ? new SessionStore({ ttlMs: authSessionTtlMs }) : null;
   const loginFailures = new Map();
   const resolvedConfigFile = configFile || path.join(dataDir, 'server-config.json');
@@ -976,6 +982,7 @@ function startApi({
       rounds: job.rounds || 0,
       error: job.error || null,
       clientId: job.clientId || null,
+      createdBy: job.createdBy || null,
       taskUuid: job.taskUuid || null,
       snapshotId: job.snapshotId || null,
       bestFile: job.bestFile,
@@ -1028,6 +1035,7 @@ function startApi({
       rounds: job.rounds || 0,
       error: job.error || null,
       clientId: job.clientId || null,
+      createdBy: job.createdBy || null,
       taskUuid: job.taskUuid || null,
       snapshotId: job.snapshotId || null,
       inputFile: longJobFile(job.id),
@@ -1239,6 +1247,7 @@ function startApi({
   function createLongJob(input, client, taskMeta = {}) {
     const taskUuid = typeof taskMeta.taskUuid === 'string' ? taskMeta.taskUuid.trim() : '';
     const snapshotId = typeof taskMeta.snapshotId === 'string' ? taskMeta.snapshotId.trim() : '';
+    const createdBy = typeof taskMeta.createdBy === 'string' ? taskMeta.createdBy.trim() : '';
     if (taskUuid) {
       if (!TASK_UUID_PATTERN.test(taskUuid)) {
         throw requestError('任务 UUID 格式无效（8-64 位字母、数字或 _.:-）', 400, 'INVALID_TASK_UUID');
@@ -1273,6 +1282,7 @@ function startApi({
     const job = {
       id,
       clientId: client ? client.id : null,
+      createdBy: createdBy || null,
       taskUuid: taskUuid || null,
       snapshotId: snapshotId || null,
       status: 'queued',
@@ -1516,7 +1526,7 @@ function startApi({
           return fail(res, 404, '当前服务未启用登录', 'AUTH_DISABLED');
         }
         if (authStore.needsSetup()) {
-          return fail(res, 503, '尚未创建管理员，请先在服务器上运行 user-cli.cjs create-admin', 'AUTH_NOT_INITIALIZED');
+          return fail(res, 503, '尚未创建管理员，请先在服务器上运行 sudo warpweft user add admin --admin', 'AUTH_NOT_INITIALIZED');
         }
         let body;
         try {
@@ -1529,6 +1539,7 @@ function startApi({
         const key = loginKey(client && client.ip, username);
         if (!loginAllowed(key)) {
           log('warn', '登录尝试过多：' + (client && client.ip), null);
+          audit(username || 'unknown', 'login_rate_limited', username || null, 'ip=' + ((client && client.ip) || ''), client && client.ip);
           return fail(res, 429, '登录尝试过多，请 5 分钟后再试', 'AUTH_RATE_LIMITED');
         }
         if (!username || !password) {
@@ -1539,11 +1550,13 @@ function startApi({
         if (!user) {
           recordLoginFailure(key);
           log('warn', '登录失败：' + username + '（' + (client && client.ip) + '）');
+          audit(username, 'login_failed', username, 'ip=' + ((client && client.ip) || ''), client && client.ip);
           return fail(res, 401, '用户名或密码错误', 'AUTH_FAILED');
         }
         loginFailures.delete(key);
         const session = authSessions.create(user.id);
         log('info', '用户登录：' + user.username + '（' + (client && client.ip) + '）');
+        audit(user.username, 'login', user.username, 'ip=' + ((client && client.ip) || ''), client && client.ip);
         return send(res, 200, { ...session, user: publicUser(user) });
       }
 
@@ -1560,6 +1573,7 @@ function startApi({
         if (!authEnabled || !authSession) return fail(res, 404, '当前服务未启用登录', 'AUTH_DISABLED');
         authSessions.destroy(authSession.token);
         log('info', '用户退出：' + authSession.user.username);
+        audit(authSession.user.username, 'logout', authSession.user.username, '', client && client.ip);
         return send(res, 200, { ok: true });
       }
       if (req.method === 'PUT' && url.pathname === '/api/auth/password') {
@@ -1576,6 +1590,7 @@ function startApi({
         try {
           authStore.update(authSession.user.id, { password: body?.newPassword });
           authSessions.destroyUser(authSession.user.id, authSession.token);
+          audit(authSession.user.username, 'password_change', authSession.user.username, 'self', client && client.ip);
         } catch (error) {
           return userApiFailure(res, error);
         }
@@ -1603,6 +1618,7 @@ function startApi({
               role: body?.role,
             });
             log('info', '管理员创建用户：' + user.username);
+            audit(authSession.user.username, 'user_create', user.username, 'role=' + user.role, client && client.ip);
             return send(res, 201, { user });
           }
           if (userRoute && req.method === 'PUT') {
@@ -1623,12 +1639,20 @@ function startApi({
               authSessions.destroyUser(user.id, user.id === authSession.user.id ? authSession.token : '');
             }
             log('info', '管理员更新用户：' + user.username);
+            audit(
+              authSession.user.username,
+              body?.password ? 'password_reset' : 'user_update',
+              user.username,
+              [body?.role ? 'role=' + body.role : '', body?.disabled !== undefined ? 'disabled=' + Boolean(body.disabled) : ''].filter(Boolean).join(' '),
+              client && client.ip,
+            );
             return send(res, 200, { user });
           }
           if (userRoute && req.method === 'DELETE') {
             const user = authStore.remove(decodeURIComponent(userRoute[1]));
             authSessions.destroyUser(user.id);
             log('info', '管理员删除用户：' + user.username);
+            audit(authSession.user.username, 'user_delete', user.username, '', client && client.ip);
             return send(res, 200, { deleted: true, user });
           }
         } catch (error) {
@@ -1762,7 +1786,20 @@ function startApi({
         }
         try {
           const { taskUuid, snapshotId, ...solverInput } = input;
-          const created = createLongJob(solverInput, client, { taskUuid, snapshotId });
+          const created = createLongJob(solverInput, client, {
+            taskUuid,
+            snapshotId,
+            createdBy: authSession ? authSession.user.username : null,
+          });
+          if (!created.reused) {
+            audit(
+              (authSession && authSession.user.username) || 'desktop',
+              'job_create',
+              created.job.id,
+              'lessons=' + created.job.lessons + ' limit=' + created.job.timeLimitSeconds + 's',
+              client && client.ip,
+            );
+          }
           return send(res, created.reused ? 200 : 202, {
             job: longJobSummary(created.job),
             reused: created.reused,
@@ -1806,6 +1843,13 @@ function startApi({
         }
         try {
           const job = deleteLongJob(current.id);
+          audit(
+            (authSession && authSession.user.username) || 'desktop',
+            'job_delete',
+            job.id,
+            'status=' + job.status,
+            client && client.ip,
+          );
           return send(res, 200, { deleted: true, id: job.id });
         } catch (error) {
           return fail(res, error.statusCode || 500, error.message, error.code || 'LONG_JOB_DELETE_FAILED');
@@ -1822,6 +1866,13 @@ function startApi({
         }
         try {
           const job = action === 'pause' ? pauseLongJob(id) : action === 'resume' ? resumeLongJob(id) : cancelLongJob(id);
+          audit(
+            (authSession && authSession.user.username) || 'desktop',
+            'job_' + action,
+            job.id,
+            'status=' + job.status,
+            client && client.ip,
+          );
           return send(res, 200, { job: longJobSummary(job) });
         } catch (error) {
           return fail(res, error.statusCode || 500, error.message, error.code || 'LONG_JOB_FAILED');

@@ -136,7 +136,7 @@ Linux 部署包包含 systemd 单元、安装/卸载/验证脚本和 Nginx 示�
 - **用户与密码**（仅 Linux 管理员可见）：新增用户、改角色、启用/停用、重置密码、删除；Electron 客户端不显示
 - 实时求解日志（包含 Java 求解阶段和最终状态）
 
-**Linux 服务端默认启用账号登录**：除健康检查和登录接口外，API 需要 Bearer token；管理员可在 Linux 服务端页面或 `user-cli.cjs` 添加用户、重置密码。**Electron 本机桌面版不启用登录**，连接 Linux 时只显示登录框，不显示用户管理。默认不做 TLS，公网必须经 Nginx TLS/VPN；局域网内仍建议配合「允许网段」使用。
+**Linux 服务端默认启用账号登录**：除健康检查和登录接口外，API 需要 Bearer token；管理员可在 Linux 服务端页面或 `sudo warpweft user add/passwd` 添加用户、重置密码。**Electron 本机桌面版不启用登录**，连接 Linux 时只显示登录框，不显示用户管理。默认不做 TLS，公网必须经 Nginx TLS/VPN；局域网内仍建议配合「允许网段」使用。
 
 默认只监听 `127.0.0.1`；在「服务端 → 局域网共享」把监听模式切到「局域网」并保存即可，无需环境变量或重启应用（`WARPVEFT_HOST` 仍保留给开发脚本做临时覆盖）。详细说明、限额含义、接口与排障见 [docs/lan-server.md](docs/lan-server.md)。
 ## 手动测试数据

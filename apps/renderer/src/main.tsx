@@ -27,6 +27,8 @@ import type { PreviewWeekFilter, PreviewView } from './timetablePreview';
 import { assignMissingTeachers, classIdsForTeacher, splitClassNames, subjectIdsForTeacher } from './teacherAssignment';
 import { ensureSimplifiedRooms, isSimplifiedRooms } from './fixedClassrooms';
 import { messageOf, todayLocal, uid } from './utils';
+import { clearSavedLogins, forgetSavedLogin, readSavedLogins, rememberSavedLogin } from './savedLogins';
+import type { SavedLogin } from './savedLogins';
 import { activeRules, describeRule, matchedPlans, unscheduledHints } from './rules';
 import { RUN_MODE_OPTIONS } from './runConfig';
 import type { RunProgress, ShortRunRecord } from './runConfig';
@@ -91,18 +93,20 @@ function LoginScreen({
   needsSetup: boolean;
   busy: boolean;
   error: string;
-  onLogin: (username: string, password: string) => void;
+  onLogin: (username: string, password: string, remember: boolean) => void;
   onSettings: () => void;
 }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [remember, setRemember] = useState(true);
+  const [saved, setSaved] = useState<SavedLogin[]>(() => readSavedLogins(getApiBase()));
   return (
     <div className="mode-overlay">
       <form
         className="mode-dialog auth-dialog"
         onSubmit={(event) => {
           event.preventDefault();
-          if (!busy && !needsSetup && username.trim() && password) onLogin(username.trim(), password);
+          if (!busy && !needsSetup && username.trim() && password) onLogin(username.trim(), password, remember);
         }}
       >
         <div className="mode-dialog-head"><span className="kicker">// SIGN IN</span></div>
@@ -111,12 +115,64 @@ function LoginScreen({
         {needsSetup ? (
           <div className="server-warning">
             尚未初始化管理员。请在服务器上执行：
-            <code>sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft node /opt/warpweft/linux_server/user-cli.cjs create-admin admin</code>
+            <code>sudo warpweft user add admin --admin</code>
+          </div>
+        ) : null}
+        {saved.length > 0 ? (
+          <div className="saved-logins">
+            <div className="saved-logins-head">
+              <span>本机保存的账号</span>
+              <button
+                type="button"
+                className="server-inline-btn"
+                onClick={() => {
+                  if (!window.confirm('删除本机保存的全部账号密码？')) return;
+                  setSaved(clearSavedLogins(getApiBase()));
+                  setPassword('');
+                }}
+              >
+                清空
+              </button>
+            </div>
+            {saved.map((item) => (
+              <div className="saved-login-row" key={item.username}>
+                <button
+                  type="button"
+                  className="saved-login-pick"
+                  onClick={() => {
+                    setUsername(item.username);
+                    setPassword(item.password);
+                    setRemember(true);
+                  }}
+                  title="填入这个账号"
+                >
+                  {item.username}
+                </button>
+                <button
+                  type="button"
+                  className="saved-login-delete"
+                  onClick={() => {
+                    if (!window.confirm('删除本机保存的账号 ' + item.username + ' 的密码？')) return;
+                    setSaved(forgetSavedLogin(item.username, getApiBase()));
+                    if (username === item.username) setPassword('');
+                  }}
+                  title="删除本机保存的账号密码"
+                >
+                  删除
+                </button>
+              </div>
+            ))}
+            <p className="saved-logins-hint">密码保存在本机浏览器（未加密）；共用电脑请删除或用完清空。</p>
           </div>
         ) : null}
         <label className="mode-endpoint">用户名<input autoFocus value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" disabled={busy || needsSetup} /></label>
         <label className="mode-endpoint">密码<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" disabled={busy || needsSetup} /></label>
         {error ? <p className="server-save-error">{error}</p> : null}
+        <label className="auth-remember">
+          <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} disabled={busy || needsSetup} />
+          <span>在本机记住账号密码</span>
+          <small>共用电脑请取消</small>
+        </label>
         <div className="mode-actions">
           <button type="button" className="ghost-button" onClick={onSettings}>连接设置</button>
           <button type="button" className="ghost-button" onClick={() => window.location.reload()}>重新检测</button>
@@ -676,12 +732,14 @@ function App() {
     };
   }, [runMode, modeRevision, loadWorkspace]);
 
-  const handleLogin = async (username: string, password: string) => {
+  const handleLogin = async (username: string, password: string, remember: boolean) => {
     setAuthBusy(true);
     setAuthError('');
     try {
       const session = await login(username, password);
       setAuthToken(session.token);
+      if (remember) rememberSavedLogin({ username, password }, getApiBase());
+      else forgetSavedLogin(username, getApiBase());
       setAuthUser(session.user);
       setAuthRequired(true);
       setAuthNeedsSetup(false);
@@ -697,6 +755,7 @@ function App() {
   };
 
   const handleLogout = async () => {
+    if (!window.confirm('确认退出当前服务端账号？退出后需要重新登录。')) return;
     try {
       await logout();
     } catch {
@@ -1618,7 +1677,7 @@ function App() {
             onSimulate={simulateRule}
           />
         ) : null}
-        {tab === '排课任务' ? (
+        <div hidden={tab !== '排课任务'}>
           <RunsPage
             data={data}
             result={result}
@@ -1638,7 +1697,7 @@ function App() {
             onNotice={setNotice}
             onError={setError}
           />
-        ) : null}
+        </div>
         {tab === '课表预览' ? (
           <TimetablePage
             data={data}

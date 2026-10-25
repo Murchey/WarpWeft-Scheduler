@@ -19,13 +19,12 @@
 
 1. **Linux 服务端**：安装部署包后先创建管理员（详见根目录 `guideline.md`）：
    ```bash
-   sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
-     node /opt/warpweft/linux_server/user-cli.cjs create-admin admin
+   sudo warpweft user add admin --admin
    ```
 2. 服务端电脑进入「服务端 → 局域网共享」，把 **监听模式** 从「仅本机」切到「局域网」，按需调整允许电脑数/并发数，点 **保存并应用**。
 3. 卡片会列出本机 LAN 地址，例如 `http://192.168.1.20:4317`。
 4. 其他电脑：浏览器打开该地址，或启动 WarpWeft → 运行模式选「局域网（客户端）」→ 服务地址填上面的 URL。
-5. 在登录页输入 Linux 管理员/普通用户账号；没有账号时由管理员在「服务端 → 用户与密码」或 `user-cli.cjs` 创建。
+5. 在登录页输入 Linux 管理员/普通用户账号；没有账号时由管理员在「服务端 → 用户与密码」或 `sudo warpweft user add <用户名>` 创建。
 6. 服务端「已连接电脑」表能看到每台机器的短 id、IP、最近活动、在跑/排队任务数。
 
 > Electron 本机桌面版不启用登录；只有连接 Linux 服务端时才出现登录页，而且 Electron 不显示用户管理。
@@ -104,7 +103,7 @@
 | 「已连接电脑」为空 | 客户端还没发过请求；或客户端用了旧的固定 ip 计数（无 `X-Client-Id` 时按 IP 计一台） |
 | 页面提示「服务端监控连接失败」 | 服务端进程退出或监听地址切换中；刷新页面即重连 |
 | 登录 401 | 检查账号是否启用、密码是否正确；Linux 登录失败 5 次会限流 5 分钟。 |
-| 显示尚未初始化管理员 | 在服务器运行 `user-cli.cjs create-admin`，再刷新登录页。 |
+| 显示尚未初始化管理员 | 在服务器运行 `sudo warpweft user add admin --admin`，再刷新登录页。 |
 | 管理员看不到用户管理 | 账号角色必须是 admin；Electron 客户端永远不显示用户管理。 |
 | 不能删除/降级最后管理员 | 先创建另一位启用状态的管理员。 |
 

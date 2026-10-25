@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR=/opt/warpweft
+DATA_DIR=/var/lib/warpweft
+CLI="$APP_DIR/linux_server/admin-cli.cjs"
+
+usage() {
+  cat <<'EOF'
+用法:
+  sudo warpweft user list
+  sudo warpweft user add <用户名> [--admin]
+  sudo warpweft user remove <用户名> [--yes]
+  sudo warpweft user passwd <用户名>
+  sudo warpweft user disable <用户名>
+  sudo warpweft user enable <用户名>
+  sudo warpweft task [用户名]
+  sudo warpweft log [用户名] [--tail 100]
+  sudo warpweft workspace clear [--yes]
+EOF
+}
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ] || [ "$#" -eq 0 ]; then
+  usage
+  exit 0
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "请使用 sudo 运行，例如：sudo warpweft user list" >&2
+  exit 1
+fi
+
+if [ ! -f "$APP_DIR/linux_server/admin-cli.cjs" ]; then
+  echo "找不到 $CLI，WarpWeft 可能没有安装到 $APP_DIR" >&2
+  exit 1
+fi
+
+if command -v runuser >/dev/null 2>&1; then
+  run_cli() { runuser -u warpweft -- env WARPVEFT_DATA_DIR="$DATA_DIR" node "$CLI" "$@"; }
+else
+  run_cli() { sudo -u warpweft env WARPVEFT_DATA_DIR="$DATA_DIR" node "$CLI" "$@"; }
+fi
+
+if [ "${1:-}" = "user" ] && { [ "${2:-}" = "remove" ] || [ "${2:-}" = "delete" ]; }; then
+  case " $* " in
+    *" --yes "*) ;;
+    *)
+      read -r -p "确认删除用户 ${3:-}？该用户的账号会立即失效 [y/N]: " answer
+      case "$answer" in
+        y|Y|yes|YES) ;;
+        *) echo "已取消"; exit 1 ;;
+      esac
+      ;;
+  esac
+fi
+
+if [ "${1:-}" = "workspace" ] && { [ "${2:-}" = "clear" ] || [ "${2:-}" = "reset" ]; }; then
+  case " $* " in
+    *" --yes "*) ;;
+    *)
+      read -r -p "输入 CLEAR 确认清空工作区和所有长时任务（用户和密码保留）: " answer
+      [ "$answer" = "CLEAR" ] || { echo "已取消"; exit 1; }
+      ;;
+  esac
+
+  was_active=0
+  if systemctl is-active --quiet warpweft 2>/dev/null; then
+    was_active=1
+    systemctl stop warpweft
+  fi
+  trap 'if [ "$was_active" -eq 1 ]; then systemctl start warpweft; fi' EXIT
+
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  backup="/var/backups/warpweft-workspace-$stamp.tar.gz"
+  mkdir -p /var/backups
+  files=()
+  [ -f "$DATA_DIR/warpweft.json" ] && files+=("warpweft.json")
+  [ -d "$DATA_DIR/solve-jobs" ] && files+=("solve-jobs")
+  if [ "${#files[@]}" -gt 0 ]; then
+    tar -czf "$backup" -C "$DATA_DIR" "${files[@]}"
+    chmod 600 "$backup"
+    echo "已备份到 $backup"
+  fi
+  run_cli "$@"
+  if [ "$was_active" -eq 1 ]; then
+    systemctl start warpweft
+  fi
+  trap - EXIT
+  echo "工作区已清空。$([ "$was_active" -eq 1 ] && echo '服务已重新启动。' || echo '服务原本未运行。')"
+  exit 0
+fi
+
+exec run_cli "$@"

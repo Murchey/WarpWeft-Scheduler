@@ -623,6 +623,17 @@ html[data-theme='dark'] .server-inline-btn:hover:not(:disabled){color:#bfdbfe}
 .auth-dialog{width:min(520px,100%)}
 .auth-dialog .server-warning{margin:14px 0}
 .auth-dialog .server-warning code{display:block;margin-top:6px;font-size:10px;line-height:1.5;white-space:normal;word-break:break-all}
+.saved-logins{margin:16px 0 0;border:1px solid var(--rule);border-radius:8px;background:var(--paper);padding:10px 12px}
+.saved-logins-head{display:flex;align-items:center;justify-content:space-between;gap:12px;font:10px var(--font-ui);letter-spacing:.1em;color:var(--muted);text-transform:uppercase}
+.saved-login-row{display:flex;align-items:center;gap:8px;margin-top:7px}
+.saved-login-pick{flex:1;min-width:0;border:0;background:transparent;color:var(--ink);text-align:left;padding:5px 0;font:13px var(--font-text);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.saved-login-pick:hover{color:#2563eb;text-decoration:underline;text-underline-offset:2px}
+.saved-login-delete{border:1px solid var(--rule);border-radius:5px;background:var(--panel);color:var(--muted);padding:3px 8px;font:10px var(--font-ui);cursor:pointer}
+.saved-login-delete:hover{border-color:var(--danger);color:var(--danger)}
+.saved-logins-hint{margin:9px 0 2px;color:var(--muted);font:10px var(--font-text);line-height:1.5}
+.auth-remember{display:flex;align-items:center;gap:7px;margin-top:14px;color:var(--muted);font:11px var(--font-text);cursor:pointer}
+.auth-remember input{width:14px;height:14px;accent-color:#2563eb}
+.auth-remember small{font:10px var(--font-ui);color:var(--muted)}
 .auth-user{padding:8px 10px;border:1px solid var(--rule);border-radius:8px;font-size:11px}
 .server-user-table td small{display:block;margin-top:3px;color:var(--muted);font-size:10px}
 .server-user-table select{height:30px;border:1px solid var(--rule);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 6px;font-size:11px}

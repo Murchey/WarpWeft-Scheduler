@@ -23,6 +23,7 @@ linux_server/server.cjs（Node，HTTP API + 静态文件）
         ├── /var/lib/warpweft/warpweft.json     工作区数据
         ├── /var/lib/warpweft/server-config.json 服务端限额
         ├── /var/lib/warpweft/users.json         Linux 用户与密码哈希
+        ├── /var/lib/warpweft/audit.log          用户/任务操作审计
         ├── /var/lib/warpweft/solve-jobs/        长时任务与检查点
         └── resources/solver/warpweft-solver.jar（Java 21）
                     │ stdin/stdout JSON
@@ -39,7 +40,7 @@ linux_server/server.cjs（Node，HTTP API + 静态文件）
 
 **Linux 服务端默认启用账号登录。** 除 `/api/health` 和登录接口外，所有 API 都需要登录后获得的 Bearer token；用户管理只允许管理员操作。
 
-- **Linux 端**：有用户、密码、角色；管理员可以在 Linux 服务端的“用户与密码”页添加用户/重置密码，也可以用 `user-cli.cjs`。
+- **Linux 端**：有用户、密码、角色；管理员可以在 Linux 服务端的“用户与密码”页添加用户/重置密码，也可以用 `sudo warpweft user ...`。
 - **Electron 端**：本机桌面 API 不启用登录，也不创建用户文件；Electron 连接 Linux 服务端时只出现登录界面，不显示用户管理。
 - `X-Client-Id` 仍只用于连接计数/配额，**不是身份认证**；真正的身份是登录 token。
 - 默认只监听 `127.0.0.1`，适合“Nginx 同机反代”或 SSH 隧道管理。直连局域网必须用防火墙限制来源网段，并只在可信校园网/VLAN 使用。
@@ -138,7 +139,9 @@ sha256sum -c warpweft-linux-server-<版本>.tar.gz.sha256
 ```text
 warpweft/
   linux_server/server.cjs
+  linux_server/admin-cli.cjs
   linux_server/user-cli.cjs
+  linux_server/warpweft
   linux_server/install.sh
   linux_server/uninstall.sh
   linux_server/healthcheck.sh
@@ -146,7 +149,7 @@ warpweft/
   linux_server/warpweft.service
   linux_server/warpweft.env.example
   linux_server/nginx.conf.example
-  server/api/*.cjs
+  server/api/*.cjs      # 含 auth.cjs、audit.cjs
   dist/                 # 浏览器 UI
   resources/solver/warpweft-solver.jar
   data-schema.json
@@ -172,6 +175,7 @@ sudo bash linux_server/install.sh
 - 创建数据目录 `/var/lib/warpweft`；
 - 创建环境文件 `/etc/warpweft/warpweft.env`（已存在则保留）；
 - 安装并启用 `warpweft.service`；
+- 安装短命令 `/usr/local/bin/warpweft`（见第 12 章）；
 - 以 root 只读方式保护 `/opt/warpweft`，只允许服务写数据目录。
 
 默认监听 `127.0.0.1:4317`。安装后检查：
@@ -251,36 +255,26 @@ WARPVEFT_TRUST_PROXY=1
 安装后先创建第一位管理员（密码至少 8 位）：
 
 ```bash
-sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
-  node /opt/warpweft/linux_server/user-cli.cjs create-admin admin
+sudo warpweft user add admin --admin
 ```
 
-命令会提示输入两次密码。也可以先创建普通用户：
+命令会提示输入两次密码。创建普通用户：
 
 ```bash
-sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
-  node /opt/warpweft/linux_server/user-cli.cjs add-user teacher1
+sudo warpweft user add teacher1
 ```
 
 常用用户命令：
 
 ```bash
-# 查看用户（不显示密码哈希）
-sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
-  node /opt/warpweft/linux_server/user-cli.cjs list
-
-# 重置密码
-sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
-  node /opt/warpweft/linux_server/user-cli.cjs reset-password teacher1
-
-# 禁用/启用/删除
-sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
-  node /opt/warpweft/linux_server/user-cli.cjs disable teacher1
-sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
-  node /opt/warpweft/linux_server/user-cli.cjs enable teacher1
-sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
-  node /opt/warpweft/linux_server/user-cli.cjs remove teacher1
+sudo warpweft user list
+sudo warpweft user passwd teacher1
+sudo warpweft user disable teacher1
+sudo warpweft user enable teacher1
+sudo warpweft user remove teacher1
 ```
+
+`warpweft` 是安装脚本放到 `/usr/local/bin/warpweft` 的短命令入口，内部仍以 `warpweft` 服务用户执行；旧版部署没有这个命令时，可先升级安装包。完整命令说明见第 12 章。
 
 - 用户文件：`/var/lib/warpweft/users.json`，密码用 `scrypt` 哈希保存，文件权限 0600。
 - 角色：`admin` 可管理用户；`user` 可使用排课功能但不能管理账号。
@@ -295,6 +289,8 @@ sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
 3. 登录后 Linux 管理员进入“服务端 → 用户与密码”，可以新增用户、改角色、启用/停用、重置密码、删除用户。
 4. 普通用户登录后只看到排课界面，不显示“用户与密码”。
 5. Electron 客户端连接 Linux 时只显示登录框；即使账号是管理员，Electron 也不显示“用户与密码”，用户和密码只能在 Linux 服务端管理。
+6. 点“退出 用户名”时会先弹出确认框，确认后才退出，避免误点。
+7. 登录页可在本机记住多组账号密码，并逐个删除；共用电脑的注意事项见 12.8。
 
 **验证登录**：
 
@@ -421,8 +417,7 @@ curl -fsS http://127.0.0.1:4317/api/health
 创建第一位管理员（密码至少 8 位，按提示输入两次）：
 
 ```bash
-sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
-  node /opt/warpweft/linux_server/user-cli.cjs create-admin admin
+sudo warpweft user add admin --admin
 ```
 
 此时公网还不能访问，这是正常的；下一步配置域名和 Nginx。
@@ -593,8 +588,7 @@ http://<公网IP>/
 6. 如果创建了临时测试账号，测试完删除：
 
 ```bash
-sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
-  node /opt/warpweft/linux_server/user-cli.cjs remove test-user
+sudo warpweft user remove test-user --yes
 ```
 
 7. 测试结束立即收回端口：
@@ -846,13 +840,13 @@ curl -fsS http://127.0.0.1:4317/api/health
 bash /opt/warpweft/linux_server/verify.sh
 ```
 
-账号（Linux 专用；详见 6.4）：
+账号与任务（Linux 专用；详见 6.4 和第 12 章）：
 
 ```bash
-sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
-  node /opt/warpweft/linux_server/user-cli.cjs list
-sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft \
-  node /opt/warpweft/linux_server/user-cli.cjs reset-password teacher1
+sudo warpweft user list
+sudo warpweft user passwd teacher1
+sudo warpweft task teacher1
+sudo warpweft log teacher1
 ```
 
 网络与 Nginx：
@@ -914,6 +908,7 @@ sudo systemctl start warpweft
 - `/var/lib/warpweft/warpweft.json`
 - `/var/lib/warpweft/server-config.json`
 - `/var/lib/warpweft/users.json`
+- `/var/lib/warpweft/audit.log`
 - `/var/lib/warpweft/solve-jobs/`
 
 ### 8.4 升级
@@ -946,7 +941,7 @@ sudo bash /opt/warpweft/linux_server/uninstall.sh
 
 1. 停止并禁用 `warpweft.service`；
 2. 删除 `/etc/systemd/system/warpweft.service` 并执行 `daemon-reload`；
-3. 删除 `/opt/warpweft`；
+3. 删除 `/opt/warpweft` 和 `/usr/local/bin/warpweft`；
 4. **保留** `/var/lib/warpweft`（课表、用户、长时任务）；
 5. **保留** `/etc/warpweft/warpweft.env`（端口、数据目录等配置）。
 
@@ -1006,8 +1001,9 @@ sudo systemctl disable warpweft 2>/dev/null || true
 sudo rm -f /etc/systemd/system/warpweft.service
 sudo systemctl daemon-reload
 
-# 2. 删除程序和 systemd 单元
+# 2. 删除程序、短命令和 systemd 单元
 sudo rm -rf /opt/warpweft
+sudo rm -f /usr/local/bin/warpweft
 
 # 3. 仅在确认不再需要数据时执行
 sudo rm -rf /var/lib/warpweft /etc/warpweft
@@ -1109,6 +1105,7 @@ sudo nginx -T 2>/dev/null | grep -i warpweft || true
 | --- | --- | --- | --- |
 | systemd 单元 | 删除 | 删除 | `uninstall.sh` |
 | `/opt/warpweft` | 删除 | 删除 | 程序 |
+| `/usr/local/bin/warpweft` | 删除 | 删除 | 短命令入口 |
 | `/var/lib/warpweft` | **保留** | 删除 | 课表、用户、长时任务 |
 | `/etc/warpweft` | **保留** | 删除 | 环境文件 |
 | `warpweft` 用户 | **保留** | 删除 | 系统用户 |
@@ -1145,11 +1142,12 @@ sudo nginx -T 2>/dev/null | grep -i warpweft || true
 | 切换局域网后重启又变回仅本机 | 环境文件里设置了 `WARPVEFT_HOST=127.0.0.1`，删除/注释它，让 `server-config.json` 生效。 |
 | systemd 报只读文件系统 | 自定义 `WARPVEFT_DATA_DIR` 后同步修改 unit 的 `ReadWritePaths`，或使用默认 `/var/lib/warpweft`。 |
 | 浏览器仍请求 `127.0.0.1` | 设置页“服务地址”残留旧值；清空/改为当前访问地址后保存；确认 UI 包是新构建。 |
-| 登录页一直显示“尚未初始化管理员” | 运行 `user-cli.cjs create-admin`；确认 `WARPVEFT_DATA_DIR` 与 service 一致；刷新/重新检测。 |
+| 登录页一直显示“尚未初始化管理员” | 运行 `sudo warpweft user add admin --admin`；确认 `WARPVEFT_DATA_DIR` 与 service 一致；刷新/重新检测。 |
 | 用户名密码正确但 401 | 确认账号未禁用；确认登录的是当前 Linux 服务地址；看 `journalctl -u warpweft` 的“登录失败”日志。 |
 | 登录尝试过多 429 | 同一 IP/用户 5 次失败后限流 5 分钟；等待或从服务端排查账号。 |
 | 管理员看不到“用户与密码” | 确认账号 role=admin；确认页面来自 Linux 服务端而不是 Electron；Electron 客户端永远不显示用户管理。 |
-| user-cli 提示 Permission denied | 用 service 用户执行：`sudo -u warpweft env WARPVEFT_DATA_DIR=/var/lib/warpweft node ...`；不要用 root 直接写 `users.json`。 |
+| `warpweft` 命令提示 Permission denied | 使用 `sudo warpweft ...`；短命令会切到服务用户执行，不要直接改 `users.json`。 |
+| 旧版没有 `warpweft` 命令 | 升级 Linux 包并重新运行 `install.sh`；兼容旧命令仍可用 `user-cli.cjs`。 |
 | 新建用户后登录不了 | 检查用户名/密码、角色、disabled；服务端会检测文件变化，仍不行则刷新登录页或重启服务。 |
 | 删除/降级管理员被拒绝 | 至少保留一位启用状态的管理员；先创建另一位管理员。 |
 | 服务重启后所有人都要重新登录 | 这是设计：会话保存在内存，12 小时过期且重启清空；账号仍在 `users.json`。 |
@@ -1188,6 +1186,7 @@ curl -fsS http://127.0.0.1:4317/api/data \
 
 # 7. 长时任务
 # 启动长时任务，暂停、继续、刷新页面后按任务 UUID 找回
+# 任务完成时应弹窗询问“是否载入最佳课表”；选“是”后应保存为当前候选课表
 
 # 8. 重启恢复与重新登录
 sudo systemctl restart warpweft
@@ -1218,7 +1217,7 @@ curl -m 5 http://<公网IP>:4317/           # 应超时/拒绝，不能打开
 ## 11. 已知限制
 
 - 单工作区整库保存，没有多用户合并；多人同时编辑会互相覆盖。
-- Linux 端有账号/密码和 admin/user 两种角色；没有更细粒度的权限、登录审计或 SSO。Electron 本机桌面模式不启用登录。
+- Linux 端有账号/密码和 admin/user 两种角色；没有更细粒度的权限或 SSO。审计日志是本地 JSONL，没有远程日志/告警。Electron 本机桌面模式不启用登录。
 - 登录会话在内存中，服务端重启后需要重新登录；账号数据在 users.json。
 - 同一时间只允许一个长时任务；短时任务按队列串行/并发配置执行。
 - JSON 存储适合小规模；大规模并发/多租户时应迁移数据库。
@@ -1227,3 +1226,179 @@ curl -m 5 http://<公网IP>:4317/           # 应超时/拒绝，不能打开
 - 云硬盘快照/镜像不是应用一致备份，不能替代停服务后的 `tar` 备份；备份保留策略和加密由运维负责。
 - 公网域名备案、证书续期、安全组和 DNS 属于服务器外部资源，应用卸载脚本不会自动清理，需按 8.5.3 手工处理。
 - Docker 镜像不在当前版本范围内。
+
+## 12. Linux 用户、工作区与任务命令
+
+安装新版 Linux 包后，安装脚本会把短命令放到：
+
+```text
+/usr/local/bin/warpweft
+```
+
+统一使用：
+
+```bash
+sudo warpweft <命令>
+```
+
+它内部仍以服务用户 `warpweft` 执行，不需要再写 `sudo -u warpweft env WARPVEFT_DATA_DIR=... node ...`。旧版升级后如果提示命令不存在，重新执行一次 `install.sh`。
+
+### 12.1 命令总表
+
+| 操作 | 短命令 |
+| --- | --- |
+| 查看用户 | `sudo warpweft user list` |
+| 添加普通用户 | `sudo warpweft user add teacher1` |
+| 添加管理员 | `sudo warpweft user add admin2 --admin` |
+| 删除用户 | `sudo warpweft user remove teacher1` |
+| 重置密码 | `sudo warpweft user passwd teacher1` |
+| 禁用/启用用户 | `sudo warpweft user disable teacher1` / `sudo warpweft user enable teacher1` |
+| 清空工作区数据 | `sudo warpweft workspace clear` |
+| 查看用户操作日志 | `sudo warpweft log teacher1` |
+| 查看用户创建的长时任务 | `sudo warpweft task teacher1` |
+
+### 12.2 添加用户
+
+```bash
+# 普通用户
+sudo warpweft user add teacher1
+
+# 管理员
+sudo warpweft user add admin2 --admin
+```
+
+- 密码至少 8 位，输入两次，不回显。
+- 用户名不能重复。
+- 创建后不需要重启服务，服务端会检测 `users.json` 变化。
+- UI 管理员也可以在“服务端 → 用户与密码”里添加。
+- 自动化场景可设置 `WARPVEFT_USER_PASSWORD`，但不要把密码写进 shell 历史或仓库。
+
+### 12.3 删除用户
+
+```bash
+sudo warpweft user remove teacher1
+```
+
+会先询问 `[y/N]`；非交互脚本可加 `--yes`：
+
+```bash
+sudo warpweft user remove teacher1 --yes
+```
+
+限制：
+
+- 最后一位启用状态的管理员不能删除、禁用或降级。
+- 删除用户不会自动删除该用户创建的长时任务；任务里的 `createdBy` 仍保留用户名，便于追溯。
+- 已登录会话会在服务端检测到用户被删除后失效。
+
+### 12.4 重置用户密码
+
+```bash
+sudo warpweft user passwd teacher1
+```
+
+输入两次新密码。用户创建的工作区数据不受影响。
+
+命令行走的是本地文件，不会立即清除服务进程内存中的旧 token；需要立刻让该用户下线时，执行 `sudo systemctl restart warpweft`（所有用户都需要重新登录）。通过管理员 UI 重置密码时，服务端会注销该用户的会话。
+
+### 12.5 清空工作区数据文件
+
+```bash
+sudo warpweft workspace clear
+```
+
+需要输入 `CLEAR` 确认；非交互脚本加 `--yes`：
+
+```bash
+sudo warpweft workspace clear --yes
+```
+
+执行内容：
+
+- 停止 `warpweft.service`（如果正在运行）；
+- 把当前工作区和长时任务备份到 `/var/backups/warpweft-workspace-<时间>.tar.gz`；
+- 删除 `/var/lib/warpweft/warpweft.json`；
+- 删除 `/var/lib/warpweft/solve-jobs/` 下的任务和检查点，并重建空目录；
+- 重新启动服务（原本在运行的话）。
+
+**不会删除**：
+
+- `/var/lib/warpweft/users.json`（用户和密码哈希）
+- `/var/lib/warpweft/server-config.json`（服务端限额）
+- `/var/lib/warpweft/audit.log`（操作日志）
+- `/etc/warpweft/warpweft.env`
+
+清空后所有用户仍可登录，但工作区是空的；需要重新导入或重新建立课表数据。
+
+### 12.6 查看用户操作日志
+
+```bash
+sudo warpweft log
+sudo warpweft log teacher1
+sudo warpweft log teacher1 --tail 200
+```
+
+日志文件：
+
+```text
+/var/lib/warpweft/audit.log
+```
+
+文件权限为 `0600`，只允许服务用户读取；备份时按敏感数据保护。
+
+格式为 JSON Lines，每行一条；命令输出为表格：
+
+```text
+时间    操作人    动作    对象    详情    IP
+```
+
+记录范围：
+
+- 登录成功、登录失败、登录限流、退出；
+- 修改密码、重置密码；
+- 管理员创建/修改/删除用户；
+- 创建、暂停、继续、取消、删除长时任务；
+- 命令行清空工作区。
+
+`sudo warpweft log teacher1` 会同时匹配“操作人是 teacher1”和“操作对象是 teacher1”的记录。默认显示最近 100 条，用 `--tail` 调整。审计日志超过 5 MiB 时会轮转为 `audit.log.1`。
+
+### 12.7 查看用户创建的长时任务
+
+```bash
+sudo warpweft task
+sudo warpweft task teacher1
+```
+
+输出列：
+
+```text
+ID    用户    状态    创建时间    已排/总课时
+```
+
+- 任务运行完成时，网页/Electron 会弹窗询问是否载入最佳课表；选“是”会写入当前候选课表并保存。
+- 只列出已经写入 `/var/lib/warpweft/solve-jobs/` 的长时任务；短时排课不落盘，无法在这里查。
+- 新版创建的任务记录 `createdBy`；旧任务没有这个字段，显示“（未记录）”。
+- 删除用户不会删除其任务，仍可按用户名查历史任务。
+- 如果任务文件被手工删除，这里也不会再显示。
+
+### 12.8 登录页本机保存的账号
+
+Linux 登录页支持在本机保存多组账号密码：
+
+- 登录页默认勾选“在本机记住账号密码”，成功后保存；共用电脑请取消；
+- 下次打开登录页会显示“本机保存的账号”，点击用户名自动填入；
+- 每个账号右侧“删除”可单独删除，“清空”删除全部；
+- 共用电脑请取消勾选，或在用完后删除账号。
+
+密码以明文 JSON 保存在当前浏览器的 localStorage 中。普通浏览器没有操作系统级凭据保险箱，因此这不是“服务器保存密码”，也无法防止同机其他用户或恶意脚本读取；不要在公共电脑上保存管理员密码。若不能接受这一点，请取消“在本机记住账号密码”，改用浏览器自带的密码管理器或每次手输。
+
+### 12.9 兼容旧命令
+
+短命令是推荐入口；底层脚本仍在：
+
+```bash
+/opt/warpweft/linux_server/user-cli.cjs
+/opt/warpweft/linux_server/admin-cli.cjs
+```
+
+已有脚本如果仍使用 `sudo -u warpweft env ... node .../user-cli.cjs`，可以继续运行；新脚本建议改用 `sudo warpweft`。

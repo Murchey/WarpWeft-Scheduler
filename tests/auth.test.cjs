@@ -105,6 +105,12 @@ test('Linux auth requires login and exposes user management to admins', async ()
     assert.equal(created.response.status, 201);
     assert.equal(created.body.user.role, 'user');
 
+    const auditFile = path.join(ctx.dataDir, 'audit.log');
+    const auditText = fs.readFileSync(auditFile, 'utf8');
+    assert.match(auditText, /"action":"login"/);
+    assert.match(auditText, /"action":"user_create"/);
+    assert.match(auditText, /"target":"teacher"/);
+
     const teacherLogin = await login(ctx, 'teacher', 'teacher-pass-123', 'teacher-client');
     assert.equal(teacherLogin.response.status, 200);
     const teacherToken = teacherLogin.body.token;
