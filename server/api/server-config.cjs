@@ -54,6 +54,12 @@ function normalizeIp(ip) {
   return trimmed;
 }
 
+function isLoopbackIp(ip) {
+  const text = normalizeIp(ip);
+  if (!text) return false;
+  return text === '127.0.0.1' || text.startsWith('127.') || text === '::1';
+}
+
 function ipv4ToInt(ip) {
   const parts = String(ip).split('.');
   if (parts.length !== 4) return null;
@@ -64,6 +70,19 @@ function ipv4ToInt(ip) {
     value = (value * 256) + octet;
   }
   return value;
+}
+
+/** Nginx on the same host may forward the real client IP; never trust a LAN peer. */
+function forwardedClientIp(headers = {}, remoteIp) {
+  const raw = normalizeIp(remoteIp);
+  if (!isLoopbackIp(raw)) return raw;
+  const forwarded = headers['x-forwarded-for'];
+  const first = Array.isArray(forwarded) ? forwarded[0] : String(forwarded ?? '').split(',')[0];
+  const candidate = normalizeIp(String(first).trim());
+  if (candidate && ipv4ToInt(candidate) !== null) return candidate;
+  const real = normalizeIp(String(headers['x-real-ip'] ?? '').trim());
+  if (real && ipv4ToInt(real) !== null) return real;
+  return raw;
 }
 
 /** Returns null when valid, otherwise a human readable reason. */
@@ -185,6 +204,8 @@ module.exports = {
   MEMORY_PER_JOB,
   memoryLimitFor,
   normalizeIp,
+  isLoopbackIp,
+  forwardedClientIp,
   validateCidr,
   cidrMatches,
   ipAllowed,

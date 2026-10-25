@@ -5,6 +5,8 @@ const {
   DEFAULTS,
   memoryLimitFor,
   normalizeIp,
+  isLoopbackIp,
+  forwardedClientIp,
   validateCidr,
   cidrMatches,
   ipAllowed,
@@ -24,6 +26,18 @@ test('normalizes IPv4-mapped and loopback addresses', () => {
   assert.equal(normalizeIp('::1'), '127.0.0.1');
   assert.equal(normalizeIp(' 10.0.0.5 '), '10.0.0.5');
   assert.equal(normalizeIp(undefined), '');
+});
+
+test('only trusts forwarded addresses when the direct peer is local', () => {
+  assert.equal(isLoopbackIp('127.0.0.1'), true);
+  assert.equal(isLoopbackIp('127.8.9.10'), true);
+  assert.equal(isLoopbackIp('::1'), true);
+  assert.equal(isLoopbackIp('192.168.1.8'), false);
+  assert.equal(forwardedClientIp({ 'x-forwarded-for': '203.0.113.9, 127.0.0.1' }, '127.0.0.1'), '203.0.113.9');
+  assert.equal(forwardedClientIp({ 'x-real-ip': '198.51.100.4' }, '::1'), '198.51.100.4');
+  assert.equal(forwardedClientIp({ 'x-forwarded-for': '203.0.113.9' }, '192.168.1.8'), '192.168.1.8');
+  assert.equal(forwardedClientIp({ 'x-forwarded-for': 'not-an-ip' }, '127.0.0.1'), '127.0.0.1');
+  assert.equal(forwardedClientIp({ 'x-forwarded-for': '2001:db8::1' }, '127.0.0.1'), '127.0.0.1');
 });
 
 test('validates CIDR entries and only supports IPv4 ranges', () => {

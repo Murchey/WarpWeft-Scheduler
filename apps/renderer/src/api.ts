@@ -1,7 +1,8 @@
 import type { SchoolData, SolverInput, SolverOutput } from './types';
 import { withFixedClassRooms } from './fixedClassrooms';
+import { normalizeApiEndpoint, resolveDefaultApiBase } from './apiBase';
 
-export const DEFAULT_API_BASE = 'http://127.0.0.1:4317';
+export const DEFAULT_API_BASE = resolveDefaultApiBase(Boolean(import.meta.env.DEV), window.location.origin);
 
 const CLIENT_ID_KEY = 'warpweft-client-id';
 const CLIENT_ID_PATTERN = /^[A-Za-z0-9_.:-]{3,64}$/;
@@ -10,7 +11,7 @@ let fallbackClientId: string | null = null;
 
 export function getApiBase(): string {
   const saved = window.localStorage.getItem('warpweft-runtime-endpoint');
-  return (saved || DEFAULT_API_BASE).replace(/\/+$/, '');
+  return normalizeApiEndpoint(saved, DEFAULT_API_BASE);
 }
 
 function createClientId(): string {

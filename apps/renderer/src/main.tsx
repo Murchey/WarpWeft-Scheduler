@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { HeroUIProvider, Button, Card, CardBody, Chip, Progress, Select, SelectItem, Tabs, Tab } from '@heroui/react';
 import { validateInput } from '../../../packages/validation/src';
 import { exportCsv, exportWorkbook, readWorkbook } from '../../../packages/import-export/src';
-import { ApiError, cancelServerJob, deleteServerClient, fetchHealth, fetchServerOverview, loadData, saveData, solveSchedule, updateServerConfig } from './api';
+import { ApiError, cancelServerJob, deleteServerClient, fetchHealth, fetchServerOverview, getApiBase, loadData, saveData, solveSchedule, updateServerConfig } from './api';
 import { DAYS, SectionHeading } from './components';
 import { PreparePage } from './PreparePage';
 import type { PrepareSection } from './PreparePage';
@@ -73,10 +73,9 @@ type View = PreviewView;
 
 function RuntimeModeDialog({ current, onSave, onClose }: { current: RunMode | null; onSave: (mode: RunMode, endpoint: string) => void; onClose?: () => void }) {
   const [mode, setMode] = useState<RunMode>(current ?? 'single');
-  const selected = RUN_MODE_OPTIONS.find((item) => item.value === mode)!;
-  const [endpoint, setEndpoint] = useState(() => window.localStorage.getItem('warpweft-runtime-endpoint') || selected.endpoint);
+  const [endpoint, setEndpoint] = useState(() => window.localStorage.getItem('warpweft-runtime-endpoint') || (mode === 'cloud' ? 'https://' : getApiBase()));
   const endpointValid = (() => { try { const url = new URL(endpoint); return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.host); } catch { return false; } })();
-  useEffect(() => { setEndpoint(window.localStorage.getItem('warpweft-runtime-endpoint') || selected.endpoint); }, [mode]);
+  useEffect(() => { setEndpoint(window.localStorage.getItem('warpweft-runtime-endpoint') || (mode === 'cloud' ? 'https://' : getApiBase())); }, [mode]);
   return <div className="mode-overlay" role="dialog" aria-modal="true"><div className="mode-dialog"><div className="mode-dialog-head"><span className="kicker">// RUNTIME MODE</span>{onClose ? <button className="banner-close" onClick={onClose} aria-label="关闭设置">×</button> : null}</div><h2>{current ? '运行模式设置' : '选择运行模式'}</h2><p className="mode-lead">先选择数据和排课服务的运行位置，之后可以在设置中修改。</p><div className="mode-options">{RUN_MODE_OPTIONS.map((item) => <button key={item.value} className={'mode-option' + (mode === item.value ? ' selected' : '')} onClick={() => setMode(item.value)}><span className="mode-option-index">0{RUN_MODE_OPTIONS.indexOf(item) + 1}</span><span><b>{item.title}</b><small>{item.description}</small></span></button>)}</div><label className="mode-endpoint">服务地址<input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="http://192.168.1.20:4317" /><small>{mode === 'single' || mode === 'lan-server' ? '本机模式使用默认地址即可。' : '请输入可访问的服务端 API 地址。'}{endpoint && !endpointValid ? ' 地址格式无效。' : ''}</small></label><div className="mode-actions"><button className="ghost-button" onClick={onClose} disabled={!current}>取消</button><button className="action-button" disabled={!endpointValid} onClick={() => onSave(mode, endpoint)}>{current ? '保存设置' : '进入工作台'} <span>↗</span></button></div></div></div>;
 }
 
@@ -385,7 +384,7 @@ function Banner({
 
 
 function EmptyDataScreen({ message, onRetry, onSettings }: { message: string; onRetry: () => void; onSettings: () => void }) {
-  return <div className="empty-data-screen"><div className="empty-data-mark">W</div><span className="kicker">// WORKSPACE NOT LOADED</span><h1>还没有加载工作区</h1><p>{message || '请启动本地服务，或检查运行模式中的服务地址。'}</p><div className="hero-actions"><button className="action-button" onClick={onRetry}>重新连接 <span>↗</span></button><button className="ghost-button" onClick={onSettings}>打开设置</button></div></div>;
+  return <div className="empty-data-screen"><div className="empty-data-mark">W</div><span className="kicker">// WORKSPACE NOT LOADED</span><h1>还没有加载工作区</h1><p>{message || '请启动服务端，或检查运行模式中的服务地址。'}</p><div className="hero-actions"><button className="action-button" onClick={onRetry}>重新连接 <span>↗</span></button><button className="ghost-button" onClick={onSettings}>打开设置</button></div></div>;
 }
 
 function App() {
@@ -563,7 +562,7 @@ function App() {
       .catch(() => {
         if (cancelled) return;
         setApiOnline(false);
-        setLoadError('本地服务未连接，当前没有加载任何测试数据。');
+        setLoadError('服务端未连接，当前没有加载任何测试数据。');
       });
     return () => {
       cancelled = true;
@@ -573,7 +572,7 @@ function App() {
   const saveRunMode = (nextMode: RunMode, endpoint: string) => {
     const normalized = endpoint.trim().replace(/\/+$/, '');
     window.localStorage.setItem('warpweft-runtime-mode', nextMode);
-    window.localStorage.setItem('warpweft-runtime-endpoint', normalized || RUN_MODE_OPTIONS.find((item) => item.value === nextMode)!.endpoint);
+    window.localStorage.setItem('warpweft-runtime-endpoint', normalized || (nextMode === 'cloud' ? 'https://' : getApiBase()));
     setRunMode(nextMode);
     setModeSettingsOpen(false);
     setApiOnline(null);
@@ -1388,7 +1387,7 @@ function App() {
           <div className="top-actions">
             <span className={apiOnline === false ? 'node-status offline' : 'node-status'}>
               <i />
-              {apiOnline === null ? '连接本地服务…' : apiOnline ? '本地服务在线' : '本地服务未连接'}
+              {apiOnline === null ? '连接服务端…' : apiOnline ? '服务端在线' : '服务端未连接'}
             </span>
             {running ? <span className="run-phase-pill">{progress.message}</span> : null}
             {saveLabel ? <span className={'save-state ' + saveState}>{saveLabel}</span> : null}
@@ -1406,7 +1405,7 @@ function App() {
           </div>
         </header>
         {apiOnline === false ? (
-          <Banner tone="warning" title="本地服务未连接">
+          <Banner tone="warning" title="服务端未连接">
             当前服务未连接，修改不会保存。请通过桌面端启动，或先运行 <code>npm run dev:api</code> 再打开界面。
           </Banner>
         ) : null}
@@ -1883,6 +1882,7 @@ function ServerConfigCard({
   const [warnings, setWarnings] = useState<string[]>([]);
   const [saveError, setSaveError] = useState('');
   const [savedAt, setSavedAt] = useState(0);
+  const [copiedCurrent, setCopiedCurrent] = useState(false);
 
   useEffect(() => {
     if (saving || dirty) return;
@@ -1924,6 +1924,16 @@ function ServerConfigCard({
     }
   };
 
+  const copyCurrentAddress = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.origin);
+      setCopiedCurrent(true);
+      window.setTimeout(() => setCopiedCurrent(false), 2000);
+    } catch {
+      window.prompt('请手动复制当前访问地址：', window.location.origin);
+    }
+  };
+
   const lan = draft.bindAddress === 'lan';
   return (
     <section className="section-panel server-config-panel">
@@ -1933,7 +1943,13 @@ function ServerConfigCard({
           {config.bindAddress === 'lan' ? '局域网可访问' : '仅本机'}
         </span>
       </div>
-      <div className="server-warning">局域网内不做身份验证：同网段任何人都能读写本工作区数据，请只在可信网络使用。</div>
+      <div className="server-warning">局域网内不做身份验证：同网段任何人都能读写本工作区数据，请只在可信网络使用。多人同时编辑会整库覆盖，建议同一时间只保留一位编辑者。</div>
+      <p className="server-config-hint">
+        当前访问地址：<code>{window.location.origin}</code>
+        <button type="button" className="server-inline-btn" onClick={() => void copyCurrentAddress()}>
+          {copiedCurrent ? '已复制' : '复制'}
+        </button>
+      </p>
       <div className="server-config-grid">
         <label className="server-field">
           <span>监听模式</span>
@@ -2197,14 +2213,14 @@ function ServerPage({ apiOnline }: { apiOnline: boolean | null }) {
     <div className="server-layout">
       {pollError ? <Banner tone="error" title="服务端监控异常" onClose={() => setPollError('')}>{pollError}</Banner> : null}
       {actionError ? <Banner tone="error" title="操作未完成" onClose={() => setActionError('')}>{actionError}</Banner> : null}
-      {apiOnline === false ? <Banner tone="warning" title="本地服务未连接">当前无法读取服务端状态，请先启动本地 API。</Banner> : null}
+      {apiOnline === false ? <Banner tone="warning" title="服务端未连接">当前无法读取服务端状态，请先启动服务端 API。</Banner> : null}
       {!stats ? (
         <div className="server-loading"><span className="kicker">// SERVER TELEMETRY</span><strong>正在读取本机服务端状态…</strong></div>
       ) : (
         <>
           <section className="section-panel server-panel">
             <div className="server-head">
-              <div><span className="kicker">// SERVER TELEMETRY</span><h2>本机服务端</h2><p>监控本机资源、Java 求解器和排队中的排课任务；单机与局域网服务端使用同一套 Java 求解线路。</p></div>
+              <div><span className="kicker">// SERVER TELEMETRY</span><h2>服务端</h2><p>监控服务端资源、Java 求解器和排队中的排课任务；单机与 Linux 服务端使用同一套 Java 求解线路。</p></div>
               <div className="server-head-status">
                 <span className={stats.solver.ready ? 'server-live' : 'server-live is-offline'}><i />{stats.solver.ready ? '服务在线' : '求解器未就绪'}</span>
                 <button type="button" className="tt-btn tt-btn-quiet" onClick={() => void refresh()}>刷新</button>
@@ -2303,7 +2319,7 @@ function SettingsPage({
   onClearToastLogs: () => void;
 }) {
   const mode = RUN_MODE_OPTIONS.find((item) => item.value === runMode);
-  const endpoint = window.localStorage.getItem('warpweft-runtime-endpoint') || 'http://127.0.0.1:4317';
+  const endpoint = window.localStorage.getItem('warpweft-runtime-endpoint') || getApiBase();
   const toneLabels: Record<ToastTone, string> = {
     error: '错误',
     success: '完成',

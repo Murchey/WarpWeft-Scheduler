@@ -9,6 +9,8 @@ const PKG = require('../../package.json');
 const {
   loadConfig,
   normalizeIp,
+  isLoopbackIp,
+  forwardedClientIp,
   ipAllowed,
   normalizeConfig,
   saveConfig,
@@ -483,6 +485,7 @@ function startApi({
   configFile = null,
   clientTtlMs = CLIENT_TTL_MS,
   timeoutSecondsOverride = null,
+  trustProxy = true,
 }) {
   const store = openDatabase(rootDir, dataDir);
   const resolvedConfigFile = configFile || path.join(dataDir, 'server-config.json');
@@ -575,7 +578,8 @@ function startApi({
 
   function clientIdentity(req) {
     const raw = String(req.headers['x-client-id'] || '').trim();
-    const ip = normalizeIp(req.socket.remoteAddress || '');
+    const remote = normalizeIp(req.socket.remoteAddress || '');
+    const ip = trustProxy ? forwardedClientIp(req.headers, remote) : remote;
     if (/^[A-Za-z0-9_.:-]{3,64}$/.test(raw)) return { id: raw, ip, anonymous: false };
     return { id: 'ip:' + (ip || 'unknown'), ip, anonymous: true };
   }
@@ -980,6 +984,13 @@ function startApi({
     };
   }
 
+  function canAccessLongJob(job, client) {
+    if (!job || !client) return false;
+    if (job.clientId) return job.clientId === client.id;
+    // Jobs created before client ownership was recorded are local-admin only.
+    return isLoopbackIp(client.ip);
+  }
+
   function longJobDetail(job) {
     const best = readLongBest(job);
     return {
@@ -1181,6 +1192,9 @@ function startApi({
       }
       const existing = longJobsByUuid.get(taskUuid);
       if (existing) {
+        if (!canAccessLongJob(existing, client)) {
+          throw requestError('该任务属于其他客户端，当前客户端无权复用', 403, 'TASK_FORBIDDEN');
+        }
         if ((existing.snapshotId || '') !== snapshotId) {
           throw requestError('任务 UUID 已被另一份数据快照使用，请生成新的任务 UUID', 409, 'TASK_UUID_CONFLICT');
         }
@@ -1577,17 +1591,19 @@ function startApi({
         }
       }
       if (req.method === 'GET' && url.pathname === '/api/solve/jobs') {
-        const jobs = Array.from(longJobs.values())
+        const visible = Array.from(longJobs.values()).filter((job) => canAccessLongJob(job, client));
+        const jobs = visible
           .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
           .map(longJobSummary);
-        return send(res, 200, { jobs, running: longJobRunning });
+        const running = visible.some((job) => job.id === longJobRunning) ? longJobRunning : null;
+        return send(res, 200, { jobs, running });
       }
       const longJobByUuid = url.pathname.match(/^\/api\/solve\/jobs\/by-uuid\/([^/]+)$/);
       if (req.method === 'GET' && longJobByUuid) {
         const taskUuid = decodeURIComponent(longJobByUuid[1]);
         const job = longJobsByUuid.get(taskUuid);
         if (!job) return fail(res, 404, '任务不存在或已被清理', 'LONG_JOB_NOT_FOUND');
-        if (job.clientId && client && job.clientId !== client.id) {
+        if (!canAccessLongJob(job, client)) {
           return fail(res, 403, '该任务属于其他客户端，当前客户端无权读取', 'TASK_FORBIDDEN');
         }
         return send(res, 200, longJobDetail(job));
@@ -1596,11 +1612,19 @@ function startApi({
       if (req.method === 'GET' && longJobRoute) {
         const job = longJobs.get(decodeURIComponent(longJobRoute[1]));
         if (!job) return fail(res, 404, '长时任务不存在', 'LONG_JOB_NOT_FOUND');
+        if (!canAccessLongJob(job, client)) {
+          return fail(res, 403, '该任务属于其他客户端，当前客户端无权读取', 'TASK_FORBIDDEN');
+        }
         return send(res, 200, longJobDetail(job));
       }
       if (req.method === 'DELETE' && longJobRoute) {
+        const current = longJobs.get(decodeURIComponent(longJobRoute[1]));
+        if (!current) return fail(res, 404, '长时任务不存在', 'LONG_JOB_NOT_FOUND');
+        if (!canAccessLongJob(current, client)) {
+          return fail(res, 403, '该任务属于其他客户端，当前客户端无权删除', 'TASK_FORBIDDEN');
+        }
         try {
-          const job = deleteLongJob(decodeURIComponent(longJobRoute[1]));
+          const job = deleteLongJob(current.id);
           return send(res, 200, { deleted: true, id: job.id });
         } catch (error) {
           return fail(res, error.statusCode || 500, error.message, error.code || 'LONG_JOB_DELETE_FAILED');
@@ -1610,6 +1634,11 @@ function startApi({
       if (req.method === 'POST' && longJobAction) {
         const id = decodeURIComponent(longJobAction[1]);
         const action = longJobAction[2];
+        const current = longJobs.get(id);
+        if (!current) return fail(res, 404, '长时任务不存在', 'LONG_JOB_NOT_FOUND');
+        if (!canAccessLongJob(current, client)) {
+          return fail(res, 403, '该任务属于其他客户端，当前客户端无权操作', 'TASK_FORBIDDEN');
+        }
         try {
           const job = action === 'pause' ? pauseLongJob(id) : action === 'resume' ? resumeLongJob(id) : cancelLongJob(id);
           return send(res, 200, { job: longJobSummary(job) });
@@ -1667,7 +1696,7 @@ function startApi({
   server.listen(port, bindHost, () => {
     // port 0 asks the OS for a free port; keep the resolved value for re-binds.
     port = server.address().port;
-    log('info', '本地服务启动：http://' + bindHost + ':' + port);
+    log('info', '服务启动：http://' + bindHost + ':' + port);
     log('info', 'Java 求解器：' + (javaInfo.available ? 'Java ' + (javaInfo.version || 'unknown') : '不可用'));
     log('info', '求解线路：' + jarPath + (fs.existsSync(jarPath) ? '（已就绪）' : '（未构建）'));
     log(
