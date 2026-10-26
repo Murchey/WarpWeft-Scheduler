@@ -247,6 +247,7 @@ export function InspectionPage({
             <div>
               <SectionHeading english="VERSION DIFF" title="候选版与正式版差异" />
               <p className="panel-note">以当前正式版为基线，展示本次候选课表新增、移除和位置变化的课时；调整叠加版仍按日期单独记录。</p>
+              <p className="panel-note">正式版 {data.publishedVersion?.id ?? '未记录'} · 候选版 {data.candidateVersion?.id ?? '未记录'} · 候选来源 {data.candidateVersion?.source === 'manual' ? '手动调整' : '求解器'}</p>
             </div>
             <span className="status-tag">未变化 {versionDiff.unchanged}</span>
           </div>

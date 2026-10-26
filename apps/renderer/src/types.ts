@@ -138,6 +138,16 @@ export interface SolverOutput {
   hasFeasibleSolution: boolean;
 }
 
+export interface TimetableVersionMeta {
+  id: string;
+  kind: 'candidate' | 'published';
+  createdAt: string;
+  source: 'solver' | 'manual' | 'publish';
+  parentId?: string;
+  summary: string;
+  adjustmentCount: number;
+}
+
 
 import type { RuleInstance } from '../../../packages/constraints/src';
 import type { Adjustment, LessonLog } from '../../../packages/adjustments/src';
@@ -189,6 +199,8 @@ export interface SchoolData {
   auditLog?: { id: string; at: string; action: string; detail: string }[];
   candidate?: SolverOutput | null;
   published?: SolverOutput | null;
+  candidateVersion?: TimetableVersionMeta | null;
+  publishedVersion?: TimetableVersionMeta | null;
   semester?: { startDate: string; endDate: string };
   /** simplified = one fixed room per class, no room sheet; full = room pool scheduling. */
   roomMode?: RoomMode;

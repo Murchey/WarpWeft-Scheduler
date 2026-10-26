@@ -969,7 +969,7 @@ function App() {
     }
     let value = next;
     if (options.invalidate) {
-      value = { ...next, candidate: null };
+      value = { ...next, candidate: null, candidateVersion: null };
       setResult(null);
       setSelectedEntryId('');
       setHistory([]);
@@ -997,9 +997,20 @@ function App() {
     const fixed = data ? withFixedClassRoomsResult(data, next) : next;
     setResult(fixed);
     if (!data) return;
+    const versionAt = new Date().toISOString();
+    const candidateVersion = {
+      id: uid('version'),
+      kind: 'candidate' as const,
+      createdAt: versionAt,
+      source: audit ? 'manual' as const : 'solver' as const,
+      parentId: data.candidateVersion?.id ?? data.publishedVersion?.id,
+      summary: `${fixed.entries.length} 条课时 · ${fixed.outcome ?? fixed.status}`,
+      adjustmentCount: (data.adjustments ?? []).filter((item) => item.status === 'active').length,
+    };
     const updated = {
       ...data,
       candidate: fixed,
+      candidateVersion,
       auditLog: audit
         ? [...(data.auditLog ?? []), { id: uid('audit'), at: new Date().toISOString(), action: audit.action, detail: audit.detail }]
         : data.auditLog,
@@ -1539,6 +1550,15 @@ function App() {
     if (!data || !result) return;
     const createdAt = new Date().toISOString();
     const fileName = exportedName ?? timetableFileName(data, settings);
+    const publishedVersion = {
+      id: uid('version'),
+      kind: 'published' as const,
+      createdAt,
+      source: 'publish' as const,
+      parentId: data.candidateVersion?.id ?? data.publishedVersion?.id,
+      summary: `${result.entries.length} 条课时 · ${fileName}`,
+      adjustmentCount: (data.adjustments ?? []).filter((item) => item.status === 'active').length,
+    };
     const audit = {
       id: uid('audit'),
       at: createdAt,
@@ -1549,6 +1569,7 @@ function App() {
       {
         ...data,
         published: result,
+        publishedVersion,
         auditLog: [...(data.auditLog ?? []), audit],
       },
       { immediate: true },
@@ -1580,7 +1601,7 @@ function App() {
     setResult(null);
     setSelectedEntryId('');
     setHistory([]);
-    commit({ ...data, candidate: null }, { immediate: true });
+    commit({ ...data, candidate: null, candidateVersion: null }, { immediate: true });
     setNotice('候选课表已清空');
   };
 
