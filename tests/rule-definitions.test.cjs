@@ -38,8 +38,28 @@ test('avoid-first-last and time-preference rules expose coherent importance choi
   assert.equal(describeRule(rule({ importance: 'prefer', params: { avoid: 'last' } }), data), '语文 尽量避开最后一节');
 
   const preference = definitionOf('SUBJECT_TIME_PREFERENCE');
-  assert.deepEqual(preference.importanceOptions, ['prefer']);
+  assert.deepEqual(preference.importanceOptions, ['prefer', 'must']);
   assert.equal(preference.defaultImportance, 'prefer');
+  assert.equal(
+    describeRule(rule({
+      kind: 'SUBJECT_TIME_PREFERENCE',
+      importance: 'must',
+      params: { preference: 'afternoon' },
+    }), data),
+    '语文 必须安排在下午',
+  );
+
+  const noConsecutive = definitionOf('SUBJECT_AVOID_CONSECUTIVE');
+  assert.deepEqual(noConsecutive.importanceOptions, ['prefer', 'must']);
+  assert.equal(noConsecutive.defaultImportance, 'prefer');
+  assert.equal(
+    describeRule(rule({ kind: 'SUBJECT_AVOID_CONSECUTIVE', importance: 'prefer', params: {} }), data),
+    '语文 尽量不连排',
+  );
+  assert.equal(
+    describeRule(rule({ kind: 'SUBJECT_AVOID_CONSECUTIVE', importance: 'must', params: {} }), data),
+    '语文 必须不连排',
+  );
   assert.equal(
     describeRule(rule({
       kind: 'SUBJECT_TIME_PREFERENCE',

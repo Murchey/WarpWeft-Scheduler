@@ -4,7 +4,7 @@ export type SolverStatus = 'QUEUED'|'PREPARING'|'SOLVING'|'FEASIBLE'|'IMPROVED'|
 export type SoftRuleKind = 'SUBJECT_DISTRIBUTION'|'TEACHER_CONTINUOUS'|'TEACHER_GAPS'|'TEACHER_WORKLOAD_BALANCE'|'CLASS_GAPS'|'SUBJECT_TIME_PREFERENCE';
 export type SubjectTimePreference = 'morning'|'afternoon';
 export type RuleImportance = 'must'|'prefer'|'avoid';
-export type RuleKind = 'TEACHER_MAX_DAILY'|'TEACHER_MAX_CONSECUTIVE'|'TEACHER_FREE_HALF_DAY'|'SUBJECT_MAX_PER_DAY'|'SUBJECT_TIME_PREFERENCE'|'SUBJECT_AVOID_FIRST_LAST'|'SUBJECT_SPREAD'|'DOUBLE_PERIOD';
+export type RuleKind = 'TEACHER_MAX_DAILY'|'TEACHER_MAX_CONSECUTIVE'|'TEACHER_FREE_HALF_DAY'|'SUBJECT_MAX_PER_DAY'|'SUBJECT_TIME_PREFERENCE'|'SUBJECT_AVOID_FIRST_LAST'|'SUBJECT_AVOID_CONSECUTIVE'|'SUBJECT_SPREAD'|'DOUBLE_PERIOD';
 export interface RuleScope { type: 'all'|'grade'|'class'|'teacher'|'subject'|'room'; teacherId?: string; subjectId?: string; classId?: string; grade?: string; roomId?: string; }
 export interface RuleTime { type: 'all'|'weekday'|'periodRange'; days?: number[]; from?: number; to?: number; }
 export interface RuleInput { id: string; kind: RuleKind; scope: RuleScope; time: RuleTime; importance: RuleImportance; params: Record<string,string|number>; enabled: boolean; note?: string; createdAt: string; source: 'preset'|'manual'|'import'|'migration'; }

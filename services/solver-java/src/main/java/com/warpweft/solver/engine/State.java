@@ -145,6 +145,23 @@ public final class State {
         return subjectPreference.getOrDefault(subjectId, "");
     }
 
+    /** True when this class already has the subject at the given day/period. */
+    public boolean subjectAt(String classId, String subjectId, int day, int period, int mask) {
+        for (Entry entry : entries) {
+            if (!entry.classId().equals(classId) || !entry.subjectId().equals(subjectId)) continue;
+            Slot slot = slots.get(entry.slotId());
+            if (slot == null || slot.day() != day || slot.period() != period) continue;
+            if ((weekMask(entry.weeks()) & mask) != 0) return true;
+        }
+        return false;
+    }
+
+    /** True when the subject already touches this slot before or after it. */
+    public boolean adjacentSubject(String classId, String subjectId, int day, int period, int mask) {
+        return subjectAt(classId, subjectId, day, period - 1, mask)
+            || subjectAt(classId, subjectId, day, period + 1, mask);
+    }
+
     private static void addMask(Map<String, Integer> masks, String key, int mask) {
         if (mask == 0) return;
         masks.merge(key, mask, (current, added) -> current | added);

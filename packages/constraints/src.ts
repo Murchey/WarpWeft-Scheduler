@@ -7,6 +7,7 @@ export type RuleKind =
   | 'SUBJECT_MAX_PER_DAY'
   | 'SUBJECT_TIME_PREFERENCE'
   | 'SUBJECT_AVOID_FIRST_LAST'
+  | 'SUBJECT_AVOID_CONSECUTIVE'
   | 'SUBJECT_SPREAD'
   | 'DOUBLE_PERIOD';
 
@@ -153,9 +154,9 @@ export const RULE_DEFINITIONS: RuleDefinition[] = [
     kind: 'SUBJECT_TIME_PREFERENCE',
     category: 'subject',
     label: '学科时间偏好',
-    description: '让学科尽量安排在上午或下午（软约束，仍可能被固定时间或教师时间覆盖）。',
+    description: '让学科尽量或必须安排在上午/下午；「必须」会硬性禁止另一半天，可能导致无解。',
     scopeType: 'subject',
-    importanceOptions: ['prefer'],
+    importanceOptions: ['prefer', 'must'],
     defaultImportance: 'prefer',
     paramFields: [{
       key: 'preference',
@@ -179,6 +180,17 @@ export const RULE_DEFINITIONS: RuleDefinition[] = [
       type: 'select',
       options: [{ value: 'first', label: '第一节' }, { value: 'last', label: '最后一节' }],
     }],
+    available: true,
+  },
+  {
+    kind: 'SUBJECT_AVOID_CONSECUTIVE',
+    category: 'subject',
+    label: '同学科不连排',
+    description: '让同一班级的同一学科不排在相邻两节；「必须」会硬性禁止，若该学科已有连堂计划会冲突。',
+    scopeType: 'subject',
+    importanceOptions: ['prefer', 'must'],
+    defaultImportance: 'prefer',
+    paramFields: [],
     available: true,
   },
   {
@@ -276,12 +288,16 @@ export function describeRule(rule: RuleInstance, data: RuleData): string {
     case 'SUBJECT_MAX_PER_DAY': return scope + ' 每天最多 ' + max + ' 节';
     case 'SUBJECT_TIME_PREFERENCE': {
       const target = rule.params.preference === 'afternoon' ? '下午' : '上午';
-      return scope + (rule.importance === 'avoid' ? ' 避免安排在' : ' 尽量安排在') + target;
+      if (rule.importance === 'must') return scope + ' 必须安排在' + target;
+      if (rule.importance === 'avoid') return scope + ' 避免安排在' + target;
+      return scope + ' 尽量安排在' + target;
     }
     case 'SUBJECT_AVOID_FIRST_LAST': {
       const target = rule.params.avoid === 'last' ? '最后一节' : '第一节';
       return scope + (rule.importance === 'prefer' ? ' 尽量避开' : ' 避开') + target;
     }
+    case 'SUBJECT_AVOID_CONSECUTIVE':
+      return scope + (rule.importance === 'must' ? ' 必须不连排' : ' 尽量不连排');
     case 'SUBJECT_SPREAD': return scope + ' 分散到一周（每天最多 ' + max + ' 节）';
     case 'DOUBLE_PERIOD': return scope + ' 连续排 ' + Number(rule.params.periods ?? 2) + ' 节';
     default: return definition.label;
@@ -346,6 +362,12 @@ export function ruleWarnings(rule: RuleInstance, data: RuleData, allRules: RuleI
     for (const plan of plans) {
       if (plan.weeklyPeriods < 2) warnings.push('周课时少于 2 节，无法形成连堂。');
       else if (plan.weeklyPeriods % 2 === 1) warnings.push('周课时为奇数，最后一节会单排。');
+    }
+  }
+  if (rule.kind === 'SUBJECT_AVOID_CONSECUTIVE') {
+    const consecutivePlans = plans.filter((plan) => Number(plan.consecutive) >= 2);
+    if (consecutivePlans.length > 0) {
+      warnings.push('这些教学计划设置了连堂，与「同学科不连排」冲突：' + consecutivePlans.map((plan) => subjectName(data, plan.subjectId)).join('、'));
     }
   }
   if (rule.importance === 'must' && definition.available) {
@@ -453,11 +475,15 @@ export function parseRuleText(text: string, data: RuleData): ParsedRuleText {
   if (teacher && (source.includes('连续') || source.includes('连堂'))) {
     return { rule: { ...base, kind: 'TEACHER_MAX_CONSECUTIVE', scope: { type: 'teacher', teacherId: teacher.id }, importance, params: { maxConsecutive: numberInText(source, 2) } } };
   }
+  if (subject && (source.includes('不连排') || source.includes('不要连排') || source.includes('不连续') || source.includes('不要连堂') || source.includes('避免连堂'))) {
+    const consecutiveImportance: RuleImportance = source.includes('必须') || source.includes('一定') ? 'must' : 'prefer';
+    return { rule: { ...base, kind: 'SUBJECT_AVOID_CONSECUTIVE', scope: { type: 'subject', subjectId: subject.id }, importance: consecutiveImportance, params: {} } };
+  }
   if (subject && (source.includes('连堂') || source.includes('连续'))) {
     return { rule: { ...base, kind: 'DOUBLE_PERIOD', scope: { type: 'subject', subjectId: subject.id }, importance: 'must', params: { periods: numberInText(source, 2) } } };
   }
   if (subject && (source.includes('上午') || source.includes('下午')) && !source.includes('不')) {
-    return { rule: { ...base, kind: 'SUBJECT_TIME_PREFERENCE', scope: { type: 'subject', subjectId: subject.id }, importance: 'prefer', params: { preference: source.includes('下午') ? 'afternoon' : 'morning' } } };
+    return { rule: { ...base, kind: 'SUBJECT_TIME_PREFERENCE', scope: { type: 'subject', subjectId: subject.id }, importance, params: { preference: source.includes('下午') ? 'afternoon' : 'morning' } } };
   }
   if (subject && (source.includes('第一节') || source.includes('最后一节') || source.includes('首节') || source.includes('末节'))) {
     const avoid = source.includes('最后') || source.includes('末节') ? 'last' : 'first';

@@ -49,6 +49,19 @@ public final class RuleEvaluator {
                 for (int p = slot.period() + 1; periods.contains(p); p++) run++;
                 if (run > rule.number("maxConsecutive", 1)) return false;
             }
+            if ("SUBJECT_TIME_PREFERENCE".equals(rule.kind())) {
+                String preference = rule.params().path("preference").asText("");
+                if (preference.isBlank()) preference = state.subjectPreferenceOf(plan.subjectId());
+                if (!preference.isBlank()) {
+                    boolean morning = slot.period() <= state.morningCutoff(slot.day());
+                    if (("morning".equals(preference) && !morning)
+                        || ("afternoon".equals(preference) && morning)) return false;
+                }
+            }
+            if ("SUBJECT_AVOID_CONSECUTIVE".equals(rule.kind())
+                && state.adjacentSubject(plan.classId(), plan.subjectId(), slot.day(), slot.period(), mask)) {
+                return false;
+            }
         }
         return true;
     }
@@ -92,6 +105,10 @@ public final class RuleEvaluator {
                 boolean last = slot.period() == maxDay.getOrDefault(slot.day(), slot.period());
                 if (("first".equals(rule.params().path("avoid").asText()) && first)
                     || ("last".equals(rule.params().path("avoid").asText()) && last)) penalty += 4;
+            }
+            if ("SUBJECT_AVOID_CONSECUTIVE".equals(rule.kind())
+                && state.adjacentSubject(plan.classId(), plan.subjectId(), slot.day(), slot.period(), mask)) {
+                penalty += 30;
             }
             if ("TEACHER_MAX_CONSECUTIVE".equals(rule.kind())) {
                 TreeSet<Integer> periods = state.teacherPeriods(plan.teacherId(), slot.day(), mask);
@@ -148,6 +165,15 @@ public final class RuleEvaluator {
                         String avoid = rule.params().path("avoid").asText();
                         if (("first".equals(avoid) && first) || ("last".equals(avoid) && last)) penalty += 3;
                     }
+                }
+            }
+            if ("SUBJECT_AVOID_CONSECUTIVE".equals(rule.kind())) {
+                for (Entry entry : state.entries) {
+                    Slot slot = state.slots.get(entry.slotId());
+                    if (slot == null || !rule.applies(entry.teacherId(), entry.subjectId(), slot.day(), slot.period())) continue;
+                    int mask = State.weekMask(entry.weeks());
+                    // Count each adjacent pair once: only look forward.
+                    if (state.subjectAt(entry.classId(), entry.subjectId(), slot.day(), slot.period() + 1, mask)) penalty += 3;
                 }
             }
             if ("DOUBLE_PERIOD".equals(rule.kind())) {

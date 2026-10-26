@@ -45,6 +45,8 @@ test('import template uses the new headers and required position notes', async (
   assert.ok(kindOptions.includes('常规'));
   assert.ok(kindOptions.includes('自习'));
   assert.ok(kindOptions.includes('课后服务'));
+  const ruleOptions = optionRows.slice(1).map((row) => row[4]).filter(Boolean);
+  assert.ok(ruleOptions.includes('同学科不连排'));
 });
 
 test('simplified template omits the room sheet and room type column', async () => {

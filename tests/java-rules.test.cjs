@@ -61,6 +61,63 @@ test('subject time preference produces a rule penalty', () => {
   assert.ok(Number(output.scoreBreakdown.rules || 0) > 0);
 });
 
+test('hard subject time preference forbids the other half of the day', () => {
+  const input = demoInput();
+  input.coursePlans = [{ id: 'plan-math', classId: 'class-1', subjectId: 'subject-math', teacherId: 'teacher-math', weeklyPeriods: 2 }];
+  input.rules = [{
+    id: 'rule-time-hard',
+    kind: 'SUBJECT_TIME_PREFERENCE',
+    scope: { type: 'subject', subjectId: 'subject-math' },
+    time: { type: 'all' },
+    importance: 'must',
+    params: { preference: 'afternoon' },
+    enabled: true,
+    createdAt: new Date().toISOString(),
+    source: 'manual',
+  }];
+  const result = solve(input);
+  assert.equal(result.status, 0, result.stderr || 'Java solver process failed');
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.hasFeasibleSolution, true);
+  assert.equal(output.entries.length, 2);
+  for (const entry of output.entries) {
+    const slot = input.timeSlots.find((item) => item.id === entry.slotId);
+    assert.ok(slot.period > 2, 'periods 1–2 are morning in the three-period fixture');
+  }
+});
+
+test('hard no-consecutive rule keeps same subject out of adjacent periods', () => {
+  const input = demoInput();
+  input.coursePlans = [{ id: 'plan-math', classId: 'class-1', subjectId: 'subject-math', teacherId: 'teacher-math', weeklyPeriods: 3 }];
+  input.rules = [{
+    id: 'rule-no-consecutive',
+    kind: 'SUBJECT_AVOID_CONSECUTIVE',
+    scope: { type: 'subject', subjectId: 'subject-math' },
+    time: { type: 'all' },
+    importance: 'must',
+    params: {},
+    enabled: true,
+    createdAt: new Date().toISOString(),
+    source: 'manual',
+  }];
+  const result = solve(input);
+  assert.equal(result.status, 0, result.stderr || 'Java solver process failed');
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.hasFeasibleSolution, true);
+  assert.equal(output.entries.length, 3);
+  const byDay = new Map();
+  for (const entry of output.entries) {
+    const slot = input.timeSlots.find((item) => item.id === entry.slotId);
+    const list = byDay.get(slot.day) || [];
+    list.push(slot.period);
+    byDay.set(slot.day, list);
+  }
+  for (const periods of byDay.values()) {
+    periods.sort((a, b) => a - b);
+    for (let index = 1; index < periods.length; index += 1) assert.notEqual(periods[index], periods[index - 1] + 1);
+  }
+});
+
 test('free half-day rule produces a penalty when target is impossible', () => {
   const input = demoInput();
   const teacher = input.teachers[0];
