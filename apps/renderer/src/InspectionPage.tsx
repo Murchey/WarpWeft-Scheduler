@@ -3,6 +3,8 @@ import { CATEGORY_LABELS } from '../../../packages/inspection/src';
 import type { InspectionIssue, InspectionRefs, InspectionReport, UtilizationRow } from '../../../packages/inspection/src';
 import { EmptyState } from './runViews';
 import { SectionHeading } from './components';
+import type { SchoolData, SolverOutput } from './types';
+import { diffTimetables } from './timetableDiff';
 
 type Filter = 'all' | 'hard' | 'must' | 'prefer';
 
@@ -82,12 +84,16 @@ function UtilizationTable({
 }
 
 export function InspectionPage({
+  data,
+  candidate,
+  publishedResult,
   report,
   onLocate,
   onExportExcel,
   onExportCsv,
   onPrint,
   onTimetable,
+  onRules,
   onRun,
   onClear,
   adjustmentDays,
@@ -97,12 +103,16 @@ export function InspectionPage({
   hasCandidate,
   published,
 }: {
+  data: SchoolData;
+  candidate: SolverOutput | null;
+  publishedResult: SolverOutput | null | undefined;
   report: InspectionReport | null;
   onLocate: (refs: InspectionRefs) => void;
   onExportExcel: () => void;
   onExportCsv: () => void;
   onPrint: () => void;
   onTimetable: () => void;
+  onRules: () => void;
   onRun: () => void;
   onClear: () => void;
   adjustmentDays: { date: string; label: string; count: number; summary: string }[];
@@ -144,6 +154,7 @@ export function InspectionPage({
   const teachers = report.utilization.teachers;
   const teacherWarnings = teachers.filter((row) => row.warning).length;
   const roomWarnings = report.utilization.rooms.filter((row) => row.warning).length;
+  const versionDiff = publishedResult && candidate ? diffTimetables(data, publishedResult, candidate) : null;
 
   return (
     <div className="inspect-layout">
@@ -230,6 +241,40 @@ export function InspectionPage({
         </div>
       </section>
 
+      {versionDiff ? (
+        <section className="section-panel inspect-version-diff">
+          <div className="panel-head">
+            <div>
+              <SectionHeading english="VERSION DIFF" title="候选版与正式版差异" />
+              <p className="panel-note">以当前正式版为基线，展示本次候选课表新增、移除和位置变化的课时；调整叠加版仍按日期单独记录。</p>
+            </div>
+            <span className="status-tag">未变化 {versionDiff.unchanged}</span>
+          </div>
+          <div className="summary-grid inspect-summary">
+            <div><span>新增课时</span><b>{versionDiff.added}</b></div>
+            <div><span>移除课时</span><b className={versionDiff.removed ? 'is-danger' : ''}>{versionDiff.removed}</b></div>
+            <div><span>位置/属性变化</span><b>{versionDiff.changed}</b></div>
+            <div><span>软目标质量</span><b>{publishedResult?.softScore ?? 0} → {candidate?.softScore ?? 0}</b></div>
+          </div>
+          <p className="panel-note">软目标质量变化：{(candidate?.softScore ?? 0) - (publishedResult?.softScore ?? 0) >= 0 ? '+' : ''}{(candidate?.softScore ?? 0) - (publishedResult?.softScore ?? 0)}；人工调整记录 {(data.adjustments ?? []).filter((item) => item.status === 'active').length} 条。</p>
+          {versionDiff.items.length === 0 ? (
+            <p className="panel-note success-note">候选版与正式版没有课表差异。</p>
+          ) : (
+            <ol className="inspect-issue-list inspect-version-list">
+              {versionDiff.items.slice(0, 16).map((item) => (
+                <li key={item.id} className={'inspect-issue is-' + (item.kind === 'changed' ? 'prefer' : item.kind === 'removed' ? 'hard' : 'must')}>
+                  <span className={'inspect-severity is-' + (item.kind === 'changed' ? 'prefer' : item.kind === 'removed' ? 'hard' : 'must')}>
+                    {item.kind === 'changed' ? '变化' : item.kind === 'removed' ? '移除' : '新增'}
+                  </span>
+                  <div className="inspect-issue-copy"><b>{item.label}</b><small>{item.detail}</small></div>
+                </li>
+              ))}
+            </ol>
+          )}
+          {versionDiff.items.length > 16 ? <p className="panel-note">还有 {versionDiff.items.length - 16} 项差异，完整结果可通过导出课表和审计记录复核。</p> : null}
+        </section>
+      ) : null}
+
       <section className="section-panel inspect-issues">
         <div className="panel-head">
           <div>
@@ -266,6 +311,7 @@ export function InspectionPage({
                     {CATEGORY_LABELS[issue.category]} · {issue.detail}
                   </small>
                 </div>
+                {issue.category === 'RULE' ? <button className="ghost-button inspect-locate" onClick={onRules}>去规则</button> : null}
                 <button className="ghost-button inspect-locate" disabled={!hasTarget(issue.refs)} onClick={() => onLocate(issue.refs)}>
                   定位
                 </button>

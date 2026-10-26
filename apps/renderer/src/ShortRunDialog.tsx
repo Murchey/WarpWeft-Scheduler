@@ -4,6 +4,16 @@ import type { ShortRunRecord } from './runConfig';
 import { RUN_MODE_OPTIONS, runResultText } from './runConfig';
 import { shortRunEntryRows, shortRunMissingRefs } from './shortRunView';
 
+const SCORE_LABELS: Record<string, string> = {
+  subjectDistribution: '同学科分布',
+  teacherContinuous: '教师连续性',
+  teacherGaps: '教师空档',
+  teacherWorkloadBalance: '教师工作量均衡',
+  classGaps: '班级空档',
+  subjectTimePreference: '学科时段偏好',
+  rules: '规则软惩罚',
+};
+
 function formatWhen(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN');
@@ -46,6 +56,9 @@ export function ShortRunDialog({
   const unplaced = Math.max(0, totalPeriods - run.result.entries.length);
   const modeLabel = run.mode === 'repair' ? '局部重排' : '短时计算';
   const runModeLabel = RUN_MODE_OPTIONS.find((item) => item.value === run.runMode)?.title ?? '未记录';
+  const scoreBreakdown = Object.entries(run.result.scoreBreakdown ?? {})
+    .filter(([, value]) => Number.isFinite(Number(value)))
+    .sort(([, a], [, b]) => Number(b) - Number(a));
 
   return (
     <div
@@ -73,6 +86,7 @@ export function ShortRunDialog({
             <div><dt>任务类型</dt><dd>{modeLabel}</dd></div>
             <div><dt>已排 / 计划</dt><dd>{run.result.entries.length} / {totalPeriods}</dd></div>
             <div><dt>未排课时</dt><dd className={unplaced > 0 ? 'is-warning' : ''}>{unplaced}</dd></div>
+            <div><dt>软目标质量</dt><dd>{run.result.softScore}</dd></div>
             <div><dt>耗时</dt><dd>{run.elapsedMs.toLocaleString('zh-CN')} ms</dd></div>
             <div><dt>计算时限</dt><dd>{timeLimitSeconds} 秒</dd></div>
             <div><dt>锁定课时</dt><dd>{run.lockedCount}</dd></div>
@@ -104,6 +118,24 @@ export function ShortRunDialog({
             <div className="short-run-issues">
               <b>未满足的偏好规则 {unsatisfied.length}</b>
               <ul>{unsatisfied.map((item) => <li key={item}>{item}</li>)}</ul>
+            </div>
+          ) : null}
+
+          {scoreBreakdown.length > 0 ? (
+            <div className="short-run-score">
+              <div className="short-run-entries-head">
+                <div><span className="kicker">// SOFT OBJECTIVE</span><b>软目标分项</b></div>
+                <span>总质量 {run.result.softScore} · 分项为惩罚值</span>
+              </div>
+              <div className="short-run-score-grid">
+                {scoreBreakdown.map(([key, value]) => (
+                  <div key={key}>
+                    <span>{SCORE_LABELS[key] ?? key}</span>
+                    <b>{Number(value)}</b>
+                  </div>
+                ))}
+              </div>
+              <p className="panel-note">总质量越高越好；分项惩罚越低越好。权重变化只影响搜索偏好，不代表一定能把对应项降到 0。</p>
             </div>
           ) : null}
 

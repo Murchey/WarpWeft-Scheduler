@@ -639,6 +639,7 @@ function App() {
   const [loadError, setLoadError] = useState('');
   const [result, setResult] = useState<SolverOutput | null>(null);
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
+  const [connectionRetry, setConnectionRetry] = useState(0);
   const [serverSchema, setServerSchema] = useState<number | null>(null);
   const [serverBlocked, setServerBlocked] = useState(false);
   const [authRequired, setAuthRequired] = useState(false);
@@ -838,7 +839,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [runMode, modeRevision, loadWorkspace]);
+  }, [runMode, modeRevision, loadWorkspace, connectionRetry]);
 
   const handleLogin = async (username: string, password: string, remember: boolean) => {
     setAuthBusy(true);
@@ -1898,6 +1899,7 @@ function App() {
         {apiOnline === false ? (
           <Banner tone="warning" title="服务端未连接">
             当前服务未连接，修改不会保存。请通过桌面端启动，或先运行 <code>npm run dev:api</code> 再打开界面。
+            <button type="button" className="ghost-button" onClick={() => setConnectionRetry((value) => value + 1)}>重新连接</button>
           </Banner>
         ) : null}
         {serverBlocked ? (
@@ -1998,6 +2000,9 @@ function App() {
         ) : null}
         {tab === '最终课表' ? (
           <InspectionPage
+            data={data}
+            candidate={result}
+            publishedResult={data.published}
             report={report}
             hasCandidate={Boolean(result)}
             published={Boolean(data.published)}
@@ -2006,6 +2011,7 @@ function App() {
             onExportCsv={exportInspectionCsv}
             onPrint={() => window.print()}
             onTimetable={() => setTab('课表预览')}
+            onRules={() => { setPrepareSection('rules'); setTab('排课准备'); }}
             onRun={() => setTab('排课任务')}
             onClear={clearCandidate}
             onSaveOfficial={saveOfficial}

@@ -573,6 +573,37 @@ export function AdjustmentsPage({
     setStatus({ tone: 'neutral', text: '已撤销这次调整。' });
   };
 
+  const revokeDayAdjustments = () => {
+    const current = latestData.current;
+    const targets = (current.adjustments ?? []).filter(
+      (item) => item.status === 'active' && (item.date === date || (item.type === 'swap' && item.targetDate === date)),
+    );
+    if (targets.length === 0) {
+      setStatus({ tone: 'warning', text: '当前日期没有可撤销的调整。' });
+      return;
+    }
+    if (!window.confirm(`撤销 ${targets.length} 条 ${date} 的调整？操作会写入审计记录。`)) return;
+    const at = new Date().toISOString();
+    const operatorName = operator.trim() || '未填写';
+    commit(
+      withAudit(
+        {
+          ...current,
+          adjustments: (current.adjustments ?? []).map((item) =>
+            targets.some((target) => target.id === item.id)
+              ? { ...item, status: 'revoked' as const, revokedAt: at, revokedBy: operatorName }
+              : item,
+          ),
+        },
+        'ADJUSTMENT_BATCH_REVOKE',
+        `撤销 ${date} 的 ${targets.length} 条调代课记录 · 操作人 ${operatorName}`,
+        at,
+      ),
+      { immediate: true },
+    );
+    setStatus({ tone: 'neutral', text: `已撤销 ${targets.length} 条当天调整。` });
+  };
+
   const undoRetarget = (adjustmentId: string, previousTargetSlotId: string, previousReason?: string) => {
     const current = latestData.current;
     const at = new Date().toISOString();
@@ -1485,6 +1516,9 @@ export function AdjustmentsPage({
           {summary.noop ? <span><b className="is-warn">{summary.noop}</b><em>原位置</em></span> : null}
         </div>
         <div className="tt-command-actions">
+          <button type="button" className="tt-btn tt-btn-quiet" onClick={revokeDayAdjustments} disabled={effectiveDayAdjustments.length === 0}>
+            撤销当天调整
+          </button>
           <button type="button" className="tt-btn tt-btn-quiet" onClick={() => void exportDay()} disabled={dayAdjustments.length === 0}>
             导出当天调整
           </button>
