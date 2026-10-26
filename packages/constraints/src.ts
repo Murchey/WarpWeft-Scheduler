@@ -153,9 +153,9 @@ export const RULE_DEFINITIONS: RuleDefinition[] = [
     kind: 'SUBJECT_TIME_PREFERENCE',
     category: 'subject',
     label: '学科时间偏好',
-    description: '让学科尽量安排在上午或下午。',
+    description: '让学科尽量安排在上午或下午（软约束，仍可能被固定时间或教师时间覆盖）。',
     scopeType: 'subject',
-    importanceOptions: ['prefer', 'avoid'],
+    importanceOptions: ['prefer'],
     defaultImportance: 'prefer',
     paramFields: [{
       key: 'preference',
@@ -169,9 +169,9 @@ export const RULE_DEFINITIONS: RuleDefinition[] = [
     kind: 'SUBJECT_AVOID_FIRST_LAST',
     category: 'subject',
     label: '避开首末节',
-    description: '让学科尽量避开每天第一节或最后一节。',
+    description: '让指定学科避开每天第一节或最后一节（软约束，仍可能因其他条件排入）。',
     scopeType: 'subject',
-    importanceOptions: ['avoid', 'prefer'],
+    importanceOptions: ['avoid'],
     defaultImportance: 'avoid',
     paramFields: [{
       key: 'avoid',
@@ -274,8 +274,14 @@ export function describeRule(rule: RuleInstance, data: RuleData): string {
     case 'TEACHER_MAX_CONSECUTIVE': return scope + ' 连续上课不超过 ' + Number(rule.params.maxConsecutive ?? 1) + ' 节';
     case 'TEACHER_FREE_HALF_DAY': return scope + ' 每周至少 ' + Number(rule.params.minFreeHalfDays ?? 1) + ' 个半天无课';
     case 'SUBJECT_MAX_PER_DAY': return scope + ' 每天最多 ' + max + ' 节';
-    case 'SUBJECT_TIME_PREFERENCE': return scope + ' 尽量安排在' + (rule.params.preference === 'afternoon' ? '下午' : '上午');
-    case 'SUBJECT_AVOID_FIRST_LAST': return scope + ' 避免' + (rule.params.avoid === 'last' ? '最后一节' : '第一节');
+    case 'SUBJECT_TIME_PREFERENCE': {
+      const target = rule.params.preference === 'afternoon' ? '下午' : '上午';
+      return scope + (rule.importance === 'avoid' ? ' 避免安排在' : ' 尽量安排在') + target;
+    }
+    case 'SUBJECT_AVOID_FIRST_LAST': {
+      const target = rule.params.avoid === 'last' ? '最后一节' : '第一节';
+      return scope + (rule.importance === 'prefer' ? ' 尽量避开' : ' 避开') + target;
+    }
     case 'SUBJECT_SPREAD': return scope + ' 分散到一周（每天最多 ' + max + ' 节）';
     case 'DOUBLE_PERIOD': return scope + ' 连续排 ' + Number(rule.params.periods ?? 2) + ' 节';
     default: return definition.label;

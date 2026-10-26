@@ -405,7 +405,7 @@ node scripts/bench-solver.cjs --classes 24,96,120 --time-limit 30
 - 学科工作区支持批量设置时间偏好（上午/下午/不限）。
 - 新增/现有单选编辑保持不变：教学计划行内改班级/学科/教师/课时/周次/类型/教室类型/固定时间/连堂/配对组；教师、班级、教室、时间段仍可逐条编辑。
 
-**验证**：导入模板生成/字段检查 12 条测试通过；教学计划批量修改教室类型、连堂、配对组保存成功；学科批量时间偏好保存成功；教师批量清空负责班级保存成功；教师批量设置与计划冲突的班级时被数据检查拦截；控制台无应用错误。`node --test tests/*.test.cjs` 当前 277 条通过，`npx tsc --noEmit`、`npx vite build` 通过。
+**验证**：导入模板生成/字段检查 12 条测试通过；教学计划批量修改教室类型、连堂、配对组保存成功；学科批量时间偏好保存成功；教师批量清空负责班级保存成功；教师批量设置与计划冲突的班级时被数据检查拦截；控制台无应用错误。`node --test tests/*.test.cjs` 当前 278 条通过，`npx tsc --noEmit`、`npx vite build` 通过。
 
 ---
 
@@ -418,5 +418,15 @@ node scripts/bench-solver.cjs --classes 24,96,120 --time-limit 30
 - 单张、批量工作簿、批量多文件、整学期导出都走同一个「fillTimetableSheet」，修复对所有导出路径生效。
 - 当前 45 班/1620 课时的“五年级1班”导出实测：周六、周日列隐藏，F11 双周同格行高 140，PDF 仍为 1 页。
 
-**验证**：tests/timetable-template.test.cjs 9 条通过（新增无课日隐藏、列宽和长文本行高测试）；全量 node --test tests/*.test.cjs 277 条通过，npx tsc --noEmit、npx vite build 通过。
+**验证**：tests/timetable-template.test.cjs 9 条通过（新增无课日隐藏、列宽和长文本行高测试）；全量 node --test tests/*.test.cjs 278 条通过，npx tsc --noEmit、npx vite build 通过。
+---
 
+## 21. 规则“程度”语义修正：避开首末节 / 学科时间偏好
+
+- 「避开首末节」不再允许选「尽量」：该规则是软性的“避开”偏好，下拉只保留「避免」，字段名显示为「倾向」，预览直接说「语文 避开第一节」，避免“避免 + 避开”的重复。
+- 「学科时间偏好」不再允许选「避免」：上午/下午方向由参数选择，程度只保留「尽量」；预览统一为「语文 尽量安排在上午/下午」。
+- 旧数据里已经保存成 prefer / avoid 的规则仍可打开，编辑器会显示「（旧规则）」兜底项，不会出现空白下拉；预览会按旧值显示「尽量避开」或「避免安排在」。
+- 导入排课规则时，如果「重要程度」不在该规则的合法选项内，会回落到规则默认值，不再把“避开首末节 + 尽量”这类矛盾组合写进数据。
+- 新增 tests/rule-definitions.test.cjs，校验两条规则的合法程度、默认值和描述输出。
+
+**验证**：node --test tests/rule-definitions.test.cjs 通过；全量 node --test tests/*.test.cjs 278 条通过，npx tsc --noEmit、npx vite build 通过。

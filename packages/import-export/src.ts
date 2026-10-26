@@ -351,7 +351,7 @@ function buildInstructions(simplified: boolean): (string | number)[][] {
     ['作用对象类型', '是', '全校 / 年级 / 教师 / 班级 / 学科 / 教室。', '教师'],
     ['作用对象', '按类型', '填写对应的教师、班级、学科或教室名称；全校可留空。', '王老师'],
     ['适用时间', '否', '全周 / 周一至周五 / 第1-4节 / 周一至周五 第1-4节。', '周一至周五'],
-    ['重要程度', '否', '必须 / 尽量 / 避免；留空用规则默认值。', '尽量'],
+    ['重要程度', '否', '必须 / 尽量 / 避免；留空用默认值。避开首末节固定为「避免」，学科时间偏好固定为「尽量」；填其他值会回落到默认值。', '避免'],
     ['参数', '否', 'key=value，多项用分号，如 maxPerDay=8。', 'maxPerDay=8'],
     ['备注', '否', '自由备注。', '下午教研'],
   ]);
@@ -362,7 +362,7 @@ function buildInstructions(simplified: boolean): (string | number)[][] {
   rows.push(['教师半天无课', '', 'minFreeHalfDays=1：每周至少几个半天不排课', 'minFreeHalfDays=1']);
   rows.push(['学科每日上限', '', 'maxPerDay=2：同班同学科一天最多几节', 'maxPerDay=2']);
   rows.push(['学科时间偏好', '', 'preference=morning 或 afternoon：尽量安排在上午/下午', 'preference=afternoon']);
-  rows.push(['避开首末节', '', 'avoid=first 或 last：尽量避开第一节/最后一节', 'avoid=first']);
+  rows.push(['避开首末节', '', 'avoid=first 或 last：避开第一节/最后一节（软约束）', 'avoid=first']);
   rows.push(['学科分散', '', 'maxPerDay=2：同一学科尽量分散到一周', 'maxPerDay=2']);
   rows.push(['连堂/双节', '', 'periods=2：连续排几节，当前支持 2–4', 'periods=2']);
   rows.push(['','','','']);

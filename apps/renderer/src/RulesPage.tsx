@@ -172,7 +172,7 @@ function RulesPage({
                 <div className="rule-card-facts">
                   <span><b>范围</b>{scopeLabel(rule, data)}</span>
                   <span><b>时间</b>{timeLabel(rule)}</span>
-                  <span><b>程度</b>{IMPORTANCE_LABELS[rule.importance]}</span>
+                  <span><b>{rule.kind === 'SUBJECT_AVOID_FIRST_LAST' ? '倾向' : '程度'}</b>{IMPORTANCE_LABELS[rule.importance]}</span>
                   <span><b>影响</b>{impact.classes} 班 / {impact.lessons} 课时</span>
                 </div>
                 {warnings.length > 0 ? (
@@ -293,9 +293,12 @@ function RuleBuilder({
                 <option value="weekday">指定星期</option>
               </select>
             </label>
-            <label>程度
+            <label>{definition.importanceOptions.length === 1 && definition.importanceOptions[0] === 'avoid' ? '倾向' : '程度'}
               <select value={rule.importance} onChange={(event) => update({ importance: event.target.value as RuleImportance })}>
                 {definition.importanceOptions.map((value) => <option key={value} value={value}>{IMPORTANCE_LABELS[value]}</option>)}
+                {!definition.importanceOptions.includes(rule.importance) ? (
+                  <option value={rule.importance}>{IMPORTANCE_LABELS[rule.importance]}（旧规则）</option>
+                ) : null}
               </select>
             </label>
           </div>

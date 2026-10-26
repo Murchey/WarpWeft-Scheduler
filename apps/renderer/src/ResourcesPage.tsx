@@ -864,7 +864,10 @@ function ResourcesPage({
             scope = { type: 'subject', subjectId: subject.id };
           }
           const importanceText = text(v['重要程度'] ?? v['importance']);
-          const importance = RULE_IMPORTANCE[importanceText] ?? definition.defaultImportance;
+          const importedImportance = RULE_IMPORTANCE[importanceText] ?? definition.defaultImportance;
+          const importance = definition.importanceOptions.includes(importedImportance)
+            ? importedImportance
+            : definition.defaultImportance;
           rules.push({
             id: uid('rule'),
             kind,
