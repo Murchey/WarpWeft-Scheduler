@@ -179,7 +179,19 @@ export interface AuthSession {
 }
 
 export async function fetchHealth(): Promise<ServerHealth> {
-  return fetchHealthAt(getApiBase());
+  const endpoint = getApiBase();
+  try {
+    return await fetchHealthAt(endpoint);
+  } catch (firstError) {
+    // A service restart or a short network handover should not immediately
+    // turn the workspace into a permanent offline state.
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 500));
+    try {
+      return await fetchHealthAt(endpoint);
+    } catch {
+      throw firstError;
+    }
+  }
 }
 
 /** Check a candidate endpoint before changing the active runtime mode. */

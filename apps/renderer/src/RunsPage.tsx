@@ -141,6 +141,12 @@ export function RunsPage({
                 ))}
               </div>
               <p className="panel-note">这些是硬性规则，不需要手动配置；求解器会优先保证。当前已启用 <b>{activeRules(data).length}</b> 条自定义偏好规则。</p>
+              <div className="model-boundary-note" aria-label="求解器模型支持边界">
+                <b>模型边界</b>
+                <span>普通教学计划按单教师建模；走班组支持多个教师块。</span>
+                <span>{data.roomMode === 'full' ? '完整教室模式会检查容量、类型和同槽冲突。' : '简化教室模式按班级固定教室处理，不参与教室池优化。'}</span>
+                <span>配对单双周和连堂按同槽/连续时段约束处理，复杂协同教学需拆成走班块。</span>
+              </div>
             </>
           )}
         </section>
