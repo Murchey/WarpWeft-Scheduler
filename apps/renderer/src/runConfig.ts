@@ -108,6 +108,8 @@ export interface ShortRunRecord {
   totalPeriods: number;
   /** 启动时的运行模式，便于回看当时连接的是本机还是服务端。 */
   runMode: RunMode | null;
+  /** 用于复现启发式搜索结果的随机种子。 */
+  randomSeed: number;
   /** 完整结果快照；仅在本次会话内存中保留。 */
   result: SolverOutput;
 }

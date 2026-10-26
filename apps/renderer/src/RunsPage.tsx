@@ -11,10 +11,10 @@ import { ShortRunDialog } from './ShortRunDialog';
 import type { LongJob, LongJobDetail } from './api';
 
 export function RunsPage({
-  data, result, issues, running, progress, timeLimit, setTimeLimit, onRun, onRepair, onTimetable, onClear, runMode, shortRuns, onDeleteShortRun, inputFactory, onApplyLongResult, onNotice, onError,
+  data, result, issues, running, progress, timeLimit, setTimeLimit, randomSeed, setRandomSeed, onRun, onRepair, onTimetable, onClear, runMode, shortRuns, onDeleteShortRun, inputFactory, onApplyLongResult, onNotice, onError,
 }: {
   data: SchoolData; result: SolverOutput | null; issues: string[]; running: boolean; progress: RunProgress;
-  timeLimit: number; setTimeLimit: (value: number) => void; onRun: () => void;
+  timeLimit: number; setTimeLimit: (value: number) => void; randomSeed: number; setRandomSeed: (value: number) => void; onRun: () => void;
   onRepair: (scope: 'class' | 'teacher' | 'rule', id: string) => Promise<void>;
   onTimetable: () => void; onClear: () => void; runMode?: RunMode | null;
   shortRuns: ShortRunRecord[];
@@ -162,20 +162,20 @@ export function RunsPage({
               </div>
               {computeMode === 'short' ? (
                 <>
-                  <div className="run-controls"><label>计算时限<select value={timeLimit} disabled={!canConfigure} onChange={(event) => setTimeLimit(Number(event.target.value))}><option value={10}>10 秒</option><option value={30}>30 秒</option><option value={60}>60 秒</option><option value={120}>120 秒</option></select></label></div>
+                  <div className="run-controls"><label>计算时限<select value={timeLimit} disabled={!canConfigure} onChange={(event) => setTimeLimit(Number(event.target.value))}><option value={10}>10 秒</option><option value={30}>30 秒</option><option value={60}>60 秒</option><option value={120}>120 秒</option></select></label><label>随机种子<input type="number" min="0" step="1" value={randomSeed} disabled={!canConfigure} onChange={(event) => setRandomSeed(Math.max(0, Math.floor(Number(event.target.value) || 0)))} /></label></div>
                   {expected > 400 ? (
                     <div className="run-recommendation">
                       <p className="panel-note">本次 {expected} 课时，建议至少运行 {recommendedTimeLimit} 秒。增加时限只能尝试更多随机起点，不能证明最优或无解；未排满时请先检查未排项。</p>
                       {timeLimit !== recommendedTimeLimit ? <button type="button" className="ghost-button" onClick={() => setTimeLimit(recommendedTimeLimit)}>采用 {recommendedTimeLimit} 秒建议</button> : null}
                     </div>
                   ) : null}
-                  <div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div>
+                  <div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>随机种子<strong>{randomSeed}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div>
                 </>
               ) : (
                 <>
                   <div className="run-controls"><label>任务时限<select value={longSeconds} disabled={!canConfigure} onChange={(event) => setLongSeconds(Number(event.target.value))}><option value={1800}>30 分钟</option><option value={3600}>1 小时</option><option value={7200}>2 小时</option><option value={21600}>6 小时（上限）</option></select></label></div>
                   <p className="panel-note">长时任务在后台持续优化，可暂停/继续；检查点会写入服务端。启动入口统一在第 04 步，任务状态和历史在下方“任务与历史”面板展开查看。</p>
-                  <div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div>
+                  <div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>随机种子<strong>{randomSeed}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div>
                 </>
               )}
             </>

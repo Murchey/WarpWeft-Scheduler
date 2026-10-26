@@ -288,6 +288,7 @@ function toSolverInput(
   data: SchoolData,
   timeLimit: number,
   locked: ScheduleEntry[],
+  randomSeed = 1,
 ): SolverInput {
   const resolvedPlans = assignMissingTeachers(data).plans;
   const planById = new Map(resolvedPlans.map((plan) => [plan.id, plan]));
@@ -335,7 +336,7 @@ function toSolverInput(
     rules: data.rules ?? [],
     softConstraints: data.softConstraints ?? BASE_SOFT_CONSTRAINTS,
     timeLimitSeconds: timeLimit,
-    randomSeed: 1,
+    randomSeed: Number.isFinite(randomSeed) ? Math.max(0, Math.floor(randomSeed)) : 1,
   };
 }
 
@@ -761,6 +762,7 @@ function App() {
   const [exportBatch, setExportBatch] = useState(false);
   const [history, setHistory] = useState<SolverOutput[]>([]);
   const [timeLimit, setTimeLimit] = useState(30);
+  const [randomSeed, setRandomSeed] = useState(1);
   const saveTimer = useRef<number | null>(null);
   const pending = useRef<SchoolData | null>(null);
 
@@ -993,20 +995,21 @@ function App() {
     }
   };
 
+  const makeCandidateVersion = (fixed: SolverOutput, source: 'solver' | 'manual') => ({
+    id: uid('version'),
+    kind: 'candidate' as const,
+    createdAt: new Date().toISOString(),
+    source,
+    parentId: data?.candidateVersion?.id ?? data?.publishedVersion?.id,
+    summary: `${fixed.entries.length} 条课时 · ${fixed.outcome ?? fixed.status}`,
+    adjustmentCount: (data?.adjustments ?? []).filter((item) => item.status === 'active').length,
+  });
+
   const applyResult = (next: SolverOutput, audit?: { action: string; detail: string }) => {
     const fixed = data ? withFixedClassRoomsResult(data, next) : next;
     setResult(fixed);
     if (!data) return;
-    const versionAt = new Date().toISOString();
-    const candidateVersion = {
-      id: uid('version'),
-      kind: 'candidate' as const,
-      createdAt: versionAt,
-      source: audit ? 'manual' as const : 'solver' as const,
-      parentId: data.candidateVersion?.id ?? data.publishedVersion?.id,
-      summary: `${fixed.entries.length} 条课时 · ${fixed.outcome ?? fixed.status}`,
-      adjustmentCount: (data.adjustments ?? []).filter((item) => item.status === 'active').length,
-    };
+    const candidateVersion = makeCandidateVersion(fixed, audit ? 'manual' : 'solver');
     const updated = {
       ...data,
       candidate: fixed,
@@ -1314,7 +1317,7 @@ function App() {
       setProgress({ phase: 'solving', message: 'Solver 正在计算可行课表', startedAt: Date.now() });
       const output = withFixedClassRoomsResult(
         data,
-        restoreUnassignedTeachers(await solveSchedule(toSolverInput(data, timeLimit, locked))),
+        restoreUnassignedTeachers(await solveSchedule(toSolverInput(data, timeLimit, locked, randomSeed))),
       );
       setProgress({ phase: 'finalizing', message: '正在保存候选课表并整理结果', startedAt: Date.now() });
       setResult(output);
@@ -1330,9 +1333,10 @@ function App() {
         lockedCount: locked.length,
         totalPeriods: data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0),
         runMode,
+        randomSeed,
         result: output,
       }, ...current].slice(0, 12));
-      const updated = { ...data, candidate: output };
+      const updated = { ...data, candidate: output, candidateVersion: makeCandidateVersion(output, 'solver') };
       setData(updated);
       pending.current = updated;
       if (apiOnline) {
@@ -1367,7 +1371,7 @@ function App() {
     const temp = { ...data, rules: (data.rules ?? []).map((item) => item.id === rule.id ? { ...item, enabled: false } : item) };
     const locked = data.candidate?.entries.filter((entry) => entry.locked) ?? [];
     try {
-      const output = restoreUnassignedTeachers(await solveSchedule(toSolverInput(temp, 30, locked)));
+      const output = restoreUnassignedTeachers(await solveSchedule(toSolverInput(temp, 30, locked, randomSeed)));
       const total = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
       const before = data.candidate?.entries.length ?? 0;
       return { entries: output.entries.length, total, before, feasible: output.hasFeasibleSolution, elapsedMs: output.elapsedMs };
@@ -1388,7 +1392,7 @@ function App() {
     setError('');
     setProgress({ phase: 'solving', message: '正在局部重排所选范围', startedAt: Date.now() });
     try {
-      const output = restoreUnassignedTeachers(await solveSchedule(toSolverInput(data, timeLimit, locked)));
+      const output = restoreUnassignedTeachers(await solveSchedule(toSolverInput(data, timeLimit, locked, randomSeed)));
       const repaired = withFixedClassRoomsResult(data, {
         ...output,
         entries: output.entries.map((entry) => ({
@@ -1410,9 +1414,10 @@ function App() {
         lockedCount: originalLocked.size,
         totalPeriods: data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0),
         runMode,
+        randomSeed,
         result: repaired,
       }, ...current].slice(0, 12));
-      const updated = { ...data, candidate: repaired };
+      const updated = { ...data, candidate: repaired, candidateVersion: makeCandidateVersion(repaired, 'solver') };
       setData(updated);
       pending.current = updated;
       if (apiOnline) {
@@ -2002,11 +2007,13 @@ function App() {
             onDeleteShortRun={deleteShortRun}
             timeLimit={timeLimit}
             setTimeLimit={setTimeLimit}
+            randomSeed={randomSeed}
+            setRandomSeed={setRandomSeed}
             onRun={run}
             onRepair={repairSchedule}
             onTimetable={() => setTab('课表预览')}
             onClear={clearCandidate}
-            inputFactory={(seconds) => toSolverInput(data, seconds, data.candidate?.entries.filter((entry) => entry.locked) ?? [])}
+            inputFactory={(seconds) => toSolverInput(data, seconds, data.candidate?.entries.filter((entry) => entry.locked) ?? [], randomSeed)}
             onApplyLongResult={applyLongResult}
             onNotice={setNotice}
             onError={setError}

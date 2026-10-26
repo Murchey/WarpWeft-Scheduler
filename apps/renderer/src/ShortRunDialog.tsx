@@ -89,6 +89,7 @@ export function ShortRunDialog({
             <div><dt>软目标质量</dt><dd>{run.result.softScore}</dd></div>
             <div><dt>耗时</dt><dd>{run.elapsedMs.toLocaleString('zh-CN')} ms</dd></div>
             <div><dt>计算时限</dt><dd>{timeLimitSeconds} 秒</dd></div>
+            <div><dt>随机种子</dt><dd>{run.randomSeed}</dd></div>
             <div><dt>锁定课时</dt><dd>{run.lockedCount}</dd></div>
             <div><dt>运行模式</dt><dd>{runModeLabel}</dd></div>
           </dl>
