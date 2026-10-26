@@ -2066,6 +2066,7 @@ function App() {
             onPrint={() => window.print()}
             onTimetable={() => setTab('课表预览')}
             onRules={() => { setPrepareSection('rules'); setTab('排课准备'); }}
+            onAdjust={() => setTab('调代课')}
             onRun={() => setTab('排课任务')}
             onClear={clearCandidate}
             onSaveOfficial={saveOfficial}

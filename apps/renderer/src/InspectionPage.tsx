@@ -94,6 +94,7 @@ export function InspectionPage({
   onPrint,
   onTimetable,
   onRules,
+  onAdjust,
   onRun,
   onClear,
   adjustmentDays,
@@ -113,6 +114,7 @@ export function InspectionPage({
   onPrint: () => void;
   onTimetable: () => void;
   onRules: () => void;
+  onAdjust: () => void;
   onRun: () => void;
   onClear: () => void;
   adjustmentDays: { date: string; label: string; count: number; summary: string }[];
@@ -313,6 +315,7 @@ export function InspectionPage({
                   </small>
                 </div>
                 {issue.category === 'RULE' ? <button className="ghost-button inspect-locate" onClick={onRules}>去规则</button> : null}
+                {issue.category === 'UNPLACED' || issue.category === 'TEACHER_UNAVAILABLE' ? <button className="ghost-button inspect-locate" onClick={onAdjust}>去调整</button> : null}
                 <button className="ghost-button inspect-locate" disabled={!hasTarget(issue.refs)} onClick={() => onLocate(issue.refs)}>
                   定位
                 </button>

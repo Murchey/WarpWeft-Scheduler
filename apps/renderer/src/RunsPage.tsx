@@ -25,6 +25,7 @@ export function RunsPage({
   onError: (message: string) => void;
 }) {
   const expected = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
+  const recommendedTimeLimit = expected > 800 ? 120 : expected > 400 ? 60 : 30;
   const availableTotal = data.classes.length * data.timeSlots.length;
   const missing = result ? missingPlans(data, result) : [];
   const [repairScope, setRepairScope] = useState<'class' | 'teacher' | 'rule'>('class');
@@ -162,7 +163,12 @@ export function RunsPage({
               {computeMode === 'short' ? (
                 <>
                   <div className="run-controls"><label>计算时限<select value={timeLimit} disabled={!canConfigure} onChange={(event) => setTimeLimit(Number(event.target.value))}><option value={10}>10 秒</option><option value={30}>30 秒</option><option value={60}>60 秒</option><option value={120}>120 秒</option></select></label></div>
-                  {expected > 400 ? <p className="panel-note">本次 {expected} 课时，建议选 60–120 秒。增加时限可以尝试更多随机起点；未排满还可能与固定时间、教师时间或规则组合有关，请先检查未排项再决定是否放宽规则。</p> : null}
+                  {expected > 400 ? (
+                    <div className="run-recommendation">
+                      <p className="panel-note">本次 {expected} 课时，建议至少运行 {recommendedTimeLimit} 秒。增加时限只能尝试更多随机起点，不能证明最优或无解；未排满时请先检查未排项。</p>
+                      {timeLimit !== recommendedTimeLimit ? <button type="button" className="ghost-button" onClick={() => setTimeLimit(recommendedTimeLimit)}>采用 {recommendedTimeLimit} 秒建议</button> : null}
+                    </div>
+                  ) : null}
                   <div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div>
                 </>
               ) : (
