@@ -372,20 +372,6 @@ export function LongRunPanel({
     onApplyResult(job);
   };
 
-  const previousStatusRef = useRef<string | null>(null);
-  const promptedCompletionRef = useRef('');
-  useEffect(() => {
-    const status = job?.status ?? null;
-    const previous = previousStatusRef.current;
-    previousStatusRef.current = status;
-    if (!job || status !== 'completed' || previous === 'completed') return;
-    if (!job.bestEntries || job.bestEntries.length === 0) return;
-    const key = job.id + ':' + (job.bestUpdatedAt || '');
-    if (promptedCompletionRef.current === key) return;
-    promptedCompletionRef.current = key;
-    if (window.confirm('长时排课任务已完成。是否载入最佳课表？')) applyBest();
-  }, [job, applyBest]);
-
   return (
     <section className="section-panel long-run">
       <div className="panel-head">
@@ -463,6 +449,9 @@ export function LongRunPanel({
             </span>
           </div>
           <p className="panel-note">已排比例表示当前最佳候选覆盖的课时，不表示搜索完成度或最优性。时限内未排满不能证明无解。</p>
+          {job.status === 'completed' && job.bestEntries.length > 0 ? (
+            <p className="panel-note">任务已完成，最佳课表已保存。需要使用时，点击“载入最佳课表”。</p>
+          ) : null}
           {job.error ? <p className="panel-note">{job.error}</p> : null}
           <div className="long-actions">
             {isRunning ? (
