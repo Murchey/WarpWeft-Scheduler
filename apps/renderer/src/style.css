@@ -1633,6 +1633,7 @@ html[data-theme='dark'] .tt-warning.is-danger{background:#2b1717;color:#fca5a5}
 .model-boundary-note b{color:var(--ink);font:600 10px var(--font-ui);letter-spacing:.08em}
 .run-recommendation{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
 .run-recommendation .panel-note{flex:1 1 280px;margin:0}
+.repair-scope-summary{grid-column:1/-1;padding:7px 9px;border:1px solid var(--rule);background:var(--chip);font:11px var(--font-ui);color:var(--muted)}
 .mode-test-success{display:block;color:var(--success,#247a46)}
 .mode-test-error{display:block;color:var(--danger)}
 .short-run-entries-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;padding-bottom:7px;border-bottom:1px solid var(--ink)}

@@ -5,7 +5,7 @@ import { RUN_MODE_OPTIONS, runResultText, runStatusText } from './runConfig';
 import { SectionHeading } from './components';
 import { EmptyState, MissingReasons, RunProgressView } from './runViews';
 import { missingPlans } from './selectors';
-import { activeRules, describeRule } from './rules';
+import { activeRules, describeRule, matchedPlans } from './rules';
 import { LongRunPanel } from './LongRunPanel';
 import { ShortRunDialog } from './ShortRunDialog';
 import type { LongJob, LongJobDetail } from './api';
@@ -53,6 +53,18 @@ export function RunsPage({
       ? data.teachers
       : (data.rules ?? []).map((rule) => ({ id: rule.id, name: describeRule(rule, data) }));
   const currentRepairId = repairEntities.some((item) => item.id === repairId) ? repairId : (repairEntities[0]?.id ?? '');
+  const repairScopeRule = repairScope === 'rule' ? (data.rules ?? []).find((rule) => rule.id === currentRepairId) : undefined;
+  const repairScopePlanIds = repairScope === 'rule'
+    ? new Set(repairScopeRule ? matchedPlans(repairScopeRule, data).map((plan) => plan.id) : [])
+    : null;
+  const repairRangeEntries = result?.entries.filter((entry) =>
+    repairScope === 'class'
+      ? entry.classId === currentRepairId
+      : repairScope === 'teacher'
+        ? entry.teacherId === currentRepairId
+        : Boolean(repairScopePlanIds?.has(entry.coursePlanId)),
+  ) ?? [];
+  const repairLockedInRange = repairRangeEntries.filter((entry) => entry.locked).length;
   const checked = issues.length === 0;
   const canConfigure = checked && !running;
   const lockedCount = data.candidate?.entries.filter((entry) => entry.locked).length ?? 0;
@@ -288,6 +300,7 @@ export function RunsPage({
             {result.entries.length > 0 ? (
               <div className="repair-controls">
                 <div><span className="kicker">// LOCAL REPAIR</span><b>局部重排</b><small>只重排所选范围，其他课程保持当前位置。</small></div>
+                <div className="repair-scope-summary">范围内 {repairRangeEntries.length} 条 · 可移动 {Math.max(0, repairRangeEntries.length - repairLockedInRange)} 条 · 锁定 {repairLockedInRange} 条 · 范围外 {Math.max(0, result.entries.length - repairRangeEntries.length)} 条保持不变</div>
                 <div className="repair-actions">
                   <select value={repairScope} onChange={(event) => { const next = event.target.value as 'class' | 'teacher' | 'rule'; setRepairScope(next); const options = next === 'class' ? data.classes : next === 'teacher' ? data.teachers : (data.rules ?? []); setRepairId(options[0]?.id ?? ''); }}>
                     <option value="class">按班级</option><option value="teacher">按教师</option><option value="rule">按规则</option>
