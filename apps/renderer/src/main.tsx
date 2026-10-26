@@ -993,11 +993,17 @@ function App() {
     }
   };
 
-  const applyResult = (next: SolverOutput) => {
+  const applyResult = (next: SolverOutput, audit?: { action: string; detail: string }) => {
     const fixed = data ? withFixedClassRoomsResult(data, next) : next;
     setResult(fixed);
     if (!data) return;
-    const updated = { ...data, candidate: fixed };
+    const updated = {
+      ...data,
+      candidate: fixed,
+      auditLog: audit
+        ? [...(data.auditLog ?? []), { id: uid('audit'), at: new Date().toISOString(), action: audit.action, detail: audit.detail }]
+        : data.auditLog,
+    };
     setData(updated);
     pending.current = updated;
     if (apiOnline) {
@@ -1493,7 +1499,13 @@ function App() {
     const afterHard = afterReport.summary.hard;
     conflictToastSignature.current = conflictSignature(afterReport);
     setHistory((current) => [...current.slice(-19), result]);
-    applyResult({ ...result, entries });
+    applyResult(
+      { ...result, entries },
+      {
+        action: 'TIMETABLE_MOVE',
+        detail: `手动${target ? '交换' : '移动'} · ${planSubjectName(data, movingPlan)} · ${moving.slotId} → ${targetSlotId}`,
+      },
+    );
     if (afterHard === 0 && beforeHard > 0) {
       setNotice('硬冲突已解决：' + beforeHard + ' → 0');
     } else if (afterHard > 0 && afterHard < beforeHard) {
@@ -1504,19 +1516,23 @@ function App() {
   };
 
   const toggleLock = (entryId: string) => {
-    if (!result) return;
+    if (!result || !data) return;
     setHistory((current) => [...current.slice(-19), result]);
     const entries = result.entries.map((entry) =>
       entry.id === entryId ? { ...entry, locked: !entry.locked } : entry,
     );
-    applyResult({ ...result, entries });
+    const changed = result.entries.find((entry) => entry.id === entryId);
+    applyResult(
+      { ...result, entries },
+      changed ? { action: 'TIMETABLE_LOCK', detail: `${changed.locked ? '解锁' : '锁定'} · ${planSubjectName(data, planOf(data, changed))}` } : undefined,
+    );
   };
 
   const undo = () => {
     if (history.length === 0) return;
     const previous = history[history.length - 1];
     setHistory((current) => current.slice(0, -1));
-    applyResult(previous);
+    applyResult(previous, { action: 'TIMETABLE_UNDO', detail: '撤销上一项课表手动调整' });
   };
 
   const saveOfficialFile = (settings: TimetableExportSettings, outcome: ExportResult, exportedName?: string) => {
