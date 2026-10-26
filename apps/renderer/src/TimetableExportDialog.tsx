@@ -33,7 +33,8 @@ export function TimetableExportDialog({
     onProgress: (done: number, total: number) => void,
   ) => Promise<boolean>;
 }) {
-  const canBatch = mode === 'export' && Boolean(onBatchConfirm);
+  // 正式版导出与普通导出共用批量课表链路，避免两套模板填充和命名逻辑漂移。
+  const canBatch = Boolean(onBatchConfirm);
   const entities = initialView === 'teacher' ? data.teachers : initialView === 'room' ? data.rooms : data.classes;
   const initialEntity = entities.some((item) => item.id === initialEntityId) ? initialEntityId : entities[0]?.id || '';
   const [settings, setSettings] = useState<TimetableExportSettings>({
@@ -143,7 +144,7 @@ export function TimetableExportDialog({
 
         {canBatch ? (
           <div className="export-mode-switch" role="group" aria-label="导出方式">
-            <button type="button" className={batch ? '' : 'active'} onClick={() => switchBatch(false)} disabled={busy}>单个课表</button>
+            {mode === 'export' ? <button type="button" className={batch ? '' : 'active'} onClick={() => switchBatch(false)} disabled={busy}>单个课表</button> : null}
             <button type="button" className={batch ? 'active' : ''} onClick={() => switchBatch(true)} disabled={busy}>批量导出</button>
           </div>
         ) : null}
@@ -310,8 +311,8 @@ export function TimetableExportDialog({
               ? '正在导出…'
               : batch
                 ? '批量导出 ' + batchCount + (batchOutput === 'workbook' ? ' 张课表' : ' 个文件')
-                : mode === 'publish'
-                  ? '导出并保存为正式版'
+              : mode === 'publish'
+                ? '导出批量课表并保存为正式版'
                   : '导出 Excel'} <span>↗</span>
           </button>
         </footer>

@@ -1501,10 +1501,10 @@ function App() {
     applyResult(previous);
   };
 
-  const saveOfficialFile = (settings: TimetableExportSettings, outcome: ExportResult) => {
+  const saveOfficialFile = (settings: TimetableExportSettings, outcome: ExportResult, exportedName?: string) => {
     if (!data || !result) return;
     const createdAt = new Date().toISOString();
-    const fileName = timetableFileName(data, settings);
+    const fileName = exportedName ?? timetableFileName(data, settings);
     const audit = {
       id: uid('audit'),
       at: createdAt,
@@ -1535,7 +1535,8 @@ function App() {
       setTab('最终课表');
       return;
     }
-    setExportBatch(false);
+    // 正式版导出复用批量课表流程，确保班级/教师课表使用同一套模板和命名规则。
+    setExportBatch(true);
     setExportOpen('publish');
   };
 
@@ -1731,6 +1732,15 @@ function App() {
           return false;
         }
         setNotice(message.text);
+        if (exportOpen === 'publish') {
+          saveOfficialFile(
+            batchSettings,
+            outcome,
+            output === 'files'
+              ? batchTimetableFolderName(data, batchSettings, selection)
+              : batchTimetableFileName(data, batchSettings, selection),
+          );
+        }
         return true;
       }
       const filled = await fillBatchTimetableTemplate(template, data, batchTarget, items, onProgress);
@@ -1747,6 +1757,9 @@ function App() {
         return false;
       }
       setNotice(message.text + '（共 ' + items.length + ' 张工作表）');
+      if (exportOpen === 'publish') {
+        saveOfficialFile(batchSettings, outcome, batchTimetableFileName(data, batchSettings, selection));
+      }
       return true;
     } catch (cause) {
       setError('批量导出课表失败：' + messageOf(cause));
