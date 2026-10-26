@@ -1466,9 +1466,22 @@ export function AdjustmentsPage({
   const selectedTeacher = findTeacher(data, selectedTeacherId);
   const selectedRoom = findRoom(data, selectedRoomId);
   const availableCandidates = candidates.filter((item) => !item.unavailable).length;
+  const currentStep: number = impact ? 4 : selected ? 3 : 1;
 
   return (
     <div className="adjust-layout">
+      <nav className="adjust-stepper" aria-label="调代课步骤">
+        {[
+          ['01', '选择日期/班级', currentStep === 1],
+          ['02', '选择课程', currentStep === 2],
+          ['03', '预览动作', currentStep === 3],
+          ['04', '保存/撤销', currentStep === 4],
+        ].map(([number, label, active]) => (
+          <div key={String(number)} className={'adjust-step' + (active ? ' is-active' : '')}>
+            <span>{number}</span><b>{label}</b>
+          </div>
+        ))}
+      </nav>
       <p className="adjust-lead">
         调整只作用于所选日期，不改动周课表。调课用于同一天的空节次，也可以直接拖动课程卡片；对调用于与另一天的同班课程互换，每班固定教室随班级走，系统只检查两天的班级和教师占用。绿色可放，红色会说明原因。
       </p>

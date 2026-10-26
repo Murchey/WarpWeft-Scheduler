@@ -4,7 +4,7 @@ import { HeroUIProvider, Button, Card, CardBody, Chip, Progress, Select, SelectI
 import { validateInput } from '../../../packages/validation/src';
 import { consecutiveOf, fixedSlotIdsOf } from '../../../packages/contracts/src';
 import { exportCsv, exportWorkbook, readWorkbook } from '../../../packages/import-export/src';
-import { ApiError, cancelServerJob, clearAuthToken, createUser, DEFAULT_API_BASE, deleteServerClient, deleteUser, fetchHealth, fetchMe, fetchServerOverview, fetchUsers, getApiBase, getAuthToken, loadData, login, logout, registerUnauthorizedHandler, saveData, setAuthToken, solveSchedule, updateServerConfig, updateUser } from './api';
+import { ApiError, cancelServerJob, clearAuthToken, createUser, DEFAULT_API_BASE, deleteServerClient, deleteUser, fetchHealth, fetchHealthAt, fetchMe, fetchServerOverview, fetchUsers, getApiBase, getAuthToken, loadData, login, logout, registerUnauthorizedHandler, saveData, setAuthToken, solveSchedule, updateServerConfig, updateUser } from './api';
 import { DAYS, SectionHeading } from './components';
 import { PreparePage } from './PreparePage';
 import type { PrepareSection } from './PreparePage';
@@ -81,6 +81,8 @@ function RuntimeModeDialog({ current, onSave, onClose }: { current: RunMode | nu
   const [mode, setMode] = useState<RunMode>(current ?? 'single');
   const [memory] = useState<EndpointMemory>(() => readEndpointMemory(window.localStorage));
   const [endpoint, setEndpoint] = useState(() => initialEndpointForMode(mode, current ? readActiveEndpoint(window.localStorage) : '', memory, DEFAULT_API_BASE));
+  const [testing, setTesting] = useState(false);
+  const [testMessage, setTestMessage] = useState('');
   const endpointValid = (() => {
     try {
       const url = new URL(endpoint);
@@ -102,6 +104,19 @@ function RuntimeModeDialog({ current, onSave, onClose }: { current: RunMode | nu
     rememberEndpoint(memory, mode, normalized, DEFAULT_API_BASE);
     writeEndpointMemory(memory, window.localStorage);
     onSave(mode, normalized);
+  };
+  const testConnection = async () => {
+    if (!endpointValid) return;
+    setTesting(true);
+    setTestMessage('正在连接…');
+    try {
+      const health = await fetchHealthAt(endpoint);
+      setTestMessage(`连接成功 · schema v${health.schemaVersion ?? '未知'} · Solver ${health.solverProtocol ?? '未知'}`);
+    } catch (cause) {
+      setTestMessage('连接失败：' + (cause instanceof Error ? cause.message : String(cause)));
+    } finally {
+      setTesting(false);
+    }
   };
   return (
     <div className="mode-overlay" role="dialog" aria-modal="true">
@@ -127,9 +142,11 @@ function RuntimeModeDialog({ current, onSave, onClose }: { current: RunMode | nu
             {mode === 'single' || mode === 'lan-server' ? '本机模式使用默认地址即可。' : '请输入可访问的服务端 API 地址。'}
             {endpoint && !endpointValid ? ' 地址格式无效。' : ''}
           </small>
+          {testMessage ? <small className={testMessage.startsWith('连接成功') ? 'mode-test-success' : 'mode-test-error'}>{testMessage}</small> : null}
         </label>
         <div className="mode-actions">
           <button className="ghost-button" onClick={onClose} disabled={!current}>取消</button>
+          <button className="ghost-button" disabled={!endpointValid || testing} onClick={() => void testConnection()}>{testing ? '测试中…' : '测试连接'}</button>
           <button className="action-button" disabled={!endpointValid} onClick={save}>{current ? '保存设置' : '进入工作台'} <span>↗</span></button>
         </div>
       </div>

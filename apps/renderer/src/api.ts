@@ -179,7 +179,13 @@ export interface AuthSession {
 }
 
 export async function fetchHealth(): Promise<ServerHealth> {
-  const response = await request(`${getApiBase()}/api/health`, { cache: 'no-store' }, 8000);
+  return fetchHealthAt(getApiBase());
+}
+
+/** Check a candidate endpoint before changing the active runtime mode. */
+export async function fetchHealthAt(endpoint: string): Promise<ServerHealth> {
+  const base = endpoint.trim().replace(/\/+$/, '');
+  const response = await request(`${base}/api/health`, { cache: 'no-store' }, 8000);
   const text = await response.text();
   if (!response.ok) throw failure(response, text);
   return JSON.parse(text) as ServerHealth;
