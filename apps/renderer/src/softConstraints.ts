@@ -37,7 +37,7 @@ export const SOFT_CONSTRAINT_DEFINITIONS: SoftConstraintDefinition[] = [
   {
     kind: 'SUBJECT_TIME_PREFERENCE',
     label: '学科时段偏好',
-    description: '按学科的「上午 / 下午」偏好排课：语文、数学等主科优先上午，阅读、班会等活动类优先下午。',
+    description: '按学科的「上午 / 下午」偏好排课：在「学科」表把主科设为上午、副科设为下午，再用这里的权重控制优先程度。',
     defaultWeight: 2,
   },
 ];
