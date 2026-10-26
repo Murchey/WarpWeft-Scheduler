@@ -32,7 +32,10 @@ function RulesPage({
   const [simulating, setSimulating] = useState('');
   const [simulations, setSimulations] = useState<Record<string, string>>({});
   const saveRules = (next: RuleInstance[]) => {
+    if (data.candidate && !window.confirm('应用规则修改将清除当前候选课表，包括锁定课程和手动调整，需重新排课。正式版保留。确认应用？取消会保留当前编辑内容。')) return false;
     commit({ ...data, rules: next }, { invalidate: true });
+    setSimulations({});
+    return true;
   };
   const visible = rules.filter((rule) => filter === 'all' || definitionOf(rule.kind).category === filter);
   const enabled = rules.filter((rule) => rule.enabled).length;
@@ -53,9 +56,9 @@ function RulesPage({
   const saveDraft = (next: RuleInstance) => {
     const exists = rules.some((rule) => rule.id === next.id);
     if (exists) {
-      saveRules(rules.map((rule) => rule.id === next.id ? next : rule));
+      if (!saveRules(rules.map((rule) => rule.id === next.id ? next : rule))) return;
     } else {
-      saveRules([...rules, next]);
+      if (!saveRules([...rules, next])) return;
     }
     setDraft(null);
   };

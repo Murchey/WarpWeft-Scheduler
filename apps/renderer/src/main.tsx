@@ -1227,7 +1227,8 @@ function App() {
     }
     const output: SolverOutput = {
       protocolVersion: '1.0',
-      status: job.unplaced === 0 && dropped === 0 ? 'COMPLETED' : 'FEASIBLE',
+      status: job.unplaced === 0 && dropped === 0 ? 'COMPLETED' : 'FAILED',
+      outcome: job.unplaced === 0 && dropped === 0 ? 'feasible' : 'partial',
       entries,
       hardConstraintViolations: [],
       softScore: job.score ?? 0,
@@ -2150,7 +2151,9 @@ function Dashboard({
   const stateLabel = result
     ? ['COMPLETED', 'FEASIBLE', 'IMPROVED', 'OPTIMAL'].includes(result.status)
       ? '就绪'
-      : result.status === 'TIMEOUT'
+      : result.outcome === 'partial'
+        ? '未排满'
+      : result.outcome === 'timeout'
         ? '超时'
         : '失败'
     : '待排课';
@@ -2172,7 +2175,7 @@ function Dashboard({
           <div className="readout-track">
             <i style={{ width: result ? '100%' : ready ? '62%' : '28%' }} />
           </div>
-          <small>{result ? '候选方案已生成' : ready ? '数据已就绪，可以排课' : '还有 ' + issues.length + ' 项需要处理'}</small>
+          <small>{result?.outcome === 'partial' ? '已生成部分候选，仍需处理未排课时' : result?.outcome === 'timeout' ? '当前时限内未找到完整课表' : result ? '候选方案已生成' : ready ? '数据已就绪，可以排课' : '还有 ' + issues.length + ' 项需要处理'}</small>
         </div>
       </section>
       <section className="number-strip">

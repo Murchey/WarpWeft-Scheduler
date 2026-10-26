@@ -55,6 +55,8 @@ public final class SolverProtocol {
             System.out.println(JSON.writeValueAsString(result));
         } catch (Throwable error) {
             ObjectNode result = failure("unknown", List.of("Java 求解器异常：" + error.getMessage()));
+            result.put("outcome", "error");
+            result.put("explanation", "求解器运行异常，无法判断课表是否可行");
             result.put("elapsedMs", (System.nanoTime() - started) / 1_000_000);
             try {
                 System.out.println(JSON.writeValueAsString(result));
@@ -332,12 +334,14 @@ public final class SolverProtocol {
         result.put("explanation", entries.isEmpty() ? "Java 求解器没有生成课表" : "Java 求解器未完成全部课程安排");
         result.put("elapsedMs", 0);
         result.put("hasFeasibleSolution", false);
+        result.put("outcome", "error");
         return result;
     }
 
     public static ObjectNode failure(String protocolVersion, List<String> violations) {
         ObjectNode result = baseResult(protocolVersion, "FAILED", violations, List.of());
         result.put("explanation", "排课失败：存在无法满足的硬约束");
+        result.put("outcome", "hard-conflict");
         return result;
     }
 
@@ -356,6 +360,7 @@ public final class SolverProtocol {
         result.put("explanation", "Java 21 求解器已生成可行课表");
         result.put("elapsedMs", (System.nanoTime() - started) / 1_000_000);
         result.put("hasFeasibleSolution", true);
+        result.put("outcome", "feasible");
         return result;
     }
 }

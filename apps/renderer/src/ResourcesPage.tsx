@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { buildImportTemplate, normalizeGradeList, readWorkbookWithMeta } from '../../../packages/import-export/src';
 import type { ClassRoom, Commit, CoursePlan, Room, SchoolData, SlotKind, Subject, Teacher, TimeSlot } from './types';
 import { DAYS, EditableTable, SectionHeading } from './components';
@@ -14,6 +14,7 @@ import type { RuleImportance, RuleInstance, RuleKind, RuleScope, RuleTime } from
 import { parseSubjectPreference, suggestedSubjectPreference } from './subjectPreferences';
 import { fixedSlotIdsOf } from '../../../packages/contracts/src';
 import { normalizeSoftConstraints, withSoftWeight } from './softConstraints';
+import { importChanges } from './importReview';
 
 type ResourceCollection = 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots';
 
@@ -110,6 +111,9 @@ function ResourcesPage({
 }) {
   const days = DAYS.slice(1).map((label, index) => ({ value: String(index + 1), label }));
   const [replaceOnImport, setReplaceOnImport] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
+  const importBusyRef = useRef(false);
+  const [importDraft, setImportDraft] = useState<{ name: string; base: SchoolData; next: SchoolData; replace: boolean } | null>(null);
   const [importFeedback, setImportFeedback] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [batchDays, setBatchDays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [batchFrom, setBatchFrom] = useState(1);
@@ -380,9 +384,12 @@ function ResourcesPage({
   };
 
   const importWorkbookFile = async (file: File) => {
+    if (importBusyRef.current) return;
+    importBusyRef.current = true;
+    setImportBusy(true);
+    setImportDraft(null);
     setImportFeedback(null);
     try {
-      if (replaceOnImport && !window.confirm('导入前将清空当前工作区的基础资料、时间段和教学计划，确定继续？')) return;
       const parsed = readWorkbookWithMeta(await file.arrayBuffer());
       const rows = parsed.rows;
       const meta = parsed.meta;
@@ -1069,29 +1076,32 @@ function ResourcesPage({
         setError('导入校验未通过（未写入数据）：\n' + issues.join('\n'));
         return;
       }
-      commit(next, { invalidate: true, immediate: true });
+      setImportDraft({ name: file.name, base: data, next, replace: replaceOnImport });
       setError('');
-      const summary =
-        '班级 ' +
-        next.classes.length +
-        '，教师 ' +
-        next.teachers.length +
-        '，学科 ' +
-        next.subjects.length +
-        '，教室 ' +
-        next.rooms.length +
-        '，时间段 ' +
-        next.timeSlots.length +
-        '，教学计划 ' +
-        next.coursePlans.length +
-        (teacherTimeSheetFound ? '，教师不可用时间 ' + (next.unavailableSlots?.length ?? 0) : '');
-      setImportFeedback({ tone: 'success', text: (replaceOnImport ? '已清空并导入：' : '导入完成：') + summary });
-      setNotice((replaceOnImport ? '已清空并导入：' : 'Excel 导入完成：') + summary);
     } catch (cause) {
       const failure = 'Excel 导入失败：' + messageOf(cause);
       setImportFeedback({ tone: 'error', text: failure });
       setError(failure);
+    } finally {
+      importBusyRef.current = false;
+      setImportBusy(false);
     }
+  };
+
+  const confirmImport = () => {
+    if (!importDraft) return;
+    if (importDraft.base !== data) {
+      setImportDraft(null);
+      setImportFeedback({ tone: 'error', text: '预览后工作区已改变，请重新选择文件生成预览，避免覆盖新修改。' });
+      return;
+    }
+    const summary = importChanges(data, importDraft.next)
+      .filter(row => row.added || row.changed || row.removed)
+      .map(row => row.label + '：新增 ' + row.added + '、修改 ' + row.changed + '、移除 ' + row.removed).join('；');
+    commit(importDraft.next, { invalidate: true, immediate: true });
+    setImportDraft(null);
+    setImportFeedback({ tone: 'success', text: '已应用导入到工作区。' + (summary || '数据无变化。') + ' 请查看顶部保存状态。' });
+    setNotice('Excel 导入已应用，请查看保存状态');
   };
 
   const downloadTemplate = async () => {
@@ -1144,10 +1154,11 @@ function ResourcesPage({
           <p className="panel-note">先填 3 张必填表即可导入：<b>班级、学科、教学计划</b>。学校、学期、教师、教室、时间段可后补；模板“说明”按工作表分节列出字段、必填项和示例，表头带 * 的列必须填写，多值字段表头会注明分隔符（如“分号分隔”“用、分隔”），第 2 行灰色示例行请在导入前删除。教室可整表留空，时间段先填每天最多节数。</p>
           <div className="import-actions">
             <label className="file-button file-button-primary">
-              <span>选择 Excel 文件</span>
+              <span>{importBusy ? '正在解析与校验…' : '选择文件并预览'}</span>
               <input
                 type="file"
                 accept=".xlsx,.xls"
+                disabled={importBusy}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   if (file) void importWorkbookFile(file);
@@ -1165,17 +1176,38 @@ function ResourcesPage({
             </p>
           ) : null}
           <label className="import-replace">
-            <input type="checkbox" checked={replaceOnImport} onChange={(event) => setReplaceOnImport(event.target.checked)} />
+            <input type="checkbox" checked={replaceOnImport} disabled={importBusy || Boolean(importDraft)} onChange={(event) => setReplaceOnImport(event.target.checked)} />
             <span>导入前清空当前工作区</span>
           </label>
           <label className="import-replace">
             <input
               type="checkbox"
               checked={(data.roomMode ?? 'simplified') !== 'full'}
+              disabled={importBusy || Boolean(importDraft)}
               onChange={(event) => commit({ ...data, roomMode: event.target.checked ? 'simplified' : 'full' }, { invalidate: true })}
             />
             <span>简化模式（每班一间固定教室，不需要教室表）</span>
           </label>
+          {importDraft ? (
+            <section className="import-review" aria-label="导入变更预览">
+              <h3>变更预览 · {importDraft.name}</h3>
+              <p className="panel-note">解析与格式校验已完成，尚未写入。{importDraft.replace ? '本次先清空再导入，会移除旧记录。' : '基础资料按现有导入规则合并；含有效行的教学计划、规则、教师时间表整体替换对应集合。'}</p>
+              <div className="import-review-table"><table>
+                <thead><tr><th>数据</th><th>原有 → 导入后</th><th>新增</th><th>修改</th><th>移除</th><th>不变</th></tr></thead>
+                <tbody>{importChanges(importDraft.base, importDraft.next).map(row => (
+                  <tr key={row.key}><th>{row.label}</th><td>{row.before} → {row.after}</td><td>{row.added}</td><td>{row.changed}</td><td>{row.removed}</td><td>{row.unchanged}</td></tr>
+                ))}</tbody>
+              </table></div>
+              <p className="panel-note">学校：{importDraft.base.school.name} → {importDraft.next.school.name}。学期：{importDraft.next.semester ? importDraft.next.semester.startDate + ' ~ ' + importDraft.next.semester.endDate : '未设置'}。</p>
+              <p className="panel-note">确认后清除当前候选课表及其锁定/手动调整，需重新排课；正式版仍保留。教学计划的新 ID 会计为新增与移除。</p>
+              {importDraft.replace ? <p className="inline-warning">清空模式同时清除调代课与授课记录。请先通过排课准备页导出当前数据备份。</p> : null}
+              <div className="hero-actions">
+                <button type="button" className="action-button" onClick={confirmImport} disabled={importDraft.base !== data}>确认应用导入</button>
+                <button type="button" className="ghost-button" onClick={() => { setImportDraft(null); setImportFeedback(null); }}>取消导入</button>
+              </div>
+              {importDraft.base !== data ? <p role="alert">工作区已变化，请重新选择文件生成预览。</p> : null}
+            </section>
+          ) : null}
           <p className="panel-note">仅支持 Excel（.xlsx/.xls）；简化模式模板不包含“教室”表，教学计划也不需要教室类型；完整模式保留教室表。教师表填写负责班级后，排课和自动分配都只使用这些班级；班级表可填班主任。模板第 2 行是灰色示例行，导入前请删除。教学计划 / 教师时间 / 排课规则为空表时保留现有数据；要整体重置请勾选上方“导入前清空当前工作区”。</p>
         </section>
       </div>

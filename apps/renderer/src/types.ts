@@ -107,6 +107,8 @@ export type SolverStatus =
   | 'TIMEOUT'
   | 'FAILED';
 
+export type SolverOutcome = 'feasible' | 'partial' | 'timeout' | 'hard-conflict' | 'error';
+
 export interface ScheduleEntry {
   id: string;
   coursePlanId: string;
@@ -124,6 +126,8 @@ export interface ScheduleEntry {
 export interface SolverOutput {
   protocolVersion: string;
   status: SolverStatus | string;
+  /** Semantic result kind; status stays backward-compatible with the solver protocol. */
+  outcome?: SolverOutcome;
   entries: ScheduleEntry[];
   hardConstraintViolations: string[];
   softScore: number;

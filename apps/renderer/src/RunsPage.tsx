@@ -1,7 +1,7 @@
 import React, { useCallback, useRef, useState } from 'react';
 import type { RunMode, SchoolData, SolverInput, SolverOutput } from './types';
 import type { RunProgress, ShortRunRecord } from './runConfig';
-import { RUN_MODE_OPTIONS, runStatusText } from './runConfig';
+import { RUN_MODE_OPTIONS, runResultText, runStatusText } from './runConfig';
 import { SectionHeading } from './components';
 import { EmptyState, MissingReasons, RunProgressView } from './runViews';
 import { missingPlans } from './selectors';
@@ -74,7 +74,7 @@ export function RunsPage({
       key: 'short-' + run.id,
       kind: '短时',
       at: run.createdAt,
-      title: (run.mode === 'repair' ? '局部重排 · ' : '短时计算 · ') + runStatusText(run.status),
+      title: (run.mode === 'repair' ? '局部重排 · ' : '短时计算 · ') + runResultText(run.status, run.result.outcome),
       detail: run.entries + ' 条 · ' + run.elapsedMs + ' ms · 时限 ' + run.timeLimitSeconds + ' 秒',
       ok: run.feasible,
       run,
@@ -156,7 +156,7 @@ export function RunsPage({
               {computeMode === 'short' ? (
                 <>
                   <div className="run-controls"><label>计算时限<select value={timeLimit} disabled={!canConfigure} onChange={(event) => setTimeLimit(Number(event.target.value))}><option value={10}>10 秒</option><option value={30}>30 秒</option><option value={60}>60 秒</option><option value={120}>120 秒</option></select></label></div>
-                  {expected > 400 ? <p className="panel-note">本次 {expected} 课时，建议选 60–120 秒：时限越长，求解器会继续尝试更多随机起点；若仍差几节，多半是教室/体育馆等资源接近上限，需要增加资源或放宽规则。</p> : null}
+                  {expected > 400 ? <p className="panel-note">本次 {expected} 课时，建议选 60–120 秒。增加时限可以尝试更多随机起点；未排满还可能与固定时间、教师时间或规则组合有关，请先检查未排项再决定是否放宽规则。</p> : null}
                   <div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div>
                 </>
               ) : (
@@ -223,7 +223,7 @@ export function RunsPage({
             {shortRuns.length === 0 ? <p className="panel-note">本次会话还没有短时计算记录。</p> : shortRuns.map((run) => (
               <div className="short-history-row" key={run.id}>
                 <div className="short-history-copy">
-                  <b>{run.mode === 'repair' ? '局部重排' : '短时计算'} · {runStatusText(run.status)}</b>
+                  <b>{run.mode === 'repair' ? '局部重排' : '短时计算'} · {runResultText(run.status, run.result.outcome)}</b>
                   <small>{new Date(run.createdAt).toLocaleString('zh-CN')} · {run.entries} 条 · {run.elapsedMs} ms · 时限 {run.timeLimitSeconds} 秒</small>
                 </div>
                 <span className={run.feasible ? 'status-tag' : 'status-tag danger'}>{run.feasible ? '可行' : '未排满'}</span>
@@ -252,7 +252,7 @@ export function RunsPage({
       </section>
 
       <section className="section-panel candidate-panel">
-        <div className="panel-head"><SectionHeading english="CURRENT CANDIDATE" title="当前候选" /><span className={result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{result?.status ?? '尚未生成'}</span></div>
+        <div className="panel-head"><SectionHeading english="CURRENT CANDIDATE" title="当前候选" /><span className={result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{result ? runResultText(result.status, result.outcome) : '尚未生成'}</span></div>
         {result ? (
           <div className="result-summary">
             <div className="summary-grid">
@@ -262,6 +262,15 @@ export function RunsPage({
               <div><span>耗时</span><b>{result.elapsedMs} ms</b></div>
             </div>
             <p className="panel-note">{result.explanation || '求解器没有返回说明。'}</p>
+            {result.outcome === 'partial' || result.outcome === 'timeout' ? (
+              <div className="run-next-action">
+                <b>{result.outcome === 'partial' ? '下一步：先处理未排课时，再继续计算' : '下一步：检查数据与硬约束，再提高时限重试'}</b>
+                <span>当前结果来自启发式搜索，未找到完整课表不等于数学无解。</span>
+                <button type="button" className="ghost-button" onClick={onRun} disabled={running}>
+                  {running ? '计算中…' : '按当前配置重新计算'}
+                </button>
+              </div>
+            ) : null}
             {result.hardConstraintViolations.length ? <ul className="issue-list">{result.hardConstraintViolations.map((item) => <li key={item}>{item}</li>)}</ul> : null}
             {missing.length ? <MissingReasons data={data} missing={missing} /> : null}
             {result.entries.length > 0 ? (

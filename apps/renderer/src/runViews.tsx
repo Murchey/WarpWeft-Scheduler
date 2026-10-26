@@ -79,10 +79,12 @@ export function RunProgressView({ progress }: { progress: RunProgress }) {
         className="hero-ui-progress"
         size="sm"
         aria-label="排课阶段进度"
+        isIndeterminate={progress.phase === 'solving'}
         value={activeIndex < 0 ? 0 : ((activeIndex + 1) / RUN_STEPS.length) * 100}
         color={progress.phase === 'failed' ? 'danger' : 'primary'}
       />
       {progress.phase === 'solving' ? <div className="run-progress-pulse" /> : null}
+      {progress.phase === 'solving' ? <p className="panel-note">正在搜索候选课表，阶段提示不代表搜索完成度或剩余时间。</p> : null}
     </div>
   );
 }
@@ -127,7 +129,7 @@ export function MissingReasons({
                 ))}
               </ul>
             ) : (
-              <p>时间格、教师或教室资源不足；可先检查教师时间和教室容量。</p>
+              <p>当前搜索尚未找到位置。可检查教师时间、固定时段、教室条件及必须规则，也可增加时限重新计算；目前没有足够证据判断资源不足。</p>
             )}
           </div>
         );

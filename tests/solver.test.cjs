@@ -74,3 +74,28 @@ test('the solver protocol rejects a plan whose teacher is bound to another class
   assert.equal(out.status, 'FAILED');
   assert.ok(out.hardConstraintViolations.some((message) => message.includes('不负责班级')));
 });
+
+test('a partial heuristic result exposes its evidence level without changing FAILED compatibility', () => {
+  const input = JSON.parse(fs.readFileSync('database/seeds/demo.json', 'utf8'));
+  Object.assign(input, {
+    protocolVersion: '1.0',
+    dataSnapshotVersion: 'partial-test',
+    hardConstraints: [],
+    softConstraints: [],
+    unavailableSlots: [],
+    lockedEntries: [],
+    rules: [],
+    timeSlots: [input.timeSlots[0]],
+    coursePlans: [input.coursePlans[0]],
+    timeLimitSeconds: 1,
+    randomSeed: 1,
+  });
+  input.coursePlans[0].weeklyPeriods = 2;
+  const process = solve(input);
+  assert.equal(process.status, 0, process.stderr || 'Java solver process failed');
+  const out = JSON.parse(process.stdout);
+  assert.equal(out.status, 'FAILED');
+  assert.equal(out.outcome, 'partial');
+  assert.equal(out.hasFeasibleSolution, false);
+  assert.match(out.explanation, /不等于数学无解/);
+});

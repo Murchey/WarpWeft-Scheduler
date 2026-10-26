@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import type { SchoolData } from './types';
 import type { ShortRunRecord } from './runConfig';
-import { RUN_MODE_OPTIONS, runStatusText } from './runConfig';
+import { RUN_MODE_OPTIONS, runResultText } from './runConfig';
 import { shortRunEntryRows, shortRunMissingRefs } from './shortRunView';
 
 function formatWhen(value: string): string {
@@ -69,7 +69,7 @@ export function ShortRunDialog({
 
         <div className="rule-dialog-body short-run-dialog-body">
           <dl className="short-run-meta">
-            <div><dt>状态</dt><dd>{runStatusText(run.status)}</dd></div>
+            <div><dt>状态</dt><dd>{runResultText(run.status, run.result.outcome)}</dd></div>
             <div><dt>任务类型</dt><dd>{modeLabel}</dd></div>
             <div><dt>已排 / 计划</dt><dd>{run.result.entries.length} / {totalPeriods}</dd></div>
             <div><dt>未排课时</dt><dd className={unplaced > 0 ? 'is-warning' : ''}>{unplaced}</dd></div>
@@ -86,10 +86,17 @@ export function ShortRunDialog({
             </div>
           ) : null}
 
-          {violations.length > 0 ? (
+          {violations.length > 0 && (run.result.outcome ?? (run.result.hasFeasibleSolution ? 'feasible' : 'hard-conflict')) === 'hard-conflict' ? (
             <div className="short-run-issues">
               <b>硬约束冲突 {violations.length}</b>
               <ul>{violations.map((item) => <li key={item}>{item}</li>)}</ul>
+            </div>
+          ) : null}
+
+          {violations.length > 0 && run.result.outcome && run.result.outcome !== 'hard-conflict' ? (
+            <div className="short-run-note">
+              <span className="kicker">// SOLVER DIAGNOSTICS</span>
+              <p>{violations.join('\n')}</p>
             </div>
           ) : null}
 

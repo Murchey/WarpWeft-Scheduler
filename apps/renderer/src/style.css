@@ -275,6 +275,17 @@ html[data-theme='dark'] .slot-card.conflict { background: rgba(255,107,107,.14);
 .run-progress-step.current i { box-shadow: 0 0 0 2px color-mix(in srgb, var(--signal) 35%, transparent); }
 .run-progress.failed .run-progress-step.current i { background: var(--danger); }
 .run-progress-pulse { height: 2px; margin-top: 10px; background: linear-gradient(90deg, transparent, var(--signal), transparent); animation: progress-pulse 1.4s ease-in-out infinite; }
+.run-next-action { display: grid; gap: 6px; margin: 14px 0; padding: 12px 14px; border-left: 3px solid var(--signal); background: var(--chip); }
+.run-next-action b { font-size: 13px; }
+.run-next-action span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.run-next-action .ghost-button { justify-self: start; margin-top: 3px; }
+.import-review { display: grid; gap: 10px; margin-top: 18px; padding: 14px; border: 1px solid var(--signal); background: color-mix(in srgb, var(--signal) 8%, var(--panel)); }
+.import-review h3 { margin: 0; font-size: 16px; }
+.import-review-table { overflow: auto; border: 1px solid var(--rule); background: var(--panel); }
+.import-review-table table { min-width: 720px; margin: 0; }
+.import-review-table th, .import-review-table td { padding: 7px 9px; border-bottom: 1px solid var(--rule); font-size: 11px; text-align: right; white-space: nowrap; }
+.import-review-table th:first-child, .import-review-table td:first-child { text-align: left; }
+.import-review-table tbody tr:last-child th, .import-review-table tbody tr:last-child td { border-bottom: 0; }
 @keyframes progress-pulse { 0%,100% { opacity: .2; transform: translateX(-18%); } 50% { opacity: 1; transform: translateX(18%); } }
 @media(max-width:1100px) { .wizard-grid { grid-template-columns: 1fr; } }
 @media(max-width:680px) { .wizard-stepper { grid-template-columns: 1fr 1fr; } .config-summary { grid-template-columns: 1fr; } .run-phase-pill { display: block; margin-top: 8px; } }

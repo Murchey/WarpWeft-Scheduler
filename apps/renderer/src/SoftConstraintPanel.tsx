@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { Commit, SchoolData, SoftRuleKind } from './types';
 import { normalizeSoftConstraints, SOFT_CONSTRAINT_DEFINITIONS, withSoftWeight } from './softConstraints';
 
@@ -21,8 +21,11 @@ export function SoftConstraintPanel({
   disabled?: boolean;
 }) {
   const current = normalizeSoftConstraints(data);
+  const [advanced, setAdvanced] = useState(false);
   const weightOf = (kind: SoftRuleKind) => current.find((item) => item.kind === kind)?.weight ?? 0;
   const update = (kind: SoftRuleKind, weight: number) => {
+    if (weight === weightOf(kind)) return;
+    if (data.candidate && !window.confirm('修改课表偏好将清除当前候选课表，包括锁定课程和手动调整，需重新排课。正式版保留。确认应用？')) return;
     commit(withSoftWeight(data, kind, weight), { invalidate: true, immediate: true });
   };
   return (
@@ -30,10 +33,11 @@ export function SoftConstraintPanel({
       <div className="soft-prefs-head">
         <div>
           <b>课表偏好（软约束）</b>
-          <small>数字是权重：0 = 不启用，1–5 越大表示越优先满足该偏好。权重只影响课程位置，不改变可行性，也不保证目标为 0；修改后会清除当前候选课表。</small>
+          <small>偏好用于在可行课表之间取舍，允许不满足。必须遵守的政策请使用下方规则库的“必须”。修改偏好后需要重新排课。</small>
         </div>
         <span className="status-tag">{current.filter((item) => item.weight > 0).length} 项启用</span>
       </div>
+      <label className="import-replace"><input type="checkbox" checked={advanced} onChange={event => setAdvanced(event.target.checked)} />显示高级权重（0–5）</label>
       <div className="soft-prefs-list">
         {SOFT_CONSTRAINT_DEFINITIONS.map((definition) => (
           <label key={definition.kind} className="soft-prefs-row">
@@ -45,10 +49,14 @@ export function SoftConstraintPanel({
               value={weightOf(definition.kind)}
               disabled={disabled}
               aria-label={definition.label + '权重'}
-              title={'权重 0–5：数字越大越优先，不保证目标为 0'}
+              title="偏好允许不满足；固定时间与必须规则优先"
               onChange={(event) => update(definition.kind, Number(event.target.value))}
             >
-              {WEIGHT_OPTIONS.map((option) => (
+              {(advanced ? WEIGHT_OPTIONS : [
+                { value: 0, label: '不启用' }, { value: 1, label: '一般偏好' },
+                { value: 3, label: '优先满足' }, { value: 5, label: '重点优化' },
+                ...([0, 1, 3, 5].includes(weightOf(definition.kind)) ? [] : [{ value: weightOf(definition.kind), label: '现有自定义偏好' }]),
+              ]).map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>

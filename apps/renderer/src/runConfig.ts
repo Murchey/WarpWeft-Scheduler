@@ -80,6 +80,15 @@ export function runStatusText(status: string): string {
   return RUN_STATUS_LABELS[status] ?? status;
 }
 
+export function runResultText(status: string, outcome?: string): string {
+  if (outcome === 'feasible') return '已完成';
+  if (outcome === 'partial') return '未排满（启发式结果）';
+  if (outcome === 'timeout') return '当前时限未找到完整课表';
+  if (outcome === 'hard-conflict') return '硬约束冲突';
+  if (outcome === 'error') return '求解器运行异常';
+  return runStatusText(status);
+}
+
 export type ShortRunMode = 'solve' | 'repair';
 
 export interface ShortRunRecord {

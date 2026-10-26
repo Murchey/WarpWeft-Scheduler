@@ -442,12 +442,12 @@ export function LongRunPanel({
               {statusLabel(job.status)}
             </span>
           </div>
-          <div className="long-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress} aria-label="长时任务进度">
+          <div className="long-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress} aria-label="最佳候选已排课时比例，不代表搜索进度">
             <span style={{ width: progress + '%' }} />
           </div>
           <div className="long-meta">
             <span>
-              进度 <b>{progress}%</b>
+              已排比例 <b>{progress}%</b>
             </span>
             <span>
               总课时 <b>{job.total}</b>
@@ -462,6 +462,7 @@ export function LongRunPanel({
               输入 <b>{job.inputSummary.plans}</b> 计划 / <b>{job.inputSummary.timeSlots}</b> 时段
             </span>
           </div>
+          <p className="panel-note">已排比例表示当前最佳候选覆盖的课时，不表示搜索完成度或最优性。时限内未排满不能证明无解。</p>
           {job.error ? <p className="panel-note">{job.error}</p> : null}
           <div className="long-actions">
             {isRunning ? (

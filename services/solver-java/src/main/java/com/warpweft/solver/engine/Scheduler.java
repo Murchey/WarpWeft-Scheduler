@@ -302,11 +302,14 @@ public final class Scheduler {
             publish(started, best, totalEntries, bestUnplaced, bestScore, checkpointFile, true);
         }
         List<String> messages = new ArrayList<>(violations);
-        if (best == null || bestUnplaced > 0) {
-            messages.add("无法在给定时间和资源下安排全部课程");
+        if (best == null) {
+            messages.add("在当前时限内没有生成可用候选课表");
+        } else if (bestUnplaced > 0) {
+            messages.add("在当前时限内只生成了部分课表；这不等于数学无解");
         }
         ObjectNode result = SolverProtocol.baseResult(data.protocolVersion, "FAILED", messages, best == null ? List.of() : best.entries);
-        result.put("explanation", messages.isEmpty() ? "排课失败" : messages.get(0));
+        result.put("outcome", !violations.isEmpty() ? "hard-conflict" : best == null ? "timeout" : "partial");
+        result.put("explanation", messages.isEmpty() ? "当前时限内未找到完整课表" : messages.get(messages.size() - 1));
         result.put("elapsedMs", (System.nanoTime() - started) / 1_000_000);
         result.put("hasFeasibleSolution", false);
         return result;
