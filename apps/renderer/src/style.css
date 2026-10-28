@@ -1880,3 +1880,13 @@ html[data-theme='dark'] .tt-warning.is-danger{background:#2b1717;color:#fca5a5}
 .plan-summary,.plan-table-foot,.plan-filter-count,.server-job-state,.save-state{font-variant-numeric:tabular-nums}
 @media(max-width:950px){.workspace{margin-left:210px}.command-rail{width:210px}}
 @media(max-width:680px){.workspace{margin-left:0}.command-rail{width:100%}}
+
+/* Top system readout: group connection, persistence and solver mode into one scan line. */
+.top-actions{gap:0;align-items:stretch;padding:4px;border:1px solid var(--ink);background:var(--panel)}
+.top-actions .node-status,.top-actions .save-state,.top-actions .mode-pill{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-right:1px solid var(--rule)}
+.top-actions .node-status{font-size:10px;letter-spacing:.06em}
+.top-actions .save-state{font-size:10px}
+.top-actions .mode-pill{border:0;border-right:1px solid var(--rule);border-radius:0;background:transparent;color:var(--ink);font:10px var(--font-ui);letter-spacing:.06em;cursor:pointer}
+.top-actions .mode-pill:hover{background:var(--signal);color:var(--on-signal)}
+.top-actions .theme-toggle,.top-actions .auth-user{margin-left:4px}
+@media(max-width:680px){.top-actions{width:100%;flex-wrap:wrap;gap:4px;border:0;padding:0;background:transparent}.top-actions .node-status,.top-actions .save-state,.top-actions .mode-pill{border:1px solid var(--rule);padding:0 8px}.top-actions .theme-toggle,.top-actions .auth-user{margin-left:0}}
