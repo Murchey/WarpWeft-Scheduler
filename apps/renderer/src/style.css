@@ -1890,3 +1890,7 @@ html[data-theme='dark'] .tt-warning.is-danger{background:#2b1717;color:#fca5a5}
 .top-actions .mode-pill:hover{background:var(--signal);color:var(--on-signal)}
 .top-actions .theme-toggle,.top-actions .auth-user{margin-left:4px}
 @media(max-width:680px){.top-actions{width:100%;flex-wrap:wrap;gap:4px;border:0;padding:0;background:transparent}.top-actions .node-status,.top-actions .save-state,.top-actions .mode-pill{border:1px solid var(--rule);padding:0 8px}.top-actions .theme-toggle,.top-actions .auth-user{margin-left:0}}
+
+.tt-conflict-tooltip{position:absolute;left:8px;right:8px;bottom:8px;z-index:12;padding:6px 8px;border:1px solid var(--danger);border-left:3px solid var(--danger);background:color-mix(in srgb,var(--panel) 94%,var(--danger));color:var(--danger);font:11px var(--font-text);line-height:1.35;pointer-events:none;box-shadow:0 3px 10px rgba(0,0,0,.12);animation:tt-tooltip-in 150ms ease-out}
+@keyframes tt-tooltip-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){.tt-conflict-tooltip{animation:none}}

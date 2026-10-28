@@ -3200,6 +3200,7 @@ function TimetablePage({
 }) {
   const [dragId, setDragId] = useState('');
   const [dragOver, setDragOver] = useState('');
+  const [dropTooltip, setDropTooltip] = useState<{ slotId: string; reason: string } | null>(null);
   const [focus, setFocus] = useState(false);
   const [immersive, setImmersive] = useState(false);
   const [swapMode, setSwapMode] = useState(false);
@@ -3660,6 +3661,14 @@ function TimetablePage({
                     const cellEntries = slot ? entriesAt(slot.id) : [];
                     const isDragOver = dragOver === slot?.id;
                     const dragDecision = dragDecisionFor(slot, cellEntries);
+                    const selectedDecision = selected && slot && canMove
+                      ? (cellEntries.length === 0
+                        ? checkMove(selected, slot, dropContext)
+                        : cellEntries.length === 1
+                          ? checkSwap(selected, cellEntries[0], dropContext)
+                          : { ok: false, reason: '时间格内有多门课程，无法放置' })
+                      : null;
+                    const hoverDecision = dragDecision ?? selectedDecision;
                     const moveHere = Boolean(slot) && canMove && cellEntries.length === 0 && (slot ? canPlaceSelected(slot) : false);
                     return (
                       <td
@@ -3672,12 +3681,17 @@ function TimetablePage({
                           (moveHere ? ' can-move' : '') +
                           (dragDecision && dragId ? (dragDecision.ok ? ' is-drag-ok' : ' is-drag-bad') : '')
                         }
-                        title={dragDecision && dragId ? (dragDecision.ok ? '可用：松开移动到这里' : '不可用：' + dragDecision.reason) : moveHere && selected ? '把「' + moveLabel + '」移动到这里' : undefined}
+                        title={hoverDecision ? (hoverDecision.ok ? '可用：放置到这里' : '不可用：' + hoverDecision.reason) : moveHere && selected ? '把「' + moveLabel + '」移动到这里' : undefined}
+                        onMouseEnter={() => {
+                          if (slot && hoverDecision && !hoverDecision.ok) setDropTooltip({ slotId: slot.id, reason: hoverDecision.reason });
+                        }}
+                        onMouseLeave={() => setDropTooltip(null)}
                         onDragOver={(event) => {
                           if (view !== 'class' || !slot) return;
                           event.preventDefault();
                           if (dragDecision) event.dataTransfer.dropEffect = dragDecision.ok ? 'move' : 'none';
                           setDragOver(slot.id);
+                          if (dragDecision && !dragDecision.ok) setDropTooltip({ slotId: slot.id, reason: dragDecision.reason });
                         }}
                         onDragLeave={() => setDragOver('')}
                         onDrop={(event) => {
@@ -3686,11 +3700,13 @@ function TimetablePage({
                           if (dragDecision && !dragDecision.ok) {
                             setDragOver('');
                             setDragId('');
+                            setDropTooltip(null);
                             return;
                           }
                           const entryId = event.dataTransfer.getData('text/plain') || dragId;
                           setDragOver('');
                           setDragId('');
+                          setDropTooltip(null);
                           if (entryId) onSwap(entryId, slot.id);
                         }}
                         onClick={() => {
@@ -3703,6 +3719,9 @@ function TimetablePage({
                           <span className={'tt-drop-badge ' + (dragDecision.ok ? 'ok' : 'bad')} role="status">
                             {dragDecision.ok ? '可用' : '不可用'}
                           </span>
+                        ) : null}
+                        {dropTooltip?.slotId === slot?.id && hoverDecision && !hoverDecision.ok ? (
+                          <span className="tt-conflict-tooltip" role="tooltip">× {hoverDecision.reason}</span>
                         ) : null}
                         {cellEntries.length ? (
                           <>
@@ -3749,7 +3768,11 @@ function TimetablePage({
                                   event.dataTransfer.setData('text/plain', entry.id);
                                   setDragId(entry.id);
                                 }}
-                                onDragEnd={() => setDragId('')}
+                                onDragEnd={() => {
+                                  setDragId('');
+                                  setDragOver('');
+                                  setDropTooltip(null);
+                                }}
                                 title={
                                   entry.groupId
                                     ? '走班课程由走班组统一安排，不能单独拖动'
