@@ -1894,3 +1894,18 @@ html[data-theme='dark'] .tt-warning.is-danger{background:#2b1717;color:#fca5a5}
 .tt-conflict-tooltip{position:absolute;left:8px;right:8px;bottom:8px;z-index:12;padding:6px 8px;border:1px solid var(--danger);border-left:3px solid var(--danger);background:color-mix(in srgb,var(--panel) 94%,var(--danger));color:var(--danger);font:11px var(--font-text);line-height:1.35;pointer-events:none;box-shadow:0 3px 10px rgba(0,0,0,.12);animation:tt-tooltip-in 150ms ease-out}
 @keyframes tt-tooltip-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
 @media(prefers-reduced-motion:reduce){.tt-conflict-tooltip{animation:none}}
+
+.adjust-scope-tabs{display:inline-flex;border:1px solid var(--ink);background:var(--panel)}
+.adjust-scope-tabs button{border:0;border-right:1px solid var(--ink);background:transparent;color:var(--ink);padding:0 10px;height:32px;font:10px var(--font-ui);letter-spacing:.06em;cursor:pointer}
+.adjust-scope-tabs button:last-child{border-right:0}
+.adjust-scope-tabs button.active{background:var(--ink);color:var(--panel)}
+.adjust-teacher-worklist{padding:14px 16px;border-top:3px solid var(--signal)}
+.adjust-teacher-entries{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px;margin-top:12px}
+.adjust-teacher-entry{display:grid;grid-template-columns:58px minmax(0,1fr) auto;align-items:center;gap:8px;min-width:0;padding:8px 9px;border:1px solid var(--rule);border-left:3px solid var(--rule);background:var(--panel);color:var(--ink);text-align:left;cursor:pointer;transition:border-color .12s ease,background .12s ease}
+.adjust-teacher-entry:hover,.adjust-teacher-entry.is-selected{border-color:var(--ink);border-left-color:var(--signal);background:var(--chip)}
+.adjust-teacher-entry-time{font:10px var(--font-ui);color:var(--muted);font-variant-numeric:tabular-nums}
+.adjust-teacher-entry-main{display:grid;gap:2px;min-width:0}
+.adjust-teacher-entry-main b{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.adjust-teacher-entry-main small{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.adjust-teacher-entry em{padding:2px 5px;background:var(--signal);color:var(--on-signal);font:9px var(--font-ui);font-style:normal;white-space:nowrap}
+@media(max-width:760px){.adjust-teacher-entries{grid-template-columns:1fr}.adjust-scope-tabs{order:10}}

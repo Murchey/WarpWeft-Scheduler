@@ -50,6 +50,7 @@ const GRADE_NAMES: Record<string, string> = {
 };
 const CLASS_STORAGE_KEY = 'warpweft-adjust-class';
 const OPERATOR_STORAGE_KEY = 'warpweft-operator';
+type AdjustmentScope = 'class' | 'teacher';
 
 type StatusTone = 'success' | 'warning' | 'error' | 'neutral';
 interface PageStatus {
@@ -160,6 +161,8 @@ export function AdjustmentsPage({
   const [date, setDate] = useState(initialDate);
   const [swapTargetDate, setSwapTargetDate] = useState(() => nextSchoolDate(initialDate, data.timeSlots));
   const [classId, setClassId] = useState(() => resolveInitialClass(data, initialDate));
+  const [scope, setScope] = useState<AdjustmentScope>('class');
+  const [teacherId, setTeacherId] = useState(data.teachers[0]?.id ?? '');
   const [operator, setOperator] = useState(() => {
     try {
       return window.localStorage.getItem(OPERATOR_STORAGE_KEY) || '本机管理员';
@@ -283,6 +286,20 @@ export function AdjustmentsPage({
     }
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b, 'zh-CN', { numeric: true }));
   }, [data.classes]);
+  const teacherEntries = useMemo(
+    () => allEffective
+      .filter((entry) => entry.teacherId === teacherId && slotById.get(entry.slotId)?.day === weekday)
+      .sort((a, b) => (periodOf(a.slotId) || 99) - (periodOf(b.slotId) || 99) || a.classId.localeCompare(b.classId, 'zh-CN')),
+    [allEffective, slotById, teacherId, weekday],
+  );
+  const teacherLessonCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const entry of allEffective) {
+      if (slotById.get(entry.slotId)?.day !== weekday) continue;
+      map.set(entry.teacherId, (map.get(entry.teacherId) ?? 0) + 1);
+    }
+    return map;
+  }, [allEffective, slotById, weekday]);
   const classNameText = findClass(data, classId)?.name ?? '未选择班级';
   const impactClassName = impact ? findClass(data, impact.classId)?.name ?? impact.classId : '';
   const impactTeacherNames = impact
@@ -438,6 +455,8 @@ export function AdjustmentsPage({
 
   const candidates = useMemo(() => {
     if (!result || !selected) return [];
+    const selectedPlan = planForEntry(selected);
+    const selectedSubject = subjectOfEntry(selected);
     return substituteCandidates(
       { ...data, entries: baseEntries as AdjustmentEntry[] },
       date,
@@ -445,8 +464,14 @@ export function AdjustmentsPage({
       adjustments,
     )
       .slice()
-      .sort((a, b) => Number(a.unavailable) - Number(b.unavailable) || a.name.localeCompare(b.name, 'zh-CN'));
-  }, [adjustments, baseEntries, data, date, result, selected]);
+      .map((item) => {
+        const teacher = data.teachers.find((candidate) => candidate.id === item.id) as (typeof data.teachers)[number] & { subjectIds?: string[] } | undefined;
+        const sameSubject = Boolean(teacher && (teacher.subject === selectedSubject || teacher.subject2 === selectedSubject || teacher.subjectIds?.includes(selectedPlan?.subjectId ?? '')));
+        const load = teacherLessonCounts.get(item.id) ?? 0;
+        return { ...item, sameSubject, load };
+      })
+      .sort((a, b) => Number(a.unavailable) - Number(b.unavailable) || Number(b.sameSubject) - Number(a.sameSubject) || a.load - b.load || a.name.localeCompare(b.name, 'zh-CN'));
+  }, [adjustments, baseEntries, data, date, result, selected, teacherLessonCounts]);
 
   const substituteCheck = useMemo(() => {
     if (!selected || draftType !== 'substitute' || selectedAdjustment) return null;
@@ -527,6 +552,13 @@ export function AdjustmentsPage({
     setImpact(null);
     setImpactOpen(false);
     clearSelection();
+  };
+
+  const selectTeacherEntry = (entry: AdjustmentEntry) => {
+    setTeacherId(entry.teacherId);
+    setClassId(entry.classId);
+    setScope('class');
+    selectEntry(entry.id);
   };
 
   const shiftDate = (offset: number) => {
@@ -1499,21 +1531,36 @@ export function AdjustmentsPage({
           <button type="button" className="tt-btn tt-btn-quiet" onClick={() => shiftDate(1)} title="后一天">▶</button>
           <button type="button" className="tt-btn tt-btn-quiet" onClick={() => changeDate(todayLocal())}>今天</button>
         </div>
-        <label className="tt-entity">
-          <span>班级</span>
-          <select value={classId} onChange={(event) => changeClass(event.target.value)}>
-            {classGroups.map(([grade, classes]) => (
-              <optgroup key={grade || 'none'} label={grade ? GRADE_NAMES[grade] ?? grade + '年级' : '未分年级'}>
-                {classes.map((klass) => (
-                  <option key={klass.id} value={klass.id}>
-                    {klass.name}
-                    {classCounts.get(klass.id) ? ' · ' + classCounts.get(klass.id) + ' 条' : ''}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </label>
+        <div className="adjust-scope-tabs" role="tablist" aria-label="调课视角">
+          <button type="button" role="tab" aria-selected={scope === 'class'} className={scope === 'class' ? 'active' : ''} onClick={() => setScope('class')}>按班级</button>
+          <button type="button" role="tab" aria-selected={scope === 'teacher'} className={scope === 'teacher' ? 'active' : ''} onClick={() => setScope('teacher')}>按教师</button>
+        </div>
+        {scope === 'class' ? (
+          <label className="tt-entity">
+            <span>班级</span>
+            <select value={classId} onChange={(event) => changeClass(event.target.value)}>
+              {classGroups.map(([grade, classes]) => (
+                <optgroup key={grade || 'none'} label={grade ? GRADE_NAMES[grade] ?? grade + '年级' : '未分年级'}>
+                  {classes.map((klass) => (
+                    <option key={klass.id} value={klass.id}>
+                      {klass.name}
+                      {classCounts.get(klass.id) ? ' · ' + classCounts.get(klass.id) + ' 条' : ''}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <label className="tt-entity">
+            <span>请假教师</span>
+            <select value={teacherId} onChange={(event) => { setTeacherId(event.target.value); clearSelection(); }}>
+              {data.teachers.map((teacher) => (
+                <option key={teacher.id} value={teacher.id}>{teacher.name} · 当天 {teacherLessonCounts.get(teacher.id) ?? 0} 节</option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="tt-entity adjust-operator">
           <span>操作人</span>
           <input value={operator} onChange={(event) => persistOperator(event.target.value)} placeholder="记录到审计日志" />
@@ -1547,6 +1594,33 @@ export function AdjustmentsPage({
           <span>它们的目标时间与原来相同，不会改变课表，也不计入调课统计。</span>
           <button type="button" className="tt-btn tt-btn-quiet" onClick={cleanupNoops}>清理</button>
         </div>
+      ) : null}
+
+      {scope === 'teacher' ? (
+        <section className="section-panel adjust-teacher-worklist" aria-label="教师当天课程">
+          <div className="panel-head">
+            <div>
+              <SectionHeading english="TEACHER DAY" title={(findTeacher(data, teacherId)?.name ?? '未选择教师') + ' 的当天课程'} />
+              <p className="panel-note">直接列出该教师当天所有班级的课程；点击任意课程后可进入原有调课、代课或停课流程。</p>
+            </div>
+            <span className="status-tag">{teacherEntries.length} 节</span>
+          </div>
+          {teacherEntries.length > 0 ? (
+            <div className="adjust-teacher-entries">
+              {teacherEntries.map((entry) => {
+                const slot = slotById.get(entry.slotId);
+                const adjustment = activeOf(entry.id);
+                return (
+                  <button type="button" key={entry.id} className={'adjust-teacher-entry' + (entry.id === selectedEntryId ? ' is-selected' : '')} onClick={() => selectTeacherEntry(entry)}>
+                    <span className="adjust-teacher-entry-time">{slot?.label ?? slotLabelOf(entry.slotId)}</span>
+                    <span className="adjust-teacher-entry-main"><b>{findClass(data, entry.classId)?.name ?? entry.classId}</b><small>{subjectOfEntry(entry)} · {findRoom(data, entry.roomId)?.name ?? entry.roomId}</small></span>
+                    {adjustment ? <em>{ADJUSTMENT_LABELS[adjustment.type]}</em> : null}
+                  </button>
+                );
+              })}
+            </div>
+          ) : <p className="panel-note">该教师当天没有已排课程。</p>}
+        </section>
       ) : null}
 
       <div className={'tt-selection adjust-selection' + (focusBase ? ' has-selection' : '')} aria-live="polite">
@@ -1834,7 +1908,7 @@ export function AdjustmentsPage({
                           <option value="">选择代课教师</option>
                           {candidates.map((item) => (
                             <option key={item.id} value={item.id} disabled={item.unavailable}>
-                              {item.name}（{item.reason ?? '空闲'}）
+                              {item.name}（{item.unavailable ? item.reason : [item.sameSubject ? '同学科' : '', '当天 ' + item.load + ' 节'].filter(Boolean).join(' · ') || '空闲'}）
                             </option>
                           ))}
                         </select>
