@@ -15,6 +15,7 @@ import { parseSubjectPreference, suggestedSubjectPreference } from './subjectPre
 import { fixedSlotIdsOf } from '../../../packages/contracts/src';
 import { normalizeSoftConstraints, withSoftWeight } from './softConstraints';
 import { importChanges } from './importReview';
+import { deleteWorkspaceProject, parseWorkspace, readWorkspaceProjects, saveWorkspaceProject, serializeWorkspace, workspaceFileName } from './workspaceProject';
 
 type ResourceCollection = 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots';
 
@@ -101,12 +102,14 @@ function ResourcesPage({
   commit,
   setError,
   setNotice,
+  onLoadWorkspace,
   kind = 'import',
 }: {
   data: SchoolData;
   commit: Commit;
   setError: (value: string) => void;
   setNotice: (value: string) => void;
+  onLoadWorkspace?: (next: SchoolData) => void;
   kind?: 'import' | 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots';
 }) {
   const days = DAYS.slice(1).map((label, index) => ({ value: String(index + 1), label }));
@@ -125,6 +128,9 @@ function ResourcesPage({
   const [lastAdded, setLastAdded] = useState<{ collection: ResourceCollection; id: string } | null>(null);
   const [classPicker, setClassPicker] = useState<{ id: string; selected: string[] } | null>(null);
   const [templateStage, setTemplateStage] = useState<'idle' | 'generating' | 'saving'>('idle');
+  const [workspaceProjects, setWorkspaceProjects] = useState(() => readWorkspaceProjects());
+  const [workspaceProjectName, setWorkspaceProjectName] = useState(data.school.name || '未命名工作项目');
+  const workspaceFileRef = useRef<HTMLInputElement | null>(null);
   const update = (
     collection: 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots',
     id: string,
@@ -1135,11 +1141,90 @@ function ResourcesPage({
     }
   };
 
+  const exportWorkspaceFile = async (name = workspaceProjectName) => {
+    const result = await download(
+      new Blob([serializeWorkspace(data, name)], { type: 'application/json;charset=utf-8' }),
+      'application/json',
+      workspaceFileName(name),
+    );
+    const message = exportMessage(result, '工作区数据');
+    if (!message) return;
+    if (message.tone === 'error') setError(message.text);
+    else setNotice(message.text);
+  };
+
+  const saveProject = () => {
+    const project = saveWorkspaceProject(workspaceProjectName, data);
+    setWorkspaceProjects(readWorkspaceProjects());
+    setWorkspaceProjectName(project.name);
+    setNotice('工作项目已保存：' + project.name);
+  };
+
+  const importWorkspaceFile = async (file: File) => {
+    try {
+      const parsed = parseWorkspace(await file.text());
+      if (!window.confirm('加载工作区「' + parsed.name + '」？当前未保存的修改会被替换。')) return;
+      onLoadWorkspace?.(parsed.data);
+      setWorkspaceProjectName(parsed.name);
+      setNotice('已加载工作区：' + parsed.name);
+    } catch (cause) {
+      setError('加载工作区失败：' + messageOf(cause));
+    }
+  };
+
   if (kind === 'import') {
     return (
       <div className="resource-single">
         <section className="section-panel resource-panel import-panel">
-          <div className="panel-head"><SectionHeading english="IMPORT / VALIDATE" title="Excel 导入" /></div>
+          <div className="panel-head"><SectionHeading english="IMPORT / VALIDATE" title="导入来源" /></div>
+          <div className="workspace-import-grid">
+            <section className="workspace-import-card">
+              <span className="kicker">// TEMPLATE</span>
+              <h3>Excel 模板</h3>
+              <p className="panel-note">适合批量导入基础资料、教学计划、规则和教师时间。</p>
+              <div className="import-actions">
+                <label className="file-button file-button-primary">
+                  <span>{importBusy ? '正在解析与校验…' : '选择 Excel 并预览'}</span>
+                  <input type="file" accept=".xlsx,.xls" disabled={importBusy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void importWorkbookFile(file); event.currentTarget.value = ''; }} />
+                </label>
+                <button type="button" className="file-button" onClick={() => void downloadTemplate()} disabled={templateStage !== 'idle'}>{templateStage === 'generating' ? '正在生成模板…' : templateStage === 'saving' ? '正在写入模板…' : '下载模板'}</button>
+              </div>
+            </section>
+            <section className="workspace-import-card is-workspace">
+              <span className="kicker">// WORKSPACE FILE</span>
+              <h3>工作区数据</h3>
+              <p className="panel-note">恢复已经排课的完整工作内容，包含候选/正式课表、调代课记录和审计日志。</p>
+              <div className="import-actions">
+                <label className="file-button">
+                  <span>加载工作区 JSON</span>
+                  <input ref={workspaceFileRef} type="file" accept=".json,.workspace.json,application/json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importWorkspaceFile(file); event.currentTarget.value = ''; }} />
+                </label>
+                <button type="button" className="file-button" onClick={() => void exportWorkspaceFile()}>{'导出当前工作区'}</button>
+              </div>
+              <div className="workspace-project-save">
+                <input value={workspaceProjectName} onChange={(event) => setWorkspaceProjectName(event.target.value)} placeholder="工作项目名称" aria-label="工作项目名称" />
+                <button type="button" className="action-button" onClick={saveProject}>保存为工作项目 <span>→</span></button>
+              </div>
+            </section>
+          </div>
+          {workspaceProjects.length > 0 ? (
+            <section className="workspace-projects" aria-label="工作项目列表">
+              <div className="panel-head"><SectionHeading english="PROJECT FILES" title="工作项目" /><span className="status-tag">{workspaceProjects.length} / 20</span></div>
+              <p className="panel-note">工作项目保存在本机浏览器中，与当前服务端工作区分开；适合保存多个学校、学期或方案版本。</p>
+              <div className="workspace-project-list">
+                {workspaceProjects.map((project) => (
+                  <article className="workspace-project-row" key={project.id}>
+                    <div><b>{project.name}</b><small>{new Date(project.savedAt).toLocaleString('zh-CN', { hour12: false })} · {project.data.classes.length} 班 · {project.data.coursePlans.length} 条计划</small></div>
+                    <div className="workspace-project-actions">
+                      <button type="button" className="ghost-button" onClick={() => { if (!window.confirm('加载工作项目「' + project.name + '」？当前未保存的修改会被替换。')) return; onLoadWorkspace?.(project.data); setWorkspaceProjectName(project.name); setNotice('已加载工作项目：' + project.name); }}>加载</button>
+                      <button type="button" className="ghost-button" onClick={() => void exportWorkspaceFile(project.name)}>导出</button>
+                      <button type="button" className="ghost-button is-danger" onClick={() => { if (!window.confirm('删除工作项目「' + project.name + '」？')) return; deleteWorkspaceProject(project.id); setWorkspaceProjects(readWorkspaceProjects()); }}>删除</button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
           {importFeedback ? (
             <div
               className={'import-feedback is-' + importFeedback.tone}
@@ -1152,24 +1237,6 @@ function ResourcesPage({
             </div>
           ) : null}
           <p className="panel-note">先填 3 张必填表即可导入：<b>班级、学科、教学计划</b>。学校、学期、教师、教室、时间段可后补；模板“说明”按工作表分节列出字段、必填项和示例，表头带 * 的列必须填写，多值字段表头会注明分隔符（如“分号分隔”“用、分隔”），第 2 行灰色示例行请在导入前删除。教室可整表留空，时间段先填每天最多节数。</p>
-          <div className="import-actions">
-            <label className="file-button file-button-primary">
-              <span>{importBusy ? '正在解析与校验…' : '选择文件并预览'}</span>
-              <input
-                type="file"
-                accept=".xlsx,.xls"
-                disabled={importBusy}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) void importWorkbookFile(file);
-                  event.currentTarget.value = '';
-                }}
-              />
-            </label>
-            <button type="button" className="file-button" onClick={() => void downloadTemplate()} disabled={templateStage !== 'idle'}>
-              {templateStage === 'generating' ? '正在生成模板…' : templateStage === 'saving' ? '正在写入模板…' : '下载模板'}
-            </button>
-          </div>
           {templateStage !== 'idle' ? (
             <p className="template-progress" role="status">
               正在{templateStage === 'generating' ? '生成' : '写入'}文件，请等待保存完成后再打开；浏览器下载请等下载完成。

@@ -21,6 +21,7 @@ function PreparePage({
   setNotice,
   onGoRun,
   onSimulate,
+  onLoadWorkspace,
 }: {
   data: SchoolData;
   commit: Commit;
@@ -31,6 +32,7 @@ function PreparePage({
   setNotice: (value: string) => void;
   onGoRun: () => void;
   onSimulate: (rule: RuleInstance) => Promise<{ entries: number; total: number; before: number; feasible: boolean; elapsedMs: number } | null>;
+  onLoadWorkspace: (next: SchoolData) => void;
 }) {
   const [importOpen, setImportOpen] = useState(false);
   const [templateBusy, setTemplateBusy] = useState(false);
@@ -130,7 +132,7 @@ function PreparePage({
         ) : section === 'rules' ? (
           <RulesPage data={data} commit={commit} setError={setError} onSimulate={onSimulate} />
         ) : isResource ? (
-          <ResourcesPage data={data} commit={commit} setError={setError} setNotice={setNotice} kind={section as (typeof resourceKinds)[number]} />
+          <ResourcesPage data={data} commit={commit} setError={setError} setNotice={setNotice} onLoadWorkspace={onLoadWorkspace} kind={section as (typeof resourceKinds)[number]} />
         ) : null}
         <div className={issues.length > 0 ? 'prepare-readiness has-issues' : 'prepare-readiness'}>
           <div><span>数据检查</span><strong>{issues.length > 0 ? issues.length + ' 项待处理' : '通过'}</strong><small>{issues[0] ?? '基础资料和教学计划已就绪'}</small></div>
@@ -141,7 +143,7 @@ function PreparePage({
         <div className="import-overlay" role="dialog" aria-modal="true">
           <div className="import-drawer">
             <div className="import-drawer-head"><div><span className="kicker">// IMPORT</span><h2>导入 Excel</h2></div><button type="button" className="banner-close" onClick={() => setImportOpen(false)} aria-label="关闭导入">×</button></div>
-            <ResourcesPage data={data} commit={commit} setError={setError} setNotice={setNotice} kind="import" />
+            <ResourcesPage data={data} commit={commit} setError={setError} setNotice={setNotice} onLoadWorkspace={onLoadWorkspace} kind="import" />
           </div>
         </div>
       ) : null}

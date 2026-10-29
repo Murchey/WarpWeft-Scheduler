@@ -36,6 +36,7 @@ import { RUN_MODE_OPTIONS } from './runConfig';
 import { CLOUD_ENDPOINT_PLACEHOLDER, cleanEndpoint, endpointForMode, initialEndpointForMode, RUNTIME_MODE_KEY, readActiveEndpoint, readEndpointMemory, rememberEndpoint, writeActiveEndpoint, writeEndpointMemory } from './runtimeEndpoint';
 import type { EndpointMemory } from './runtimeEndpoint';
 import type { RunProgress, ShortRunRecord } from './runConfig';
+import { serializeWorkspace, workspaceFileName } from './workspaceProject';
 import { EmptyState, RunProgressView } from './runViews';
 import { findClass, findRoom, findSubject, findTeacher, missingPlans, planOf, planSubjectName } from './selectors';
 import { RunsPage } from './RunsPage';
@@ -995,6 +996,21 @@ function App() {
     }
   };
 
+  const loadWorkspaceSnapshot = (next: SchoolData) => {
+    setData(next);
+    setResult(next.candidate ?? next.published ?? null);
+    setSelectedClassId(next.classes[0]?.id ?? '');
+    setSelectedEntryId('');
+    setHistory([]);
+    pending.current = next;
+    if (apiOnline) {
+      setSaveState('saving');
+      void flush(next);
+    } else {
+      setSaveState('offline');
+    }
+  };
+
   const makeCandidateVersion = (fixed: SolverOutput, source: 'solver' | 'manual') => ({
     id: uid('version'),
     kind: 'candidate' as const,
@@ -1570,6 +1586,17 @@ function App() {
       action: 'SAVE_OFFICIAL',
       detail: `保存正式版课表 · ${fileName}${outcome.path ? ' · ' + outcome.path : ''}`,
     };
+    const workspaceData = {
+      ...data,
+      published: result,
+      publishedVersion,
+      auditLog: [...(data.auditLog ?? []), audit],
+    };
+    void download(
+      new Blob([serializeWorkspace(workspaceData, fileName.replace(/\.xlsx?$/i, '') + ' 工作区')], { type: 'application/json;charset=utf-8' }),
+      'application/json',
+      workspaceFileName(fileName.replace(/\.xlsx?$/i, '') + ' 工作区'),
+    ).catch((cause) => setError('同步保存工作区数据失败：' + messageOf(cause)));
     commit(
       {
         ...data,
@@ -1993,6 +2020,7 @@ function App() {
             setNotice={setNotice}
             onGoRun={() => setTab('排课任务')}
             onSimulate={simulateRule}
+            onLoadWorkspace={loadWorkspaceSnapshot}
           />
         ) : null}
         <div hidden={tab !== '排课任务'}>

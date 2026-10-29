@@ -1060,6 +1060,10 @@ html[data-theme='dark'] .adjust-layout{
 .adjust-status-close{border:0;background:transparent;color:var(--muted);font-size:18px;line-height:1;cursor:pointer;padding:0 2px}
 
 .adjust-workspace{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(340px,.75fr);gap:14px;align-items:start}
+.adjust-workspace:has(.adjust-swap-panel){grid-template-columns:minmax(0,1.2fr) minmax(270px,.72fr) minmax(300px,.86fr)}
+.adjust-swap-panel{position:sticky;top:12px;padding:16px;min-width:0}
+.adjust-swap-panel .adjust-swap{margin-top:0}
+.adjust-swap-panel .adjust-swap-list{max-height:clamp(300px,calc(100vh - 430px),560px)}
 .adjust-board-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;background:var(--chip);border-bottom:1px solid var(--rule)}
 .adjust-board-class{display:block;font:700 16px var(--font-text);color:var(--ink)}
 .adjust-board-head small{display:block;margin-top:3px;font:10px var(--font-ui);letter-spacing:.06em;color:var(--muted)}
@@ -1357,6 +1361,24 @@ html[data-theme='dark'] .tt-warning.is-danger{background:#2b1717;color:#fca5a5}
 .import-feedback span{flex:1;min-width:0;word-break:break-word}
 .import-feedback-close{flex:none;border:0;background:transparent;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;padding:0 2px}
 .import-feedback-close:hover{color:var(--ink)}
+.workspace-import-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:12px 0 16px}
+.workspace-import-card{display:flex;flex-direction:column;gap:7px;padding:14px;border:1px solid var(--rule);border-radius:10px;background:var(--panel)}
+.workspace-import-card.is-workspace{border-left:3px solid var(--signal)}
+.workspace-import-card h3{margin:0;font-size:17px}
+.workspace-import-card .panel-note{margin:0;min-height:38px}
+.workspace-project-save{display:flex;gap:8px;align-items:center;margin-top:4px}
+.workspace-project-save input{flex:1;min-width:0;height:36px;border:1px solid var(--rule);border-radius:8px;background:var(--paper);color:var(--ink);padding:0 10px;font:13px var(--font-text)}
+.workspace-projects{margin-top:12px;padding:14px;border:1px solid var(--rule);border-radius:10px;background:var(--panel)}
+.workspace-projects .panel-head{margin-bottom:4px}
+.workspace-project-list{display:flex;flex-direction:column;gap:7px;margin-top:10px}
+.workspace-project-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 11px;border:1px solid var(--rule);border-radius:8px;background:var(--paper)}
+.workspace-project-row > div:first-child{min-width:0;display:flex;flex-direction:column;gap:3px}
+.workspace-project-row b{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.workspace-project-row small{font:10px var(--font-ui);color:var(--muted)}
+.workspace-project-actions{display:flex;gap:5px;flex:0 0 auto}
+.workspace-project-actions .ghost-button{height:28px;padding:0 8px;font-size:10px}
+.workspace-project-actions .is-danger{color:var(--danger)}
+@media(max-width:760px){.workspace-import-grid{grid-template-columns:1fr}.workspace-project-save{align-items:stretch;flex-direction:column}.workspace-project-save .action-button{width:100%;justify-content:center}.workspace-project-row{align-items:stretch;flex-direction:column}.workspace-project-actions{width:100%}.workspace-project-actions .ghost-button{flex:1}}
 
 /* Batch teacher availability (T06). */
 .availability-batch{margin:12px 0 16px;border:1px dashed var(--rule);border-radius:10px;padding:10px 12px}

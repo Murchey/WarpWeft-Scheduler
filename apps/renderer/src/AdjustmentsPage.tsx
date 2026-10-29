@@ -1772,6 +1772,17 @@ export function AdjustmentsPage({
           </div>
         </section>
 
+        {selected && draftType === 'swap' ? (
+          <aside className="section-panel adjust-swap-panel">
+            <div className="panel-head">
+              <SectionHeading english="SWAP TARGETS" title="对调面板" />
+              <span className="status-tag">同班 · 跨日</span>
+            </div>
+            <p className="panel-note">左侧选择课程后，在这里选择目标日期和同班课程；目标可用性会同时检查两天的班级、教师和不可用时间。</p>
+            {renderSwapTargets()}
+          </aside>
+        ) : null}
+
         <aside className="section-panel adjust-inspector">
           <div className="panel-head">
             <SectionHeading english="ADJUSTMENT INSPECTOR" title="调整这节课" />
@@ -1896,7 +1907,6 @@ export function AdjustmentsPage({
                         <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="如：教师出差、课程进度调整" />
                       </label>
                       <p className="panel-note">所选日期的这节课与目标日期的同班课程对调；两节课互换日期和时间。</p>
-                      {renderSwapTargets()}
                     </>
                   ) : null}
 
