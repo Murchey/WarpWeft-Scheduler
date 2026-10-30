@@ -6,16 +6,44 @@
 
 - `data/warpweft.json` 始终代表**当前正在编辑的工作区**，`store.read()/write()` 语义不变。
 - **切换工程 = 把工程快照写进 `warpweft.json`**，所以 `PUT /api/data`、350ms 防抖保存、`validateData`、排课链路都不需要改动。
-- 工程快照与导出文件同构：`{ format: 'warpweft-workspace', version: 1, name, savedAt, data }`，即 `.workspace.json` 格式，可直接跨机器迁移。
+- 工程包是**分片 JSON 的 ZIP**（见下），导出仍是单个 `.workspace.json`，两者格式同源可互转。
 
 ```
 <dataDir>/
-  warpweft.json                      活动工作区（既有）
+  warpweft.json                      活动工作区（既有，仍为单文件 JSON）
   projects/
     index.json                       工程清单 + 活动指针（单一真源）
-    p_<id>.json                      工程快照（同 .workspace.json）
-    _autosave/<id>-<ts>.json         切换前自动备份，每工程保留最近 3 份
+    p_<id>.zip                       工程包（分片 JSON 的 ZIP）
+    p_<id>.json.migrated             v1 单文件快照的迁移备份，可人工回滚
+    _autosave/<id>-<ts>.zip          切换前自动备份，每工程保留最近 3 份
 ```
+
+### 1.1 工程包内部结构
+
+用系统解压工具（Windows 资源管理器 / `tar -xf` / `unzip`）可直接打开查看：
+
+```
+manifest.json            格式版本、名称、保存时间、roomMode、计数、分片清单
+core/school.json         基础资料，一类一个文件
+core/classes.json
+core/coursePlans.json
+core/…
+results/candidate.json   排课结果（体积大头，通常占 40%–50%）
+results/published.json
+history/adjustments.json 调代课、授课日志、审计日志
+history/auditLog.json
+extra.json               未知字段兜底，保证前向兼容不丢数据
+```
+
+- **自适应布局**：工作区 JSON 小于 32 KB 时只写 `manifest.json` + `data.json`（每个 ZIP 条目有 ~76 字节固定开销，20 个分片约 1.5 KB，对空工程反而膨胀）；超过阈值才分片。
+- **压缩收益**（本机真实数据 45 班 / 690 计划 / 1620 课时）：
+  | | 体积 | 耗时 |
+  | --- | --- | --- |
+  | 单文件 JSON（含缩进） | 747 KB | `JSON.parse` 1–2 ms |
+  | 分片 ZIP | **52 KB** | 编码 7 ms / 解码 4 ms |
+- ZIP 用 `node:zlib` 的 `deflateRaw`/`inflateRaw` 自实现（`server/api/zip.cjs`，约 200 行），**不引入第三方依赖**，保持 Linux 服务端零依赖。已用 Windows `bsdtar` 验证互通。
+
+> 说明：压缩后读取会多一次 inflate（约 2–4 ms），换来磁盘与跨机拷贝字节数下降一个数量级。若数据目录在机械盘或网络盘，这个交换明显划算；纯内存态的高频读写仍走 `warpweft.json`，不受影响。
 
 ## 2. 接口
 
@@ -31,19 +59,24 @@
 | POST | `/api/projects/:id/open` | 换入工作区；`{expectedActiveId?, saveCurrent?, force?}`，成功直接返回换入后的 `data` |
 | POST | `/api/projects/import` | 导入 `.workspace.json`，校验 `format` 与 `version` |
 
-错误码：`PROJECT_NOT_FOUND`、`PROJECT_LIMIT_REACHED`、`PROJECT_INVALID_NAME`、`PROJECT_TOO_LARGE`、`PROJECT_CONFLICT`、`WORKSPACE_FORMAT_INVALID`、`WORKSPACE_VERSION_UNSUPPORTED`、`INVALID_DATA`。
+错误码：`PROJECT_NOT_FOUND`、`PROJECT_LIMIT_REACHED`、`PROJECT_INVALID_NAME`、`PROJECT_TOO_LARGE`、`PROJECT_CORRUPTED`、`PROJECT_CONFLICT`、`WORKSPACE_FORMAT_INVALID`、`WORKSPACE_VERSION_UNSUPPORTED`、`INVALID_DATA`。
+
+`GET /api/projects/:id` 返回的 `doc` 由工程包合并而成，形状与导出文件一致：`{ format, version, name, savedAt, data }`
 
 ## 3. 数据安全
 
 - `open` 默认 `saveCurrent: true`：切换前先把当前工作区写回其所属工程，并复制一份到 `_autosave`。
 - `expectedActiveId` 与服务器不一致时返回 `409 PROJECT_CONFLICT`（多客户端同时切换），前端二次确认后带 `force: true` 重试。
-- 配额：工程上限 30 个，单工程 4 MB（`MAX_BODY` 5 MB 的 80%），工程名 1–60 字符。超出返回 409/413，不自动删除任何数据。
+- 配额：工程上限 30 个，**解压后**数据 4 MB（`MAX_BODY` 5 MB 的 80%），工程名 1–60 字符。超出返回 409/413，不自动删除任何数据。
+- `bytes` 记录压缩后的包体积，`rawBytes` 记录解压后体积；配额按 `rawBytes` 判定。
 - 单进程内用 Promise 链串行化 `index.json` 的读-改-写；**不支持**桌面端与 Linux 同时指向同一 `dataDir`。
+- **向后兼容**：v1 的 `p_<id>.json` 在首次读取时自动转换为 `.zip`，旧文件改名为 `.json.migrated` 保留；转换失败则回退读旧文件，不阻塞使用。删除工程时连同迁移残留一并清理。
 
 ## 4. 双端一致性
 
 - Windows（`apps/desktop/main.cjs`）与 Linux（`linux_server/server.cjs`）都调用同一个 `startApi()`，新路由自动生效，Linux 端无需改代码。
-- `scripts/build-linux-server.cjs` 以 `copy('server/api', 'server/api')` 整目录打包，`projects.cjs` 自动入包并计入清单哈希。
+- `scripts/build-linux-server.cjs` 以 `copy('server/api', 'server/api')` 整目录打包，`projects.cjs`、`projectSnapshot.cjs`、`zip.cjs` 自动入包。
+- **零第三方依赖**：`zip.cjs` 只用 `node:zlib`，`linux_server/` 仍不需要 `package.json` 或 `npm install`。
 - `tests/server-parity.test.cjs` 追加了 `/api/projects` 的双端等价断言。
 - `data-schema.json` 的 `features` 增加 `projects` 但**不提高 `version`**，避免旧客户端被 `MIN_SERVER_SCHEMA` 拦截。
   代价：`features` 变更后必须重新执行 `npm run dist:linux`，否则 `linux_server/verify.sh` 的 capabilities 哈希比对会失败。

@@ -59,7 +59,7 @@ test('工程接口：新建、保存、重命名与切换会换入数据', async
   const first = await json(ctx.base, 'POST', '/api/projects', { name: '甲校 2026 秋' });
   assert.equal(first.status, 201);
   assert.equal(first.body.activeId, first.body.project.id);
-  assert.ok(fs.existsSync(path.join(ctx.dataDir, 'projects', first.body.project.id + '.json')));
+  assert.ok(fs.existsSync(path.join(ctx.dataDir, 'projects', first.body.project.id + '.zip')));
 
   // 修改当前工作区，再保存回工程，快照体积应随之更新
   const edited = { ...baseline, school: { ...baseline.school, name: '甲校最新' } };
@@ -143,7 +143,7 @@ test('工程接口：删除工程并清理活动指针，非法 id 返回 404', 
   const removed = await json(ctx.base, 'DELETE', '/api/projects/' + id);
   assert.equal(removed.status, 200);
   assert.equal(removed.body.activeId, null);
-  assert.equal(fs.existsSync(path.join(ctx.dataDir, 'projects', id + '.json')), false);
+  assert.equal(fs.existsSync(path.join(ctx.dataDir, 'projects', id + '.zip')), false);
 
   const traversal = await json(ctx.base, 'GET', '/api/projects/' + encodeURIComponent('../index'));
   assert.equal(traversal.status, 404);
@@ -163,4 +163,98 @@ test('工程接口：超过单工程体积上限返回 413', async (t) => {
   const response = await json(ctx.base, 'POST', '/api/projects', { name: '超大工程', data: huge });
   assert.equal(response.status, 413);
   assert.equal(response.body.code, 'PROJECT_TOO_LARGE');
+});
+
+test('工程接口：分片 ZIP 快照可读且压缩后体积更小', async (t) => {
+  const ctx = await boot();
+  t.after(ctx.close);
+  const baseline = (await json(ctx.base, 'GET', '/api/data')).body;
+  // 造一份超过分片阈值的数据，验证压缩收益
+  const bulk = {
+    ...baseline,
+    classes: Array.from({ length: 200 }, (_, i) => ({
+      id: 'c' + i,
+      name: '测试班' + i,
+      size: 40,
+      grade: '一年级',
+    })),
+  };
+  const created = await json(ctx.base, 'POST', '/api/projects', { name: 'ZIP 工程', data: bulk });
+  assert.equal(created.status, 201);
+
+  const file = path.join(ctx.dataDir, 'projects', created.body.project.id + '.zip');
+  const zip = fs.readFileSync(file);
+  // ZIP 魔数 PK\x03\x04
+  assert.equal(zip[0], 0x50);
+  assert.equal(zip[1], 0x4b);
+  const rawBytes = Buffer.byteLength(JSON.stringify(bulk), 'utf8');
+  assert.ok(zip.length < rawBytes, '压缩包应小于原始 JSON：' + zip.length + ' vs ' + rawBytes);
+  // 清单里记录的是压缩后体积
+  assert.equal(created.body.project.bytes, zip.length);
+  assert.ok(created.body.project.rawBytes > zip.length);
+
+  const read = await json(ctx.base, 'GET', '/api/projects/' + created.body.project.id);
+  assert.equal(read.status, 200);
+  assert.deepEqual(read.body.doc.data.classes, bulk.classes);
+  assert.deepEqual(read.body.doc.data.coursePlans, bulk.coursePlans);
+});
+
+test('工程接口：v1 单文件快照在首次读取时自动迁移为 ZIP', async (t) => {
+  const ctx = await boot();
+  t.after(ctx.close);
+  const baseline = (await json(ctx.base, 'GET', '/api/data')).body;
+
+  const id = 'p_legacy_0001';
+  const projectsDir = path.join(ctx.dataDir, 'projects');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  const now = new Date().toISOString();
+  // 手工构造 v1 布局：index.json 指向一个单文件 .json 快照
+  fs.writeFileSync(
+    path.join(projectsDir, 'index.json'),
+    JSON.stringify({
+      version: 1,
+      activeId: null,
+      activeClientId: null,
+      activeAt: null,
+      projects: [
+        {
+          id,
+          name: '旧版工程',
+          createdAt: now,
+          updatedAt: now,
+          syncedAt: null,
+          bytes: 100,
+          schoolName: baseline.school.name,
+          counts: { classes: baseline.classes.length, teachers: baseline.teachers.length, coursePlans: baseline.coursePlans.length },
+        },
+      ],
+    }),
+    'utf8',
+  );
+  fs.writeFileSync(
+    path.join(projectsDir, id + '.json'),
+    JSON.stringify({ format: 'warpweft-workspace', version: 1, name: '旧版工程', savedAt: now, data: baseline }),
+    'utf8',
+  );
+
+  const read = await json(ctx.base, 'GET', '/api/projects/' + id);
+  assert.equal(read.status, 200);
+  assert.equal(read.body.doc.name, '旧版工程');
+  assert.deepEqual(read.body.doc.data.coursePlans, baseline.coursePlans);
+
+  // 迁移结果：.zip 生成，旧文件被改名保留
+  assert.equal(fs.existsSync(path.join(projectsDir, id + '.zip')), true);
+  assert.equal(fs.existsSync(path.join(projectsDir, id + '.json')), false);
+  assert.equal(fs.existsSync(path.join(projectsDir, id + '.json.migrated')), true);
+
+  // 再次读取应走 ZIP，且内容一致
+  const again = await json(ctx.base, 'GET', '/api/projects/' + id);
+  assert.equal(again.status, 200);
+  assert.deepEqual(again.body.doc.data.classes, baseline.classes);
+
+  // 删除工程时，迁移残留也要一并清理
+  const removed = await json(ctx.base, 'DELETE', '/api/projects/' + id);
+  assert.equal(removed.status, 200);
+  assert.equal(fs.existsSync(path.join(projectsDir, id + '.zip')), false);
+  assert.equal(fs.existsSync(path.join(projectsDir, id + '.json.migrated')), false);
 });
