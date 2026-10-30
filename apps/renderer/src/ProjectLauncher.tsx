@@ -37,7 +37,7 @@ export interface ProjectLauncherProps {
  * 仅在 data 已就绪后展示，因此所有工程请求都带着有效凭据。
  */
 export function ProjectLauncher(props: ProjectLauncherProps) {
-  const { t } = useI18n();
+  const { t, lang, toggleLang } = useI18n();
   const { dateTime } = useFormatters();
   const [draftName, setDraftName] = useState('');
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -76,10 +76,22 @@ export function ProjectLauncher(props: ProjectLauncherProps) {
             <h2>{t('launcher.title')}</h2>
             <p>{t('launcher.lead')}</p>
           </div>
-          <span className={props.online === false ? 'node-status offline' : 'node-status'}>
-            <i />
-            {props.online === false ? t('common.offline') : t('common.online')}
-          </span>
+          <div className="launcher-head-actions">
+            <span className={props.online === false ? 'node-status offline' : 'node-status'}>
+              <i />
+              {props.online === false ? t('common.offline') : t('common.online')}
+            </span>
+            {/* 启动页不渲染标题栏，停在这一页时也要能切语言 */}
+            <button
+              type="button"
+              className="ghost-button launcher-lang"
+              onClick={toggleLang}
+              title={t('common.switchLanguage')}
+              aria-label={t('common.switchLanguage')}
+            >
+              {lang === 'zh-CN' ? 'EN' : '中文'}
+            </button>
+          </div>
         </header>
 
         {props.error ? <p className="server-save-error">{props.error}</p> : null}
