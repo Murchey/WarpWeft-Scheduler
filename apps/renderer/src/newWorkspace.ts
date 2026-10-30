@@ -1,6 +1,7 @@
 import type { ClassRoom, CoursePlan, SchoolData, Subject, Teacher, TimeSlot } from './types';
-import { NEW_WORKSPACE_SOFT_CONSTRAINTS } from './softConstraints';
-import { uid } from './utils';
+// 带扩展名：node --test 直接 import 本模块时无法解析无扩展名的相对路径
+import { NEW_WORKSPACE_SOFT_CONSTRAINTS } from './softConstraints.ts';
+import { uid } from './utils.ts';
 
 /**
  * 一份可被服务端 validateData 完全接受的最小工作区。
@@ -30,6 +31,16 @@ export function createEmptyWorkspace(name = '新工程'): SchoolData {
     publishedVersion: null,
     auditLog: [],
   };
+}
+
+/**
+ * 工作区是否"实质上为空"（没有班级、教师与教学计划）。
+ * 用于判断切换/新建工程时是否会丢弃用户数据，避免静默覆盖。
+ */
+export function isWorkspaceEmpty(
+  data: Pick<SchoolData, 'classes' | 'teachers' | 'coursePlans'>,
+): boolean {
+  return data.classes.length === 0 && data.teachers.length === 0 && data.coursePlans.length === 0;
 }
 
 /**

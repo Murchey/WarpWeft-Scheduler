@@ -10,6 +10,7 @@ import {
   resumeLongJob,
   startLongJob,
 } from './api';
+import { copyText } from './clipboard';
 import type { LongJob, LongJobDetail } from './api';
 import type { SolverInput } from './types';
 import { SectionHeading } from './components';
@@ -314,12 +315,12 @@ export function LongRunPanel({
     });
 
   const copyFilePath = async (path: string) => {
-    try {
-      await navigator.clipboard.writeText(path);
+    if (await copyText(path)) {
       onNotice('文件路径已复制');
-    } catch {
-      window.prompt('浏览器无法自动复制，请手动复制以下路径：', path);
+      return;
     }
+    // Electron 不支持 window.prompt：改为把路径写进提示，用户可手动选中复制
+    onError('浏览器无法自动复制，请手动选中路径复制：' + path);
   };
 
   const revealFilePath = async (path: string) => {

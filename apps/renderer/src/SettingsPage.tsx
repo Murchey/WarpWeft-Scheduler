@@ -257,8 +257,21 @@ export function SettingsPage(props: SettingsPageProps) {
               <SettingsRow label={t('settings.project.openLauncher')} hint={t('settings.project.openLauncherHint')}>
                 <div className="settings-inline-actions">
                   <button type="button" className="ghost-button" onClick={props.onOpenLauncher}>{t('project.action.switch')}</button>
-                  <button type="button" className="ghost-button" disabled={!props.projectsSupported} onClick={props.onSaveProject}>{t('project.action.save')}</button>
-                  <button type="button" className="ghost-button" disabled={!props.projectsSupported} onClick={props.onSaveProjectAs}>{t('common.saveAs')}</button>
+                  {props.activeProject ? (
+                    <>
+                      <button type="button" className="ghost-button" disabled={!props.projectsSupported} onClick={props.onSaveProject}>
+                        {t('project.action.save')}
+                      </button>
+                      <button type="button" className="ghost-button" disabled={!props.projectsSupported} onClick={props.onSaveProjectAs}>
+                        {t('common.saveAs')}
+                      </button>
+                    </>
+                  ) : (
+                    // 未绑定工程时「保存」与「另存为」是同一个动作，只保留一个入口
+                    <button type="button" className="ghost-button" disabled={!props.projectsSupported} onClick={props.onSaveProjectAs}>
+                      {t('project.action.saveAsUnbound')}
+                    </button>
+                  )}
                   <button type="button" className="ghost-button" onClick={props.onExportProject}>{t('project.action.export')}</button>
                   <label className="file-button file-button-compact">
                     <span>{t('project.action.import')}</span>
@@ -284,7 +297,9 @@ export function SettingsPage(props: SettingsPageProps) {
               </SettingsRow>
               {props.activeProject ? (
                 <p className="panel-note">{t('project.savedAt', { time: dateTime(props.activeProject.updatedAt) })}</p>
-              ) : null}
+              ) : (
+                <p className="panel-note">{t('settings.project.notBound')}</p>
+              )}
             </section>
 
             <section className="settings-block">

@@ -2,6 +2,13 @@ import React, { useState } from 'react';
 import type { ProjectMeta } from './api';
 import { useFormatters, useI18n } from './i18n';
 
+export interface WorkspaceSummary {
+  schoolName: string;
+  classes: number;
+  teachers: number;
+  plans: number;
+}
+
 export interface ProjectLauncherProps {
   online: boolean | null;
   projects: ProjectMeta[];
@@ -10,6 +17,10 @@ export interface ProjectLauncherProps {
   busy: boolean;
   error: string;
   showOnStartup: boolean;
+  /** 当前工作区是否已绑定工程；未绑定时常驻「保存为工程」入口。 */
+  hasActiveProject: boolean;
+  workspace: WorkspaceSummary;
+  onSaveCurrentAs: () => void;
   onOpen: (id: string) => void;
   onCreate: (name: string) => void;
   onImport: (file: File) => void;
@@ -161,6 +172,26 @@ export function ProjectLauncher(props: ProjectLauncherProps) {
                 </li>
               ))}
             </ul>
+          </section>
+        ) : null}
+
+        {/* 当前工作区未关联工程：常驻提示 + 保存入口，避免用户在“未保存”状态下工作 */}
+        {!props.hasActiveProject ? (
+          <section className="launcher-current">
+            <div className="launcher-row-main">
+              <b>
+                {t('launcher.currentWorkspace')} · {props.workspace.schoolName || '—'}
+              </b>
+              <small>
+                {t('launcher.currentHint', {
+                  classes: props.workspace.classes,
+                  plans: props.workspace.plans,
+                })}
+              </small>
+            </div>
+            <button className="action-button" disabled={props.busy} onClick={props.onSaveCurrentAs}>
+              {t('launcher.saveCurrent')}
+            </button>
           </section>
         ) : null}
 

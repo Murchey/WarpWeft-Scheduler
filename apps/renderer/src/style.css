@@ -2008,6 +2008,9 @@ html[lang='en-US'] .status-tag,html[lang='en-US'] .mini-tag{letter-spacing:.04em
   .launcher-row{flex-direction:column;align-items:flex-start}
   .launcher-actions{flex-direction:column;align-items:stretch}
 }
+/* 未绑定工程的常驻提示条 */
+.launcher-current{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px;border:1px dashed var(--rule);background:var(--paper)}
+.launcher-current .action-button{flex:0 0 auto}
 
 /* ── 自绘标题栏（仅桌面端有窗口按钮，浏览器端自动降级）────────── */
 :root{--titlebar-h:40px}
@@ -2102,6 +2105,13 @@ html[lang='en-US'] .status-tag,html[lang='en-US'] .mini-tag{letter-spacing:.04em
 .settings-row-control .settings-stats span{display:flex;align-items:baseline;gap:6px;padding:6px 10px;
   background:var(--chip);color:var(--muted);font:11px var(--font-text);white-space:nowrap}
 .settings-row-control .settings-stats b{color:var(--ink);font:600 13px var(--font-ui)}
+
+/* 命名对话框：复用 rule-* 结构，但覆盖为方角与窄版宽度 */
+.prompt-dialog{width:min(480px,100%);border-radius:0}
+.prompt-dialog .prompt-field{display:grid;gap:6px;font-size:12px;color:var(--muted)}
+.prompt-dialog .prompt-field .settings-input{width:100%;min-width:0}
+.prompt-dialog .rule-dialog-body .panel-note{margin:0}
+.server-copy-fallback{display:inline-block;margin-left:8px;font-style:normal;font-size:11px;color:var(--danger)}
 @media(max-width:1080px){
   .settings-shell{grid-template-columns:1fr;gap:18px}
   .settings-nav{position:static;grid-template-columns:repeat(3,minmax(0,1fr));border-top:0;border-bottom:1px solid var(--rule);padding:0 0 8px}

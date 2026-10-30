@@ -14,7 +14,9 @@ import { ProjectLauncher } from './ProjectLauncher';
 import { TitleBar } from './TitleBar';
 import { SettingsPage } from './SettingsPage';
 import { WorkspaceLocationCard } from './WorkspaceLocationCard';
-import { createEmptyWorkspace } from './newWorkspace';
+import { PromptDialog } from './PromptDialog';
+import { copyText } from './clipboard';
+import { createEmptyWorkspace, isWorkspaceEmpty } from './newWorkspace';
 import { currentLang, fmtDateTime } from './i18n/format';
 import { PreparePage } from './PreparePage';
 import type { PrepareSection } from './PreparePage';
@@ -789,6 +791,43 @@ function App() {
     setToastLogs([]);
     saveToastLogs([]);
   }, []);
+  // ── 工程（项目）──────────────────────────────────────────────
+  // 服务端把每个工程存成独立快照，切换 = 把快照写进活动工作区；
+  // 因此前端只需要在切换成功后整体替换 data，无需感知存储细节。
+  // 这组状态上移到 flush 之前，使保存失败也能走统一的提示通道。
+  const [projects, setProjects] = useState<ProjectMeta[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [projectsSupported, setProjectsSupported] = useState(true);
+  const [launcherOpen, setLauncherOpen] = useState(false);
+  const [launcherBusy, setLauncherBusy] = useState(false);
+  const [launcherError, setLauncherError] = useState('');
+  const [launcherAlways, setLauncherAlways] = useState<boolean>(readLauncherAlways);
+  const [nameDialog, setNameDialog] = useState<null | { defaultName: string }>(null);
+  const [nameDialogBusy, setNameDialogBusy] = useState(false);
+  const [nameDialogError, setNameDialogError] = useState('');
+  const projectsLoaded = useRef(false);
+  const activeProject = projects.find((item) => item.id === activeProjectId) || null;
+
+  // 启动页打开时 <ToastView> 不渲染（launcherOpen 分支会提前 return），
+  // 所以工程类错误必须按"当前可见的容器"分流；用 ref 而不是依赖，
+  // 避免异步 catch 里读到旧值、也避免相关 useCallback 频繁重建。
+  const launcherOpenRef = useRef(false);
+  useEffect(() => {
+    launcherOpenRef.current = launcherOpen;
+  }, [launcherOpen]);
+  const reportProjectError = useCallback(
+    (message: string) => {
+      if (!message) return;
+      if (launcherOpenRef.current) setLauncherError(message);
+      else setError(message);
+    },
+    [setError],
+  );
+  const reportProjectFailure = useCallback(
+    (cause: unknown) => reportProjectError(messageOf(cause)),
+    [reportProjectError],
+  );
+
   useEffect(() => {
     if (!toast) return;
     const remaining = Math.max(0, toast.expiresAt - Date.now());
@@ -992,24 +1031,59 @@ function App() {
     if (tab === '服务端' && runMode !== 'lan-server') setTab('工作台');
   }, [tab, runMode]);
 
-  const flush = async (value: SchoolData) => {
+  // 记录进行中的 PUT：切换工程/另存为前必须等它落地，否则服务端快照到的是旧数据
+  const inflightSave = useRef<Promise<boolean> | null>(null);
+
+  const flush = async (value: SchoolData): Promise<boolean> => {
     if (saveTimer.current !== null) {
       window.clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
     if (!apiOnline) {
       setSaveState('offline');
-      return;
+      return false;
     }
     setSaveState('saving');
-    try {
-      const saved = await saveData(value);
-      setData((current) => (current ? { ...current, updatedAt: saved.updatedAt } : saved));
-      setSaveState('saved');
-    } catch (cause) {
-      setSaveState('error');
-      setError('保存失败：' + messageOf(cause));
+    const task = (async () => {
+      try {
+        const saved = await saveData(value);
+        setData((current) => (current ? { ...current, updatedAt: saved.updatedAt } : saved));
+        setSaveState('saved');
+        return true;
+      } catch (cause) {
+        setSaveState('error');
+        reportProjectError('保存失败：' + messageOf(cause));
+        return false;
+      }
+    })();
+    inflightSave.current = task;
+    const ok = await task;
+    if (inflightSave.current === task) inflightSave.current = null;
+    return ok;
+  };
+
+  /**
+   * 结算 350ms 防抖队列与进行中的写入，确保磁盘上的 warpweft.json 是最新值。
+   * 服务端「另存为」读的是磁盘快照，所以必须先结算再发请求。
+   */
+  const settlePendingSave = async (): Promise<boolean> => {
+    if (saveTimer.current !== null) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+      const queued = pending.current;
+      if (queued && !(await flush(queued))) return false;
     }
+    if (inflightSave.current && !(await inflightSave.current)) return false;
+    return true;
+  };
+
+  /** 换入另一份数据前丢弃队列：否则 350ms 后旧值会覆盖刚换入的工作区。 */
+  const discardPendingSave = () => {
+    if (saveTimer.current !== null) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    pending.current = null;
   };
 
   const commit: Commit = (next, options = {}) => {
@@ -1058,19 +1132,6 @@ function App() {
     }
   };
 
-  // ── 工程（项目）──────────────────────────────────────────────
-  // 服务端把每个工程存成独立快照，切换 = 把快照写进活动工作区；
-  // 因此前端只需要在切换成功后整体替换 data，无需感知存储细节。
-  const [projects, setProjects] = useState<ProjectMeta[]>([]);
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-  const [projectsSupported, setProjectsSupported] = useState(true);
-  const [launcherOpen, setLauncherOpen] = useState(false);
-  const [launcherBusy, setLauncherBusy] = useState(false);
-  const [launcherError, setLauncherError] = useState('');
-  const [launcherAlways, setLauncherAlways] = useState<boolean>(readLauncherAlways);
-  const projectsLoaded = useRef(false);
-  const activeProject = projects.find((item) => item.id === activeProjectId) || null;
-
   const refreshProjects = useCallback(async () => {
     try {
       const list = await fetchProjects();
@@ -1096,12 +1157,15 @@ function App() {
     void (async () => {
       try {
         const list = await refreshProjects();
-        if (list && readLauncherAlways() && list.projects.length > 0) setLauncherOpen(true);
+        if (!list) return;
+        // 一个工程都没有时也要进启动页，否则用户会在"未绑定工程"的状态下工作而毫不知情
+        if (list.projects.length === 0) setLauncherOpen(true);
+        else if (readLauncherAlways()) setLauncherOpen(true);
       } catch (cause) {
-        setLauncherError(messageOf(cause));
+        reportProjectFailure(cause);
       }
     })();
-  }, [data, apiOnline, refreshProjects]);
+  }, [data, apiOnline, refreshProjects, reportProjectFailure]);
 
   const applyOpenedProject = (next: { project: ProjectMeta; activeId: string | null; data: SchoolData }) => {
     window.localStorage.setItem(ACTIVE_PROJECT_KEY, next.project.id);
@@ -1118,20 +1182,28 @@ function App() {
     setNotice(t('project.opened', { name: next.project.name }));
   };
 
-  /** 切换/新建之前先把当前工程写回，避免覆盖未保存的修改。 */
-  const persistActiveProject = useCallback(async () => {
-    if (!activeProjectId || !data) return;
+  /**
+   * 切换/新建之前先把当前工程写回。
+   * hadProject 表示"当前工作区是否有归属工程"——没有的话，切走就等于丢弃数据。
+   */
+  const persistActiveProject = useCallback(async (): Promise<{ saved: boolean; hadProject: boolean }> => {
+    if (!activeProjectId || !data) return { saved: false, hadProject: false };
+    if (!(await settlePendingSave())) return { saved: false, hadProject: true };
     try {
-      await saveProjectData(activeProjectId, { data });
-    } catch {
-      // 尽力而为：失败不阻塞切换，服务端 open 仍会做一次保存尝试
+      await saveProjectData(activeProjectId, { data: pending.current ?? data });
+      return { saved: true, hadProject: true };
+    } catch (cause) {
+      reportProjectFailure(cause);
+      return { saved: false, hadProject: true };
     }
-  }, [activeProjectId, data]);
+  }, [activeProjectId, data, reportProjectFailure]);
 
   const openProjectById = async (id: string, force = false) => {
     setLauncherBusy(true);
     setLauncherError('');
     try {
+      // 服务端 open 会快照当前工作区，必须先让 350ms 防抖写入落地
+      if (!(await settlePendingSave())) return;
       const result = await openProjectApi(id, { expectedActiveId: activeProjectId, force });
       applyOpenedProject(result);
       await refreshProjects();
@@ -1142,7 +1214,7 @@ function App() {
           return;
         }
       }
-      setLauncherError(messageOf(cause));
+      reportProjectFailure(cause);
     } finally {
       setLauncherBusy(false);
     }
@@ -1152,13 +1224,25 @@ function App() {
     setLauncherBusy(true);
     setLauncherError('');
     try {
-      await persistActiveProject();
+      const { saved, hadProject } = await persistActiveProject();
+      if (hadProject && !saved) return;
+      // 未绑定工程且工作区非空：先确认，绝不再静默覆盖
+      if (!hadProject && data && !isWorkspaceEmpty(data)) {
+        const ok = window.confirm(
+          t('project.confirmDiscardWorkspace', {
+            classes: data.classes.length,
+            plans: data.coursePlans.length,
+          }),
+        );
+        if (!ok) return;
+      }
+      discardPendingSave();
       const created = await createProjectApi({ name, data: createEmptyWorkspace(name), open: true });
       const opened = await openProjectApi(created.project.id, { saveCurrent: false });
       applyOpenedProject(opened);
       await refreshProjects();
     } catch (cause) {
-      setLauncherError(messageOf(cause));
+      reportProjectFailure(cause);
     } finally {
       setLauncherBusy(false);
     }
@@ -1169,7 +1253,12 @@ function App() {
     setLauncherError('');
     try {
       const parsed = parseWorkspace(await file.text());
-      await persistActiveProject();
+      const { saved, hadProject } = await persistActiveProject();
+      if (hadProject && !saved) return;
+      if (!hadProject && data && !isWorkspaceEmpty(data)) {
+        if (!window.confirm(t('project.confirmImport', { name: parsed.name }))) return;
+      }
+      discardPendingSave();
       const created = await importProjectApi(
         { format: parsed.format, version: parsed.version, name: parsed.name, savedAt: parsed.savedAt, data: parsed.data },
         parsed.name,
@@ -1178,45 +1267,85 @@ function App() {
       applyOpenedProject(opened);
       await refreshProjects();
     } catch (cause) {
-      setLauncherError(messageOf(cause));
+      reportProjectFailure(cause);
     } finally {
       setLauncherBusy(false);
     }
   };
 
+  const openNameDialog = () => {
+    setNameDialogError('');
+    // 默认名在打开时快照，避免输入过程中后台保存回写 updatedAt 触发输入重置
+    setNameDialog({
+      defaultName: (data?.school?.name ?? '').trim() || activeProject?.name || t('project.untitled'),
+    });
+  };
+
+  const closeNameDialog = () => {
+    if (nameDialogBusy) return;
+    setNameDialog(null);
+    setNameDialogError('');
+  };
+
   const saveActiveProject = async (): Promise<boolean> => {
-    if (!data || !projectsSupported) return false;
+    if (!data) return false;
+    if (!projectsSupported) {
+      reportProjectError(t('project.unsupported'));
+      return false;
+    }
+    // 未绑定工程：交给命名对话框，不再用 window.prompt（Electron 不支持）
     if (!activeProjectId) {
-      const name = window.prompt(t('project.action.saveAs'), data.school?.name || t('project.untitled'));
-      if (!name || !name.trim()) return false;
-      return saveProjectAs(name.trim());
+      openNameDialog();
+      return false;
     }
     try {
       setSaveState('saving');
-      const result = await saveProjectData(activeProjectId, { data });
+      const result = await saveProjectData(activeProjectId, { data: pending.current ?? data });
       setSaveState('saved');
       setNotice(t('project.savedAs', { name: result.project.name }));
       await refreshProjects();
       return true;
     } catch (cause) {
       setSaveState('error');
-      setError(messageOf(cause));
+      reportProjectFailure(cause);
       return false;
     }
   };
 
-  const saveProjectAs = async (name: string): Promise<boolean> => {
-    if (!data || !projectsSupported) return false;
+  /**
+   * 另存为：走服务端快照模式（不传 data）。
+   * POST /api/projects 在缺省 data 时用 store.read() 读取磁盘上的最新工作区，
+   * 因此必须先 settlePendingSave()，否则快照到的是旧内容。
+   */
+  const saveProjectAs = async (rawName: string): Promise<boolean> => {
+    const name = rawName.trim();
+    if (!data || !projectsSupported || !name) {
+      if (!projectsSupported) reportProjectError(t('project.unsupported'));
+      return false;
+    }
+    setNameDialogBusy(true);
+    setNameDialogError('');
     try {
-      const created = await createProjectApi({ name, data, open: true });
+      if (!(await settlePendingSave())) {
+        setNameDialogError(t('project.nameDialog.snapshotStale'));
+        return false;
+      }
+      const created = await createProjectApi({ name, open: true });
       setActiveProjectId(created.activeId ?? created.project.id);
       window.localStorage.setItem(ACTIVE_PROJECT_KEY, created.project.id);
-      setNotice(t('project.savedAs', { name: created.project.name }));
+      setSaveState('saved');
       await refreshProjects();
+      setNameDialog(null);
+      setLauncherOpen(false);
+      setLauncherError('');
+      setNotice(t('project.savedAs', { name: created.project.name }));
       return true;
     } catch (cause) {
-      setError(messageOf(cause));
+      // 4 MiB 超限、名称非法、工程数量上限都在这里就地展示，对话框保持打开以便重试
+      setNameDialogError(messageOf(cause));
       return false;
+    } finally {
+      setNameDialogBusy(false);
     }
   };
 
@@ -1246,7 +1375,7 @@ function App() {
       }
       await refreshProjects();
     } catch (cause) {
-      setLauncherError(messageOf(cause));
+      reportProjectFailure(cause);
     } finally {
       setLauncherBusy(false);
     }
@@ -1257,7 +1386,7 @@ function App() {
       await renameProjectApi(id, name);
       await refreshProjects();
     } catch (cause) {
-      setLauncherError(messageOf(cause));
+      reportProjectFailure(cause);
     }
   };
 
@@ -2162,29 +2291,63 @@ function App() {
     );
   }
 
+  // 命名对话框要在「启动页」与「工作区」两个分支都渲染，否则从启动页触发时不可见
+  const nameDialogNode = nameDialog ? (
+    <PromptDialog
+      title={t('project.nameDialog.title')}
+      lead={t('project.nameDialog.lead')}
+      label={t('project.nameDialog.label')}
+      defaultValue={nameDialog.defaultName}
+      placeholder={t('project.nameDialog.placeholder')}
+      confirmLabel={t('project.nameDialog.confirm')}
+      busyLabel={t('project.nameDialog.busy')}
+      busy={nameDialogBusy}
+      maxLength={60}
+      hint={
+        projects.some((item) => item.name === nameDialog.defaultName.trim())
+          ? t('project.nameDialog.duplicate', { name: nameDialog.defaultName.trim() })
+          : undefined
+      }
+      error={nameDialogError}
+      onConfirm={(value) => void saveProjectAs(value)}
+      onClose={closeNameDialog}
+    />
+  ) : null;
+
   if (launcherOpen) {
     return (
-      <ProjectLauncher
-        online={apiOnline}
-        projects={projects}
-        activeId={activeProjectId}
-        lastProjectId={window.localStorage.getItem(ACTIVE_PROJECT_KEY)}
-        busy={launcherBusy}
-        error={launcherError}
-        showOnStartup={launcherAlways}
-        onOpen={(id) => void openProjectById(id)}
-        onCreate={(name) => void createProjectWithName(name)}
-        onImport={(file) => void importProjectFile(file)}
-        onRename={(id, name) => void renameProjectById(id, name)}
-        onDelete={(id) => void deleteProjectById(id)}
-        onRefresh={() => void refreshProjects()}
-        onToggleStartup={toggleLauncherAlways}
-        onSkip={() => setLauncherOpen(false)}
-        onOpenSettings={() => {
-          setLauncherOpen(false);
-          setModeSettingsOpen(true);
-        }}
-      />
+      <>
+        <ProjectLauncher
+          online={apiOnline}
+          projects={projects}
+          activeId={activeProjectId}
+          lastProjectId={window.localStorage.getItem(ACTIVE_PROJECT_KEY)}
+          busy={launcherBusy}
+          error={launcherError}
+          showOnStartup={launcherAlways}
+          hasActiveProject={Boolean(activeProjectId)}
+          workspace={{
+            schoolName: data.school.name,
+            classes: data.classes.length,
+            teachers: data.teachers.length,
+            plans: data.coursePlans.length,
+          }}
+          onSaveCurrentAs={openNameDialog}
+          onOpen={(id) => void openProjectById(id)}
+          onCreate={(name) => void createProjectWithName(name)}
+          onImport={(file) => void importProjectFile(file)}
+          onRename={(id, name) => void renameProjectById(id, name)}
+          onDelete={(id) => void deleteProjectById(id)}
+          onRefresh={() => void refreshProjects()}
+          onToggleStartup={toggleLauncherAlways}
+          onSkip={() => setLauncherOpen(false)}
+          onOpenSettings={() => {
+            setLauncherOpen(false);
+            setModeSettingsOpen(true);
+          }}
+        />
+        {nameDialogNode}
+      </>
     );
   }
 
@@ -2205,18 +2368,19 @@ function App() {
     <div className="app-shell">
       <TitleBar
         projectName={activeProject?.name || ''}
+        projectBound={Boolean(activeProjectId)}
         projectsEnabled={projectsSupported}
         saveState={saveState}
         online={apiOnline}
         modeLabel={runMode ? t(RUN_MODE_LABEL_KEYS[runMode].title) : ''}
         theme={theme}
         authUser={authUser}
-        onSwitchProject={() => setLauncherOpen(true)}
-        onSaveProject={() => void saveActiveProject()}
-        onSaveProjectAs={() => {
-          const name = window.prompt(t('project.action.saveAs'), data.school?.name || t('project.untitled'));
-          if (name && name.trim()) void saveProjectAs(name.trim());
+        onSwitchProject={() => {
+          setLauncherError('');
+          setLauncherOpen(true);
         }}
+        onSaveProject={() => void saveActiveProject()}
+        onSaveProjectAs={openNameDialog}
         onExportProject={() => void exportActiveProject()}
         onImportProject={(file) => void importProjectFile(file)}
         onToggleTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')}
@@ -2433,12 +2597,12 @@ function App() {
             projects={projects}
             activeProject={activeProject}
             projectsSupported={projectsSupported}
-            onOpenLauncher={() => setLauncherOpen(true)}
-            onSaveProject={() => void saveActiveProject()}
-            onSaveProjectAs={() => {
-              const name = window.prompt(t('project.action.saveAs'), data.school?.name || t('project.untitled'));
-              if (name && name.trim()) void saveProjectAs(name.trim());
+            onOpenLauncher={() => {
+              setLauncherError('');
+              setLauncherOpen(true);
             }}
+            onSaveProject={() => void saveActiveProject()}
+            onSaveProjectAs={openNameDialog}
             onExportProject={() => void exportActiveProject()}
             onImportProject={(file) => void importProjectFile(file)}
             onRenameActiveProject={(name) => {
@@ -2474,6 +2638,7 @@ function App() {
         />
       ) : null}
       {modeDialog}
+      {nameDialogNode}
     </div>
   );
 }
@@ -2732,6 +2897,7 @@ function ServerConfigCard({
   const [saveError, setSaveError] = useState('');
   const [savedAt, setSavedAt] = useState(0);
   const [copiedCurrent, setCopiedCurrent] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
 
   useEffect(() => {
     if (saving || dirty) return;
@@ -2774,13 +2940,10 @@ function ServerConfigCard({
   };
 
   const copyCurrentAddress = async () => {
-    try {
-      await navigator.clipboard.writeText(window.location.origin);
-      setCopiedCurrent(true);
-      window.setTimeout(() => setCopiedCurrent(false), 2000);
-    } catch {
-      window.prompt('请手动复制当前访问地址：', window.location.origin);
-    }
+    const ok = await copyText(window.location.origin);
+    setCopiedCurrent(ok);
+    setCopyFailed(!ok);
+    if (ok) window.setTimeout(() => setCopiedCurrent(false), 2000);
   };
 
   const lan = draft.bindAddress === 'lan';
@@ -2798,6 +2961,7 @@ function ServerConfigCard({
         <button type="button" className="server-inline-btn" onClick={() => void copyCurrentAddress()}>
           {copiedCurrent ? '已复制' : '复制'}
         </button>
+        {copyFailed ? <em className="server-copy-fallback">浏览器不允许自动复制，请手动选中上方地址复制。</em> : null}
       </p>
       <div className="server-config-grid">
         <label className="server-field">

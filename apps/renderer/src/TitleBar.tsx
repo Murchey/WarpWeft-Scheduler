@@ -6,6 +6,8 @@ export type TitleBarSaveState = 'idle' | 'saving' | 'saved' | 'offline' | 'error
 
 export interface TitleBarProps {
   projectName: string;
+  /** 当前工作区是否已绑定到某个工程（决定「保存」的语义与文案）。 */
+  projectBound: boolean;
   projectsEnabled: boolean;
   saveState: TitleBarSaveState;
   online: boolean | null;
@@ -62,13 +64,17 @@ export function TitleBar(props: TitleBarProps) {
           onClick={props.onSwitchProject}
           title={t('project.action.switch')}
         >
-          <span>{props.projectName || t('settings.project.noActive')}</span>
+          <span>{props.projectName || t('project.unbound')}</span>
           {dirtyLabel ? <em>{dirtyLabel}</em> : null}
         </button>
         {props.projectsEnabled ? (
           <div className="titlebar-project-actions">
-            <button type="button" onClick={props.onSaveProject}>{t('project.action.save')}</button>
-            <button type="button" onClick={props.onSaveProjectAs}>{t('project.action.saveAs')}</button>
+            <button type="button" onClick={props.onSaveProject}>
+              {props.projectBound ? t('project.action.save') : t('project.action.saveAsUnbound')}
+            </button>
+            {props.projectBound ? (
+              <button type="button" onClick={props.onSaveProjectAs}>{t('project.action.saveAs')}</button>
+            ) : null}
             <button type="button" onClick={() => fileRef.current?.click()}>{t('project.action.import')}</button>
             <button type="button" onClick={props.onExportProject}>{t('project.action.export')}</button>
           </div>
