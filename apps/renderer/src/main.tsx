@@ -8,7 +8,7 @@ import { ApiError, cancelServerJob, clearAuthToken, createUser, DEFAULT_API_BASE
 import { DAYS, SectionHeading } from './components';
 import { I18nProvider, useI18n, useFormatters } from './i18n';
 import type { MessageKey } from './i18n';
-import { createProject as createProjectApi, deleteProject as deleteProjectApi, fetchProjects, importProject as importProjectApi, openProject as openProjectApi, renameProject as renameProjectApi, saveProjectData } from './api';
+import { createProject as createProjectApi, deleteProject as deleteProjectApi, exportWorkspaceArchive, fetchProjects, importProject as importProjectApi, importProjectArchive, openProject as openProjectApi, renameProject as renameProjectApi, saveProjectData } from './api';
 import type { ProjectMeta } from './api';
 import { ProjectLauncher } from './ProjectLauncher';
 import { TitleBar } from './TitleBar';
@@ -48,7 +48,7 @@ import { RUN_MODE_LABEL_KEYS, RUN_MODE_OPTIONS } from './runConfig';
 import { CLOUD_ENDPOINT_PLACEHOLDER, cleanEndpoint, endpointForMode, initialEndpointForMode, RUNTIME_MODE_KEY, readActiveEndpoint, readEndpointMemory, rememberEndpoint, writeActiveEndpoint, writeEndpointMemory } from './runtimeEndpoint';
 import type { EndpointMemory } from './runtimeEndpoint';
 import type { RunProgress, ShortRunRecord } from './runConfig';
-import { parseWorkspace, serializeWorkspace, workspaceFileName } from './workspaceProject';
+import { isWorkspaceArchive, parseWorkspace, serializeWorkspace, workspaceArchiveFileName, workspaceFileName } from './workspaceProject';
 import { EmptyState, RunProgressView } from './runViews';
 import { findClass, findRoom, findSubject, findTeacher, missingPlans, planOf, planSubjectName } from './selectors';
 import { RunsPage } from './RunsPage';
@@ -1248,21 +1248,30 @@ function App() {
     }
   };
 
+  /**
+   * 导入工程：同时支持新的 .zip 工程包与旧的 .workspace.json。
+   * 通过 ZIP 魔数区分，避免依赖扩展名（用户可能改了后缀）。
+   */
   const importProjectFile = async (file: File) => {
     setLauncherBusy(true);
     setLauncherError('');
     try {
-      const parsed = parseWorkspace(await file.text());
+      const buffer = await file.arrayBuffer();
+      const archive = isWorkspaceArchive(buffer);
+      const parsed = archive ? null : parseWorkspace(new TextDecoder().decode(buffer));
+      const importName = parsed ? parsed.name : file.name.replace(/\.zip$/i, '');
       const { saved, hadProject } = await persistActiveProject();
       if (hadProject && !saved) return;
       if (!hadProject && data && !isWorkspaceEmpty(data)) {
-        if (!window.confirm(t('project.confirmImport', { name: parsed.name }))) return;
+        if (!window.confirm(t('project.confirmImport', { name: importName }))) return;
       }
       discardPendingSave();
-      const created = await importProjectApi(
-        { format: parsed.format, version: parsed.version, name: parsed.name, savedAt: parsed.savedAt, data: parsed.data },
-        parsed.name,
-      );
+      const created = archive
+        ? await importProjectArchive(buffer)
+        : await importProjectApi(
+            { format: parsed!.format, version: parsed!.version, name: parsed!.name, savedAt: parsed!.savedAt, data: parsed!.data },
+            parsed!.name,
+          );
       const opened = await openProjectApi(created.project.id, { saveCurrent: false });
       applyOpenedProject(opened);
       await refreshProjects();
@@ -1352,15 +1361,22 @@ function App() {
   const exportActiveProject = async () => {
     if (!data) return;
     const name = activeProject?.name || data.school?.name || t('project.untitled');
-    const result = await download(
-      new Blob([serializeWorkspace(data, name)], { type: 'application/json;charset=utf-8' }),
-      'application/json',
-      workspaceFileName(name),
-    );
-    const message = exportMessage(result, t('project.action.export'));
-    if (!message) return;
-    if (message.tone === 'error') setError(message.text);
-    else setNotice(message.text);
+    try {
+      // 导出读的是服务端磁盘上的工作区，必须先把未落盘的编辑结算掉
+      if (!(await settlePendingSave())) return;
+      const buffer = await exportWorkspaceArchive(name);
+      const result = await download(
+        new Blob([buffer], { type: 'application/zip' }),
+        'application/zip',
+        workspaceArchiveFileName(name),
+      );
+      const message = exportMessage(result, t('project.archiveLabel'));
+      if (!message) return;
+      if (message.tone === 'error') setError(message.text);
+      else setNotice(message.text);
+    } catch (cause) {
+      reportProjectFailure(cause);
+    }
   };
 
   const deleteProjectById = async (id: string) => {

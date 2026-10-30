@@ -1,7 +1,9 @@
 /** 工程（项目）相关的动作、启动页文案与启动期的两个全屏对话框。 */
 export const projectMessages = {
-  'project.action.save': '保存工程',
-  'project.action.saveAs': '另存为工程',
+  'project.action.save': '保存',
+  'project.action.saveAs': '保存副本…',
+  'project.action.saveAsHint': '在工程库中新建一份，当前工程保持不变',
+  'project.action.exportHint': '下载为 .zip 工程包，可在其他电脑导入',
   'project.action.saveAsUnbound': '保存为工程…',
   'project.unbound': '未保存的工作区',
   'project.unsupported': '当前服务端不支持多工程，请升级服务端。',
@@ -15,7 +17,8 @@ export const projectMessages = {
   'project.nameDialog.duplicate': '已有同名工程「{name}」，保存后会新建一个工程。',
   'project.nameDialog.snapshotStale': '工作区还没写入磁盘，请稍后重试。',
   'project.action.import': '从文件导入',
-  'project.action.export': '导出工程',
+  'project.action.export': '导出 .zip',
+  'project.archiveLabel': '工程包',
   'project.action.switch': '切换工程',
   'project.action.new': '新建工程',
   'project.untitled': '未命名工程',

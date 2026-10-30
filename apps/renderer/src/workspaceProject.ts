@@ -28,6 +28,19 @@ export function workspaceFileName(name: string, suffix = '.workspace.json'): str
   return safe.endsWith(suffix) ? safe : safe + suffix;
 }
 
+/** 工程包（分片 ZIP）的文件名，与服务端导出一致。 */
+export function workspaceArchiveFileName(name: string): string {
+  const safe = (name.trim() || 'warpweft-workspace').replace(/[\/:*?"<>|]+/g, '-').replace(/\s+/g, '-');
+  return safe.toLowerCase().endsWith('.zip') ? safe : safe + '.zip';
+}
+
+/** 通过 ZIP 魔数（PK\x03\x04）区分工程包与旧的 .workspace.json。 */
+export function isWorkspaceArchive(buffer: ArrayBuffer): boolean {
+  if (buffer.byteLength < 4) return false;
+  const bytes = new Uint8Array(buffer, 0, 2);
+  return bytes[0] === 0x50 && bytes[1] === 0x4b;
+}
+
 export function serializeWorkspace(data: SchoolData, name = data.school.name || 'WarpWeft 工作区'): string {
   const file: WorkspaceFile = {
     format: WORKSPACE_FORMAT,

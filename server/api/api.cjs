@@ -5,6 +5,7 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { openDatabase } = require('./database.cjs');
 const { openProjectStore, ProjectError } = require('./projects.cjs');
+const { encodeSnapshot, decodeSnapshot, isZipBuffer } = require('./projectSnapshot.cjs');
 const { SessionStore, UserStore, publicUser } = require('./auth.cjs');
 const { AuditLog } = require('./audit.cjs');
 const SCHEMA = require('../../data-schema.json');
@@ -50,6 +51,21 @@ function fail(res, status, error, code, extra = {}) {
   send(res, status, { error, code, ...extra });
 }
 
+/** 返回二进制下载（工程包 .zip）。中文文件名按 RFC 5987 编码，另给 ASCII 兜底。 */
+function sendBinary(res, buffer, filename, contentType = 'application/zip') {
+  if (res.writableEnded) return;
+  cors(res);
+  res.statusCode = 200;
+  res.setHeader('Content-Type', contentType);
+  const ascii = String(filename).replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '') || 'workspace.zip';
+  res.setHeader(
+    'Content-Disposition',
+    'attachment; filename="' + ascii + '"; filename*=UTF-8\'\'' + encodeURIComponent(filename),
+  );
+  res.setHeader('Content-Length', String(buffer.length));
+  res.end(buffer);
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -67,6 +83,28 @@ function readBody(req) {
       body += chunk;
     });
     req.on('end', () => resolve(body));
+    req.on('error', reject);
+  });
+}
+
+/** 二进制请求体（导入 .zip 工程包）。文本接口仍用 readBody，避免破坏 UTF-8 拼接。 */
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY) {
+        const error = new Error('请求体过大');
+        error.statusCode = 413;
+        error.code = 'PAYLOAD_TOO_LARGE';
+        reject(error);
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
 }
@@ -1836,6 +1874,32 @@ function startApi({
           return send(res, 200, projects.active());
         }
         if (req.method === 'POST' && url.pathname === '/api/projects/import') {
+          const contentType = String(req.headers['content-type'] || '').toLowerCase();
+          // 工程包（.zip）：直接收二进制，解包后与 JSON 导入走同一条 create 链路
+          if (contentType.includes('zip') || contentType.includes('octet-stream')) {
+            let buffer;
+            try {
+              buffer = await readRawBody(req);
+            } catch (error) {
+              if (error.code === 'PAYLOAD_TOO_LARGE') return fail(res, 413, '工程包超过 5 MB', 'PAYLOAD_TOO_LARGE');
+              return fail(res, 400, '读取工程包失败：' + error.message, 'INVALID_BODY');
+            }
+            if (!isZipBuffer(buffer)) return fail(res, 400, '这不是有效的工程包（缺少 ZIP 头）', 'WORKSPACE_ARCHIVE_INVALID');
+            let doc;
+            try {
+              doc = decodeSnapshot(buffer);
+            } catch (error) {
+              return fail(res, 400, error.message, 'WORKSPACE_ARCHIVE_INVALID');
+            }
+            try {
+              const result = await projects.importWorkspace({ doc, name: doc.name, clientId });
+              audit(actor, 'project_import', result.project.id, 'src=zip:' + doc.name, ip);
+              log('info', '导入工程包：' + result.project.name);
+              return send(res, 201, result);
+            } catch (error) {
+              return projectFailure(res, error);
+            }
+          }
           const body = await readJsonBody(req, res);
           if (body === undefined) return;
           try {
@@ -1933,6 +1997,21 @@ function startApi({
         if (req.method !== 'OPTIONS') return fail(res, 404, '工程接口不存在', 'PROJECT_ROUTE_NOT_FOUND');
       }
 
+      // ── 导出当前工作区为工程包 ─────────────────────────────────
+      // 与服务端工程库同格式（分片 ZIP），可在另一台机器用「导入」还原。
+      if (req.method === 'GET' && url.pathname === '/api/workspace/export') {
+        const requested = String(url.searchParams.get('name') || '').trim();
+        const current = store.read();
+        const rawName = requested || (current.school && current.school.name) || '工程';
+        const safeName = rawName.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').slice(0, 80) || '工程';
+        try {
+          const { buffer } = encodeSnapshot(current, { name: rawName });
+          audit((authSession && authSession.user && authSession.user.username) || 'local', 'workspace_export', safeName, 'bytes=' + buffer.length, (client && client.ip) || '');
+          return sendBinary(res, buffer, safeName + '.zip');
+        } catch (error) {
+          return fail(res, 500, '打包工作区失败：' + error.message, 'WORKSPACE_EXPORT_FAILED');
+        }
+      }
       if (req.method === 'GET' && url.pathname === '/api/data') {
         return send(res, 200, store.read());
       }

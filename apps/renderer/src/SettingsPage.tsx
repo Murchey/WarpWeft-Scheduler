@@ -262,8 +262,14 @@ export function SettingsPage(props: SettingsPageProps) {
                       <button type="button" className="ghost-button" disabled={!props.projectsSupported} onClick={props.onSaveProject}>
                         {t('project.action.save')}
                       </button>
-                      <button type="button" className="ghost-button" disabled={!props.projectsSupported} onClick={props.onSaveProjectAs}>
-                        {t('common.saveAs')}
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        disabled={!props.projectsSupported}
+                        onClick={props.onSaveProjectAs}
+                        title={t('project.action.saveAsHint')}
+                      >
+                        {t('project.action.saveAs')}
                       </button>
                     </>
                   ) : (
@@ -272,12 +278,14 @@ export function SettingsPage(props: SettingsPageProps) {
                       {t('project.action.saveAsUnbound')}
                     </button>
                   )}
-                  <button type="button" className="ghost-button" onClick={props.onExportProject}>{t('project.action.export')}</button>
+                  <button type="button" className="ghost-button" onClick={props.onExportProject} title={t('project.action.exportHint')}>
+                    {t('project.action.export')}
+                  </button>
                   <label className="file-button file-button-compact">
                     <span>{t('project.action.import')}</span>
                     <input
                       type="file"
-                      accept=".json,.workspace.json,application/json"
+                      accept=".zip,.json,.workspace.json,application/zip,application/json"
                       onChange={(event) => {
                         const file = event.target.files && event.target.files[0];
                         if (file) props.onImportProject(file);

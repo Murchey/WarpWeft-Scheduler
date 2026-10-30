@@ -73,16 +73,20 @@ export function TitleBar(props: TitleBarProps) {
               {props.projectBound ? t('project.action.save') : t('project.action.saveAsUnbound')}
             </button>
             {props.projectBound ? (
-              <button type="button" onClick={props.onSaveProjectAs}>{t('project.action.saveAs')}</button>
+              <button type="button" onClick={props.onSaveProjectAs} title={t('project.action.saveAsHint')}>
+                {t('project.action.saveAs')}
+              </button>
             ) : null}
             <button type="button" onClick={() => fileRef.current?.click()}>{t('project.action.import')}</button>
-            <button type="button" onClick={props.onExportProject}>{t('project.action.export')}</button>
+            <button type="button" onClick={props.onExportProject} title={t('project.action.exportHint')}>
+              {t('project.action.export')}
+            </button>
           </div>
         ) : null}
         <input
           ref={fileRef}
           type="file"
-          accept=".json,.workspace.json,application/json"
+          accept=".zip,.json,.workspace.json,application/zip,application/json"
           hidden
           onChange={(event) => {
             const file = event.target.files && event.target.files[0];

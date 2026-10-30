@@ -692,3 +692,35 @@ export async function importProject(
 ): Promise<{ project: ProjectMeta; activeId: string | null }> {
   return sendJson('/api/projects/import', 'POST', { doc, name }, 30000);
 }
+
+/** 导出当前活动工作区为工程包（分片 ZIP），与服务端工程库同格式。 */
+export async function exportWorkspaceArchive(name: string): Promise<ArrayBuffer> {
+  const response = await request(
+    `${getApiBase()}/api/workspace/export?name=${encodeURIComponent(name)}`,
+    { cache: 'no-store' },
+    30000,
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw failure(response, text);
+  }
+  return response.arrayBuffer();
+}
+
+/** 导入工程包（.zip）。服务端解包后与 JSON 导入走同一条创建链路。 */
+export async function importProjectArchive(
+  buffer: ArrayBuffer,
+): Promise<{ project: ProjectMeta; activeId: string | null }> {
+  const response = await request(
+    `${getApiBase()}/api/projects/import`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/zip' },
+      body: buffer,
+    },
+    30000,
+  );
+  const text = await response.text();
+  if (!response.ok) throw failure(response, text);
+  return JSON.parse(text) as { project: ProjectMeta; activeId: string | null };
+}
