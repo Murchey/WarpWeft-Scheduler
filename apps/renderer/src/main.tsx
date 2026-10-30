@@ -2445,9 +2445,6 @@ function App() {
             当前服务端数据版本 v{serverSchema ?? '未知'}，本客户端至少需要 v{MIN_SERVER_SCHEMA}。请升级局域网服务端；升级前可以查看和导出，但不能保存或排课。
           </Banner>
         ) : null}
-        {toast ? (
-          <ToastView key={toast.id} toast={toast} onClose={() => dismissToast(toast.id, 'closed')} />
-        ) : null}
         {tab === '工作台' ? (
           <Dashboard
             data={data}
@@ -2615,6 +2612,10 @@ function App() {
           />
         ) : null}
       </main>
+      {/* 全局提示放在 main 之外，避免被工作区内部的 stacking context 影响层级 */}
+      {toast ? (
+        <ToastView key={toast.id} toast={toast} onClose={() => dismissToast(toast.id, 'closed')} />
+      ) : null}
       {running ? (
         <div className="run-foreground" role="status" aria-live="polite" aria-label="短时排课计算中">
           <div className="run-foreground-panel">

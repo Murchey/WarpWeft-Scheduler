@@ -29,8 +29,11 @@ html[data-theme='dark'] body{background:var(--paper)}html[data-theme='dark'] .co
 .banner-close{border:0;background:transparent;color:var(--muted);font-size:22px;line-height:1;cursor:pointer;padding:0 2px}
 .banner-close:hover{color:var(--ink)}
 
-/* Fixed toast: 30s progress, then the log lives in Settings → 日志. */
-.app-toast{position:fixed;top:18px;right:24px;z-index:120;display:grid;grid-template-columns:30px minmax(0,1fr) 24px;gap:10px;align-items:start;width:min(580px,calc(100vw - 32px));padding:14px 14px 0;border:1px solid var(--rule);border-radius:12px;background:var(--panel);box-shadow:0 18px 55px rgba(0,0,0,.2);animation:toast-in .22s ease-out;overflow:hidden}
+/* Fixed toast: 30s progress, then the log lives in Settings → 日志.
+   top 必须让开自绘标题栏（40px），否则上沿被标题栏的 z-index:200 压掉；
+   z-index 取 2500：高于标题栏(200)、各类对话框遮罩(50-150)与运行遮罩(2400)，
+   保证任何场景下通知都可见。 */
+.app-toast{position:fixed;top:calc(var(--titlebar-h,40px) + 14px);right:24px;z-index:2500;display:grid;grid-template-columns:30px minmax(0,1fr) 24px;gap:10px;align-items:start;width:min(580px,calc(100vw - 32px));padding:14px 14px 0;border:1px solid var(--rule);border-radius:12px;background:var(--panel);box-shadow:0 18px 55px rgba(0,0,0,.2);animation:toast-in .22s ease-out;overflow:hidden}
 .app-toast.is-error{border-left:4px solid var(--danger)}
 .app-toast.is-success{border-left:4px solid #15c98e}
 .app-toast.is-warning{border-left:4px solid var(--signal)}
@@ -50,7 +53,8 @@ html[data-theme='dark'] body{background:var(--paper)}html[data-theme='dark'] .co
 .app-toast.is-info .app-toast-progress i{background:var(--info)}
 @keyframes toast-life{from{width:100%}to{width:0}}
 @keyframes toast-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
-@media(max-width:680px){.app-toast{top:10px;right:16px;left:16px;width:auto}.app-toast-copy p{max-height:150px}}
+@media(max-width:680px){.app-toast{top:calc(var(--titlebar-h,40px) + 8px);right:12px;left:12px;width:auto}.app-toast-copy p{max-height:150px}}
+@media print{.app-toast{display:none}}
 html[data-theme='dark'] .app-toast{box-shadow:0 18px 55px rgba(0,0,0,.5)}
 
 .node-status.offline{color:var(--danger)}
