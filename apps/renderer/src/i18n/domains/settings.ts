@@ -44,6 +44,7 @@ export const settingsMessages = {
   'settings.project.countProjects': '工程数',
   'settings.project.namePlaceholder': '未命名工程',
   'settings.project.noActive': '尚未选择工程',
+  'settings.project.notBound': '当前工作区还没有工程，先「保存为工程」才能切换与备份。',
 
   'settings.server.title': '服务端',
   'settings.server.mode': '当前模式',
