@@ -14,6 +14,7 @@ import type { LongJob, LongJobDetail } from './api';
 import type { SolverInput } from './types';
 import { SectionHeading } from './components';
 import { forgetTask, latestTaskForEndpoint, newTaskUuid, rememberTask, snapshotIdOf } from './taskIndex';
+import { fmtDateTime } from './i18n';
 
 const STATUS_LABELS: Record<string, string> = {
   queued: '排队中',
@@ -526,7 +527,7 @@ export function LongRunPanel({
             <div className={'long-completed-row' + (item.id === job?.id ? ' is-active' : '')} key={item.id}>
               <button type="button" className="long-job-main" onClick={() => void loadJob(item.id)}>
                 <b>{item.id}{item.id === job?.id ? ' · 当前' : ''}</b>
-                <small>{statusLabel(item.status)} · {new Date(item.createdAt).toLocaleString('zh-CN')} · {item.placed}/{item.total} 课时</small>
+                <small>{statusLabel(item.status)} · {fmtDateTime(item.createdAt)} · {item.placed}/{item.total} 课时</small>
               </button>
               <div className="long-job-row-actions">
                 <button type="button" className="ghost-button" onClick={() => setFileJobId(item.id)}>文件位置</button>

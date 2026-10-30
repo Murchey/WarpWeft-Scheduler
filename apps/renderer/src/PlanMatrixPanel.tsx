@@ -58,7 +58,7 @@ function PlanMatrixPanel({ data }: { data: SchoolData }) {
     <div className="plan-matrix-panel">
       <div className="plan-matrix-head">
         <div>
-          <span className="kicker">// SUBJECT LOAD</span>
+          
           <h3>课时汇总</h3>
           <p className="panel-note">按班级或年级查看所选周期内各学科的上课节数。</p>
         </div>

@@ -3,6 +3,7 @@ import type { SchoolData } from './types';
 import type { ShortRunRecord } from './runConfig';
 import { RUN_MODE_OPTIONS, runResultText } from './runConfig';
 import { shortRunEntryRows, shortRunMissingRefs } from './shortRunView';
+import { fmtDateTime, fmtNumber } from './i18n';
 
 const SCORE_LABELS: Record<string, string> = {
   subjectDistribution: '同学科分布',
@@ -16,7 +17,7 @@ const SCORE_LABELS: Record<string, string> = {
 
 function formatWhen(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN');
+  return Number.isNaN(date.getTime()) ? value : fmtDateTime(date);
 }
 
 export function ShortRunDialog({
@@ -73,7 +74,7 @@ export function ShortRunDialog({
       <div className="rule-dialog short-run-dialog">
         <div className="rule-dialog-head short-run-dialog-head">
           <div>
-            <span className="kicker">// SHORT RUN / REVIEW</span>
+            
             <h2>短时计算详情</h2>
             <p>{formatWhen(run.createdAt)} · {modeLabel} · 只读快照 · 本次会话内保留</p>
           </div>
@@ -87,7 +88,7 @@ export function ShortRunDialog({
             <div><dt>已排 / 计划</dt><dd>{run.result.entries.length} / {totalPeriods}</dd></div>
             <div><dt>未排课时</dt><dd className={unplaced > 0 ? 'is-warning' : ''}>{unplaced}</dd></div>
             <div><dt>软目标质量</dt><dd>{run.result.softScore}</dd></div>
-            <div><dt>耗时</dt><dd>{run.elapsedMs.toLocaleString('zh-CN')} ms</dd></div>
+            <div><dt>耗时</dt><dd>{fmtNumber(run.elapsedMs)} ms</dd></div>
             <div><dt>计算时限</dt><dd>{timeLimitSeconds} 秒</dd></div>
             <div><dt>随机种子</dt><dd>{run.randomSeed}</dd></div>
             <div><dt>锁定课时</dt><dd>{run.lockedCount}</dd></div>
@@ -96,7 +97,7 @@ export function ShortRunDialog({
 
           {run.result.explanation ? (
             <div className="short-run-note">
-              <span className="kicker">// SOLVER NOTE</span>
+              
               <p>{run.result.explanation}</p>
             </div>
           ) : null}
@@ -110,7 +111,7 @@ export function ShortRunDialog({
 
           {violations.length > 0 && run.result.outcome && run.result.outcome !== 'hard-conflict' ? (
             <div className="short-run-note">
-              <span className="kicker">// SOLVER DIAGNOSTICS</span>
+              
               <p>{violations.join('\n')}</p>
             </div>
           ) : null}
@@ -125,7 +126,7 @@ export function ShortRunDialog({
           {scoreBreakdown.length > 0 ? (
             <div className="short-run-score">
               <div className="short-run-entries-head">
-                <div><span className="kicker">// SOFT OBJECTIVE</span><b>软目标分项</b></div>
+                <div><b>软目标分项</b></div>
                 <span>总质量 {run.result.softScore} · 分项为惩罚值</span>
               </div>
               <div className="short-run-score-grid">
@@ -141,7 +142,7 @@ export function ShortRunDialog({
           ) : null}
 
           <div className="short-run-entries-head">
-            <div><span className="kicker">// LESSON ENTRIES</span><b>逐节结果</b></div>
+            <div><b>逐节结果</b></div>
             <span>{rows.length} 条</span>
           </div>
 

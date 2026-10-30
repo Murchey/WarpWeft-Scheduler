@@ -9,6 +9,7 @@ import { activeRules, describeRule, matchedPlans } from './rules';
 import { LongRunPanel } from './LongRunPanel';
 import { ShortRunDialog } from './ShortRunDialog';
 import type { LongJob, LongJobDetail } from './api';
+import { fmtDateTime } from './i18n';
 
 export function RunsPage({
   data, result, issues, running, progress, timeLimit, setTimeLimit, randomSeed, setRandomSeed, onRun, onRepair, onTimetable, onClear, runMode, shortRuns, onDeleteShortRun, inputFactory, onApplyLongResult, onNotice, onError,
@@ -122,7 +123,7 @@ export function RunsPage({
         <section className="section-panel wizard-card">
           <div className="wizard-card-head">
             <span className="wizard-number">01</span>
-            <div><span className="kicker">PREFLIGHT</span><h2>数据检查</h2></div>
+            <div><h2>数据检查</h2></div>
             <span className={issues.length ? 'status-tag danger' : 'status-tag'}>{issues.length ? issues.length + ' 项待处理' : '通过'}</span>
           </div>
           {issues.length ? <ul className="issue-list">{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul> : (
@@ -140,7 +141,7 @@ export function RunsPage({
         </section>
 
         <section className={'section-panel wizard-card ' + (!checked ? 'wizard-locked' : '')}>
-          <div className="wizard-card-head"><span className="wizard-number">02</span><div><span className="kicker">BUILT-IN RULES</span><h2>排课规则</h2></div><span className="status-tag">{checked ? '自动保证' : '待检查'}</span></div>
+          <div className="wizard-card-head"><span className="wizard-number">02</span><div><h2>排课规则</h2></div><span className="status-tag">{checked ? '自动保证' : '待检查'}</span></div>
           {!checked ? <p className="panel-note">请先修复第 01 步的问题。</p> : (
             <>
               <div className="rule-summary">
@@ -165,7 +166,7 @@ export function RunsPage({
         </section>
 
         <section className={'section-panel wizard-card ' + (!checked ? 'wizard-locked' : '')}>
-          <div className="wizard-card-head"><span className="wizard-number">03</span><div><span className="kicker">SOLVER SETTINGS</span><h2>计算设置</h2></div><span className="status-tag">{!checked ? '待检查' : computeMode === 'long' ? '长时任务' : '已就绪'}</span></div>
+          <div className="wizard-card-head"><span className="wizard-number">03</span><div><h2>计算设置</h2></div><span className="status-tag">{!checked ? '待检查' : computeMode === 'long' ? '长时任务' : '已就绪'}</span></div>
           {!checked ? <p className="panel-note">完成数据检查后配置计算方式。</p> : (
             <>
               <div className="compute-mode" role="group" aria-label="运行方式">
@@ -195,7 +196,7 @@ export function RunsPage({
         </section>
 
         <section className={'section-panel wizard-card wizard-final ' + (!checked ? 'wizard-locked' : '')}>
-          <div className="wizard-card-head"><span className="wizard-number">04</span><div><span className="kicker">RUN SCHEDULE</span><h2>开始排课</h2></div><span className={computeMode === 'long' ? 'status-tag' : result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{computeMode === 'long' ? '长时任务' : result ? result.status : '尚未运行'}</span></div>
+          <div className="wizard-card-head"><span className="wizard-number">04</span><div><h2>开始排课</h2></div><span className={computeMode === 'long' ? 'status-tag' : result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{computeMode === 'long' ? '长时任务' : result ? result.status : '尚未运行'}</span></div>
           {computeMode === 'long' ? (
             <p className="panel-note">点击下方按钮会按当前工作区数据启动一个新的长时任务；暂停、继续、载入最佳课表和历史任务都在下方“任务与历史”面板中。</p>
           ) : result && lockedCount > 0 ? (
@@ -230,7 +231,7 @@ export function RunsPage({
           <h4>最近任务</h4>
           {recentTasks.length === 0 ? <p className="panel-note">还没有任务记录。</p> : recentTasks.map((item) => (
             <div className="short-history-row" key={item.key}>
-              <div className="short-history-copy"><b>{item.title}</b><small>{new Date(item.at).toLocaleString('zh-CN')} · {item.detail}</small></div>
+              <div className="short-history-copy"><b>{item.title}</b><small>{fmtDateTime(item.at)} · {item.detail}</small></div>
               <span className={item.ok ? 'status-tag' : 'status-tag danger'}>{item.kind}</span>
               {item.run ? (
                 <div className="short-history-actions">
@@ -248,12 +249,12 @@ export function RunsPage({
               <div className="short-history-row" key={run.id}>
                 <div className="short-history-copy">
                   <b>{run.mode === 'repair' ? '局部重排' : '短时计算'} · {runResultText(run.status, run.result.outcome)}</b>
-                  <small>{new Date(run.createdAt).toLocaleString('zh-CN')} · {run.entries} 条 · {run.elapsedMs} ms · 时限 {run.timeLimitSeconds} 秒</small>
+                  <small>{fmtDateTime(run.createdAt)} · {run.entries} 条 · {run.elapsedMs} ms · 时限 {run.timeLimitSeconds} 秒</small>
                 </div>
                 <span className={run.feasible ? 'status-tag' : 'status-tag danger'}>{run.feasible ? '可行' : '未排满'}</span>
                 <div className="short-history-actions">
-                  <button type="button" className="history-action" aria-label={'查看 ' + new Date(run.createdAt).toLocaleString('zh-CN') + ' 的短时记录'} onClick={() => setViewingShortRun(run)}>查看</button>
-                  <button type="button" className="history-action is-danger" aria-label={'删除 ' + new Date(run.createdAt).toLocaleString('zh-CN') + ' 的短时记录'} onClick={() => removeShortRun(run)}>删除</button>
+                  <button type="button" className="history-action" aria-label={'查看 ' + fmtDateTime(run.createdAt) + ' 的短时记录'} onClick={() => setViewingShortRun(run)}>查看</button>
+                  <button type="button" className="history-action is-danger" aria-label={'删除 ' + fmtDateTime(run.createdAt) + ' 的短时记录'} onClick={() => removeShortRun(run)}>删除</button>
                 </div>
               </div>
             ))}
@@ -299,7 +300,7 @@ export function RunsPage({
             {missing.length ? <MissingReasons data={data} missing={missing} /> : null}
             {result.entries.length > 0 ? (
               <div className="repair-controls">
-                <div><span className="kicker">// LOCAL REPAIR</span><b>局部重排</b><small>只重排所选范围，其他课程保持当前位置。</small></div>
+                <div><b>局部重排</b><small>只重排所选范围，其他课程保持当前位置。</small></div>
                 <div className="repair-scope-summary">范围内 {repairRangeEntries.length} 条 · 可移动 {Math.max(0, repairRangeEntries.length - repairLockedInRange)} 条 · 锁定 {repairLockedInRange} 条 · 范围外 {Math.max(0, result.entries.length - repairRangeEntries.length)} 条保持不变</div>
                 <div className="repair-actions">
                   <select value={repairScope} onChange={(event) => { const next = event.target.value as 'class' | 'teacher' | 'rule'; setRepairScope(next); const options = next === 'class' ? data.classes : next === 'teacher' ? data.teachers : (data.rules ?? []); setRepairId(options[0]?.id ?? ''); }}>

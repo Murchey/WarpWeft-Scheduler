@@ -5,6 +5,7 @@ import { EmptyState } from './runViews';
 import { SectionHeading } from './components';
 import type { SchoolData, SolverOutput } from './types';
 import { diffTimetables } from './timetableDiff';
+import { fmtDateTime } from './i18n';
 
 type Filter = 'all' | 'hard' | 'must' | 'prefer';
 
@@ -190,7 +191,7 @@ export function InspectionPage({
         </div>
         <p className="panel-note">
           报告基于当前候选课表计算：硬冲突或「必须」规则违反会阻止保存正式版；「尽量」规则只提示。生成于{' '}
-          {new Date(report.generatedAt).toLocaleString('zh-CN')} · 用时 {report.elapsedMs} ms。
+          {fmtDateTime(report.generatedAt)} · 用时 {report.elapsedMs} ms。
         </p>
         <div className="inspect-verdict">
           <div className="inspect-verdict-copy">

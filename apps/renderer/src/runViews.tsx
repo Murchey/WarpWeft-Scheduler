@@ -52,7 +52,7 @@ export function RunProgressView({ progress }: { progress: RunProgress }) {
     <div className={'run-progress ' + progress.phase} aria-live="polite">
       <div className="run-progress-head">
         <div>
-          <span className="kicker">// SCHEDULE PROGRESS</span>
+          
           <strong>{progress.message}</strong>
         </div>
         {progress.startedAt ? (
@@ -103,7 +103,7 @@ export function MissingReasons({
     <div className="missing-reasons">
       <div className="missing-head">
         <div>
-          <span className="kicker">// UNSCHEDULED</span>
+          
           <h3>未排原因</h3>
         </div>
         <span className="status-tag danger">{missing.length} 条计划未排完</span>

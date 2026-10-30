@@ -98,7 +98,7 @@ function PlanDetailDrawer({ plan, lookups, roomTypes, onClose, onSave, onDelete,
       <aside className="plan-drawer" role="dialog" aria-modal="true" aria-label="教学计划约束设置">
         <header className="plan-drawer-head">
           <div>
-            <p className="plan-menu-kicker">// CONSTRAINTS / 约束</p>
+            <p className="plan-menu-kicker">约束</p>
             <h3>{klass} / {subject}</h3>
             <p className="plan-drawer-meta">{teacher} <span>│</span> {plan.weeklyPeriods} 节/周 <span>│</span> {plan.weeks === 'odd' ? '单周' : plan.weeks === 'even' ? '双周' : '每周'}</p>
           </div>
@@ -106,7 +106,7 @@ function PlanDetailDrawer({ plan, lookups, roomTypes, onClose, onSave, onDelete,
         </header>
         <div className="plan-drawer-body">
           <section className="plan-drawer-section">
-            <p className="plan-menu-kicker">// TIME / 时间</p>
+            <p className="plan-menu-kicker">时间</p>
             <label className="plan-drawer-field">
               <span>周次</span>
               <select value={draft.weeks} onChange={(event) => setDraft({ ...draft, weeks: event.target.value as WeekType })}>
@@ -139,7 +139,7 @@ function PlanDetailDrawer({ plan, lookups, roomTypes, onClose, onSave, onDelete,
             </label>
           </section>
           <section className="plan-drawer-section">
-            <p className="plan-menu-kicker">// PAIRING / 配对</p>
+            <p className="plan-menu-kicker">配对</p>
             <label className="plan-drawer-field">
               <span>配对组</span>
               <input

@@ -52,7 +52,7 @@ function FixedSlotsDialog({
       <div className="rule-dialog fixed-slots-dialog">
         <div className="rule-dialog-head">
           <div>
-            <span className="kicker">// FIXED LESSON SLOTS</span>
+            
             <h2>{title}</h2>
             <p>按顺序固定第 1、2…节课的位置。例如只固定 1 节，就只勾一个时段；连堂就勾相邻两节。</p>
           </div>

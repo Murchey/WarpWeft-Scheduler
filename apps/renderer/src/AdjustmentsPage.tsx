@@ -35,6 +35,7 @@ import { download, exportMessage } from './download';
 import { LessonLogPanel } from './LessonLogPanel';
 import { messageOf, todayLocal, uid } from './utils';
 import { findClass, findRoom, findTeacher, planOf, planSubjectName } from './selectors';
+import { fmtDateTime } from './i18n';
 
 const TYPES: AdjustmentType[] = ['move', 'swap', 'substitute', 'cancel'];
 const GRADE_NAMES: Record<string, string> = {
@@ -106,7 +107,7 @@ function timeText(value?: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? value
-    : date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    : fmtDateTime(date, undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 function timeRangeOf(slot: TimeSlot): string {
@@ -1627,7 +1628,7 @@ export function AdjustmentsPage({
         {focusBase ? (
           <>
             <div className="tt-selection-copy">
-              <span className="tt-selection-kicker">{dragEntryId ? 'DRAGGING LESSON' : 'SELECTED LESSON'}</span>
+              <span className="tt-selection-kicker">{dragEntryId ? '拖动中' : '已选课程'}</span>
               <strong>{subjectOfEntry(focusBase)}</strong>
               <span>
                 {classNameText} · {findTeacher(data, focusBase.teacherId)?.name ?? focusBase.teacherId} ·{' '}
@@ -1691,7 +1692,7 @@ export function AdjustmentsPage({
         <section className="adjust-impact" aria-label="本次调整影响范围">
           <div className="adjust-impact-head">
             <div>
-              <span className="kicker">// IMPACT</span>
+              
               <b>影响范围</b>
             </div>
             <span>{ADJUSTMENT_LABELS[impact.type]} · {impactClassName} · {impact.date}</span>
@@ -1718,7 +1719,7 @@ export function AdjustmentsPage({
           <div className="impact-dialog">
             <div className="impact-dialog-head">
               <div>
-                <span className="kicker">// IMPACT TIMETABLE</span>
+                
                 <h3>影响范围</h3>
               </div>
               <button type="button" className="tt-btn tt-btn-quiet" onClick={() => setImpactOpen(false)}>关闭</button>
@@ -1798,7 +1799,7 @@ export function AdjustmentsPage({
           ) : (
             <>
               <div className="adjust-selected">
-                <span className="kicker">SELECTED LESSON</span>
+                
                 <b>{subjectOfEntry(selected)}</b>
                 <small>
                   {classNameText} · {selectedTeacher?.name ?? selectedTeacherId} · {selectedCurrentSlot?.label ?? slotLabelOf(selected.slotId)} · {selectedRoom?.name ?? selectedRoomId}

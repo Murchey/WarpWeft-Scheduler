@@ -108,7 +108,7 @@ function PlanComposer({
     <div className="composer-overlay" role="dialog" aria-modal="true">
       <div className="composer-dialog">
         <div className="composer-head">
-          <div><span className="kicker">// BATCH COURSE PLAN</span><h2>批量新增教学计划</h2><p>一次为多个班级创建同一门课；教师可不指定，学科是硬条件。</p></div>
+          <div><h2>批量新增教学计划</h2><p>一次为多个班级创建同一门课；教师可不指定，学科是硬条件。</p></div>
           <button type="button" className="banner-close" onClick={onClose} aria-label="关闭">×</button>
         </div>
         <div className="composer-body">

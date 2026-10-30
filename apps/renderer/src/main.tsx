@@ -7,6 +7,8 @@ import { exportCsv, exportWorkbook, readWorkbook } from '../../../packages/impor
 import { ApiError, cancelServerJob, clearAuthToken, createUser, DEFAULT_API_BASE, deleteServerClient, deleteUser, fetchHealth, fetchHealthAt, fetchMe, fetchServerOverview, fetchUsers, getApiBase, getAuthToken, loadData, login, logout, registerUnauthorizedHandler, saveData, setAuthToken, solveSchedule, updateServerConfig, updateUser } from './api';
 import { DAYS, SectionHeading } from './components';
 import { I18nProvider, useI18n, useFormatters } from './i18n';
+import type { MessageKey } from './i18n';
+import { currentLang, fmtDateTime } from './i18n/format';
 import { PreparePage } from './PreparePage';
 import type { PrepareSection } from './PreparePage';
 import { download, downloadFiles, exportMessage } from './download';
@@ -33,7 +35,7 @@ import { messageOf, todayLocal, uid } from './utils';
 import { clearSavedLogins, forgetSavedLogin, readSavedLogins, rememberSavedLogin } from './savedLogins';
 import type { SavedLogin } from './savedLogins';
 import { activeRules, describeRule, matchedPlans, unscheduledHints } from './rules';
-import { RUN_MODE_OPTIONS } from './runConfig';
+import { RUN_MODE_LABEL_KEYS, RUN_MODE_OPTIONS } from './runConfig';
 import { CLOUD_ENDPOINT_PLACEHOLDER, cleanEndpoint, endpointForMode, initialEndpointForMode, RUNTIME_MODE_KEY, readActiveEndpoint, readEndpointMemory, rememberEndpoint, writeActiveEndpoint, writeEndpointMemory } from './runtimeEndpoint';
 import type { EndpointMemory } from './runtimeEndpoint';
 import type { RunProgress, ShortRunRecord } from './runConfig';
@@ -73,6 +75,22 @@ import './style.css';
 
 const TABS = ['工作台', '排课准备', '排课任务', '课表预览', '调代课', '最终课表', '统计报表', '服务端', '设置'] as const;
 type Tab = (typeof TABS)[number];
+
+/**
+ * 导航文案 key。TABS 继续用中文作为稳定的内部 id —— URL 参数、条件渲染
+ * (`tab === '设置'`) 和既有深链都依赖它，因此只把**显示文案**交给 i18n。
+ */
+const TAB_LABEL_KEY: Record<Tab, MessageKey> = {
+  工作台: 'nav.dashboard',
+  排课准备: 'nav.prepare',
+  排课任务: 'nav.runs',
+  课表预览: 'nav.preview',
+  调代课: 'nav.adjust',
+  最终课表: 'nav.final',
+  统计报表: 'nav.stats',
+  服务端: 'nav.server',
+  设置: 'nav.settings',
+};
 type SaveState = 'idle' | 'saving' | 'saved' | 'offline' | 'error';
 type View = PreviewView;
 
@@ -80,11 +98,13 @@ type View = PreviewView;
 
 
 function RuntimeModeDialog({ current, onSave, onClose }: { current: RunMode | null; onSave: (mode: RunMode, endpoint: string) => void; onClose?: () => void }) {
+  const { t } = useI18n();
   const [mode, setMode] = useState<RunMode>(current ?? 'single');
   const [memory] = useState<EndpointMemory>(() => readEndpointMemory(window.localStorage));
   const [endpoint, setEndpoint] = useState(() => initialEndpointForMode(mode, current ? readActiveEndpoint(window.localStorage) : '', memory, DEFAULT_API_BASE));
   const [testing, setTesting] = useState(false);
-  const [testMessage, setTestMessage] = useState('');
+  // 结果用结构化状态保存，避免靠中文前缀判断成功/失败（切语言后判断会失效）
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
   const endpointValid = (() => {
     try {
       const url = new URL(endpoint);
@@ -110,12 +130,15 @@ function RuntimeModeDialog({ current, onSave, onClose }: { current: RunMode | nu
   const testConnection = async () => {
     if (!endpointValid) return;
     setTesting(true);
-    setTestMessage('正在连接…');
+    setTestResult({ ok: true, text: t('common.connecting') });
     try {
       const health = await fetchHealthAt(endpoint);
-      setTestMessage(`连接成功 · schema v${health.schemaVersion ?? '未知'} · Solver ${health.solverProtocol ?? '未知'}`);
+      setTestResult({
+        ok: true,
+        text: `schema v${health.schemaVersion ?? '?'} · Solver ${health.solverProtocol ?? '?'}`,
+      });
     } catch (cause) {
-      setTestMessage('连接失败：' + (cause instanceof Error ? cause.message : String(cause)));
+      setTestResult({ ok: false, text: cause instanceof Error ? cause.message : String(cause) });
     } finally {
       setTesting(false);
     }
@@ -124,32 +147,31 @@ function RuntimeModeDialog({ current, onSave, onClose }: { current: RunMode | nu
     <div className="mode-overlay" role="dialog" aria-modal="true">
       <div className="mode-dialog">
         <div className="mode-dialog-head">
-          <span className="kicker">// RUNTIME MODE</span>
-          {onClose ? <button className="banner-close" onClick={onClose} aria-label="关闭设置">×</button> : null}
+          {onClose ? <button className="banner-close" onClick={onClose} aria-label={t('common.close')}>×</button> : null}
         </div>
-        <h2>{current ? '运行模式设置' : '选择运行模式'}</h2>
-        <p className="mode-lead">先选择数据和排课服务的运行位置，之后可以在设置中修改。切换模式会自动换成对应服务地址，云端地址会保留。</p>
+        <h2>{current ? t('dialog.runtime.title') : t('dialog.runtime.choose')}</h2>
+        <p className="mode-lead">{t('dialog.runtime.lead')}</p>
         <div className="mode-options">
           {RUN_MODE_OPTIONS.map((item) => (
             <button key={item.value} className={'mode-option' + (mode === item.value ? ' selected' : '')} onClick={() => chooseMode(item.value)}>
               <span className="mode-option-index">0{RUN_MODE_OPTIONS.indexOf(item) + 1}</span>
-              <span><b>{item.title}</b><small>{item.description}</small></span>
+              <span><b>{t(RUN_MODE_LABEL_KEYS[item.value].title)}</b><small>{t(RUN_MODE_LABEL_KEYS[item.value].description)}</small></span>
             </button>
           ))}
         </div>
         <label className="mode-endpoint">
-          服务地址
+          {t('dialog.runtime.endpoint')}
           <input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="http://192.168.1.20:4317" />
           <small>
-            {mode === 'single' || mode === 'lan-server' ? '本机模式使用默认地址即可。' : '请输入可访问的服务端 API 地址。'}
-            {endpoint && !endpointValid ? ' 地址格式无效。' : ''}
+            {mode === 'single' || mode === 'lan-server' ? t('dialog.runtime.localHint') : t('dialog.runtime.remoteHint')}
+            {endpoint && !endpointValid ? ' ' + t('dialog.runtime.invalid') : ''}
           </small>
-          {testMessage ? <small className={testMessage.startsWith('连接成功') ? 'mode-test-success' : 'mode-test-error'}>{testMessage}</small> : null}
+          {testResult ? <small className={testResult.ok ? 'mode-test-success' : 'mode-test-error'}>{testResult.text}</small> : null}
         </label>
         <div className="mode-actions">
-          <button className="ghost-button" onClick={onClose} disabled={!current}>取消</button>
-          <button className="ghost-button" disabled={!endpointValid || testing} onClick={() => void testConnection()}>{testing ? '测试中…' : '测试连接'}</button>
-          <button className="action-button" disabled={!endpointValid} onClick={save}>{current ? '保存设置' : '进入工作台'} <span>↗</span></button>
+          <button className="ghost-button" onClick={onClose} disabled={!current}>{t('common.cancel')}</button>
+          <button className="ghost-button" disabled={!endpointValid || testing} onClick={() => void testConnection()}>{testing ? t('dialog.runtime.testing') : t('dialog.runtime.test')}</button>
+          <button className="action-button" disabled={!endpointValid} onClick={save}>{current ? t('dialog.runtime.save') : t('dialog.runtime.enter')} <span>↗</span></button>
         </div>
       </div>
     </div>
@@ -175,6 +197,7 @@ function LoginScreen({
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(true);
   const [saved, setSaved] = useState<SavedLogin[]>(() => readSavedLogins(getApiBase()));
+  const { t } = useI18n();
   return (
     <div className="mode-overlay">
       <form
@@ -184,29 +207,29 @@ function LoginScreen({
           if (!busy && !needsSetup && username.trim() && password) onLogin(username.trim(), password, remember);
         }}
       >
-        <div className="mode-dialog-head"><span className="kicker">// SIGN IN</span></div>
-        <h2>登录 Linux 服务端</h2>
-        <p className="mode-lead">该服务端启用了用户登录。桌面 Electron 只作为客户端登录，不提供用户管理。</p>
+        <div className="mode-dialog-head" />
+        <h2>{t('dialog.login.title')}</h2>
+        <p className="mode-lead">{t('dialog.login.lead')}</p>
         {needsSetup ? (
           <div className="server-warning">
-            尚未初始化管理员。请在服务器上执行：
+            {t('login.needsSetup')}
             <code>sudo warpweft user add admin --admin</code>
           </div>
         ) : null}
         {saved.length > 0 ? (
           <div className="saved-logins">
             <div className="saved-logins-head">
-              <span>本机保存的账号</span>
+              <span>{t('login.savedAccounts')}</span>
               <button
                 type="button"
                 className="server-inline-btn"
                 onClick={() => {
-                  if (!window.confirm('删除本机保存的全部账号密码？')) return;
+                  if (!window.confirm(t('login.confirmClearAll'))) return;
                   setSaved(clearSavedLogins(getApiBase()));
                   setPassword('');
                 }}
               >
-                清空
+                {t('login.clear')}
               </button>
             </div>
             {saved.map((item) => (
@@ -219,7 +242,7 @@ function LoginScreen({
                     setPassword(item.password);
                     setRemember(true);
                   }}
-                  title="填入这个账号"
+                  title={t('login.fillAccount')}
                 >
                   {item.username}
                 </button>
@@ -227,31 +250,31 @@ function LoginScreen({
                   type="button"
                   className="saved-login-delete"
                   onClick={() => {
-                    if (!window.confirm('删除本机保存的账号 ' + item.username + ' 的密码？')) return;
+                    if (!window.confirm(t('login.confirmDeleteOne', { name: item.username }))) return;
                     setSaved(forgetSavedLogin(item.username, getApiBase()));
                     if (username === item.username) setPassword('');
                   }}
-                  title="删除本机保存的账号密码"
+                  title={t('login.confirmDeleteOne', { name: item.username })}
                 >
-                  删除
+                  {t('common.delete')}
                 </button>
               </div>
             ))}
-            <p className="saved-logins-hint">密码保存在本机浏览器（未加密）；共用电脑请删除或用完清空。</p>
+            <p className="saved-logins-hint">{t('login.savedHint')}</p>
           </div>
         ) : null}
-        <label className="mode-endpoint">用户名<input autoFocus value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" disabled={busy || needsSetup} /></label>
-        <label className="mode-endpoint">密码<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" disabled={busy || needsSetup} /></label>
+        <label className="mode-endpoint">{t('login.username')}<input autoFocus value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" disabled={busy || needsSetup} /></label>
+        <label className="mode-endpoint">{t('login.password')}<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" disabled={busy || needsSetup} /></label>
         {error ? <p className="server-save-error">{error}</p> : null}
         <label className="auth-remember">
           <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} disabled={busy || needsSetup} />
-          <span>在本机记住账号密码</span>
-          <small>共用电脑请取消</small>
+          <span>{t('login.remember')}</span>
+          <small>{t('login.rememberHint')}</small>
         </label>
         <div className="mode-actions">
-          <button type="button" className="ghost-button" onClick={onSettings}>连接设置</button>
-          <button type="button" className="ghost-button" onClick={() => window.location.reload()}>重新检测</button>
-          <button className="action-button" disabled={busy || needsSetup || !username.trim() || !password}>{busy ? '登录中…' : '登录'} <span>↗</span></button>
+          <button type="button" className="ghost-button" onClick={onSettings}>{t('login.connection')}</button>
+          <button type="button" className="ghost-button" onClick={() => window.location.reload()}>{t('login.recheck')}</button>
+          <button className="action-button" disabled={busy || needsSetup || !username.trim() || !password}>{busy ? t('login.submitting') : t('login.submit')} <span>↗</span></button>
         </div>
       </form>
     </div>
@@ -260,14 +283,14 @@ function LoginScreen({
 
 function fmtTime(value?: string): string {
   if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString('zh-CN', {
+  const formatted = fmtDateTime(value, currentLang(), {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    hour12: false,
   });
+  return formatted || value;
 }
 
 
@@ -596,10 +619,12 @@ function Banner({
 
 
 function EmptyDataScreen({ message, onRetry, onSettings }: { message: string; onRetry: () => void; onSettings: () => void }) {
-  return <div className="empty-data-screen"><div className="empty-data-mark">W</div><span className="kicker">// WORKSPACE NOT LOADED</span><h1>还没有加载工作区</h1><p>{message || '请启动服务端，或检查运行模式中的服务地址。'}</p><div className="hero-actions"><button className="action-button" onClick={onRetry}>重新连接 <span>↗</span></button><button className="ghost-button" onClick={onSettings}>打开设置</button></div></div>;
+  const { t } = useI18n();
+  return <div className="empty-data-screen"><div className="empty-data-mark">W</div><h1>{t('empty.title')}</h1><p>{message || t('empty.lead')}</p><div className="hero-actions"><button className="action-button" onClick={onRetry}>{t('empty.retry')} <span>↗</span></button><button className="ghost-button" onClick={onSettings}>{t('empty.settings')}</button></div></div>;
 }
 
 function App() {
+  const { t, lang, toggleLang } = useI18n();
   const params = new URLSearchParams(window.location.search);
   const electronShell = Boolean((window as unknown as { warpweft?: unknown }).warpweft);
   const requestedTab = params.get('tab');
@@ -1112,7 +1137,7 @@ function App() {
       const bytes = exportWorkbook({
         汇总: [
           { 项目: '学校', 值: data.school.name },
-          { 项目: '生成时间', 值: new Date(report.generatedAt).toLocaleString('zh-CN') },
+          { 项目: '生成时间', 值: fmtDateTime(report.generatedAt) },
           { 项目: '结论', 值: report.ok ? '可以保存正式版' : '不可保存正式版' },
           { 项目: '已排课时', 值: report.summary.placed },
           { 项目: '未排课时', 值: report.summary.unplaced },
@@ -1192,7 +1217,7 @@ function App() {
       const bytes = exportWorkbook({
         汇总: [
           { 项目: '学校', 值: data.school.name },
-          { 项目: '生成时间', 值: new Date(stats.generatedAt).toLocaleString('zh-CN') },
+          { 项目: '生成时间', 值: fmtDateTime(stats.generatedAt) },
           { 项目: '口径', 值: '计划 = 教学计划周课时；已排 = 当前候选课表条目' },
           { 项目: '计划周课时', 值: stats.summary.planned },
           { 项目: '折算平均周课时', 值: stats.summary.averagePlanned },
@@ -1866,7 +1891,7 @@ function App() {
       <div className="boot-screen">
         <div className="boot-mark">W</div>
         <strong>WARPWEFT</strong>
-        <span>正在验证服务端登录…</span>
+        <span>{t('dialog.login.busy')}</span>
       </div>
     );
   }
@@ -1899,7 +1924,7 @@ function App() {
       <div className="boot-screen">
         <div className="boot-mark">W</div>
         <strong>WARPWEFT</strong>
-        <span>正在载入本地数据…</span>
+        <span>{t('dialog.boot.loading')}</span>
       </div>
     );
   }
@@ -1908,13 +1933,13 @@ function App() {
   const visibleTabs = runMode === 'lan-server' ? TABS : TABS.filter((item) => item !== '服务端');
   const saveLabel =
     saveState === 'saving'
-      ? '保存中…'
+      ? t('common.saving')
       : saveState === 'saved'
-        ? '已保存'
+        ? t('common.saved')
         : saveState === 'error'
-          ? '保存失败'
+          ? t('common.saveFailed')
           : saveState === 'offline'
-            ? '仅本地演示'
+            ? t('common.demoOnly')
             : '';
 
   return (
@@ -1933,7 +1958,7 @@ function App() {
             <span className="brand-name">WARPWEFT</span>
           </div>
         </div>
-        <nav className="nav-list" aria-label="主导航">
+        <nav className="nav-list" aria-label={t('nav.aria')}>
           {visibleTabs.map((item, index) => (
             <button
               key={item}
@@ -1942,44 +1967,53 @@ function App() {
               aria-current={tab === item ? 'page' : undefined}
             >
               <span className="nav-no">0{index + 1}</span>
-              <span>{item}</span>
+              <span>{t(TAB_LABEL_KEY[item])}</span>
             </button>
           ))}
         </nav>
         <div className="rail-footer">
-          <span>数据来源</span>
+          <span>{t('shell.dataSource')}</span>
           <strong>{data.school.name}</strong>
-          <small>{apiOnline === false ? '本地数据 / 未保存' : '本地文件 / 离线'}</small>
-          <small>{data.updatedAt ? '更新 ' + fmtTime(data.updatedAt) : '尚未保存'}</small>
+          <small>{apiOnline === false ? t('shell.localOnly') : t('shell.localFile')}</small>
+          <small>{data.updatedAt ? t('shell.updatedAt', { time: fmtTime(data.updatedAt) }) : t('shell.notSaved')}</small>
         </div>
       </aside>
       <main className={'workspace' + (tab === '课表预览' ? ' workspace-timetable' : '')}>
         <header className="topbar">
           <div>
-            <h1>{tab}</h1>
+            <h1>{t(TAB_LABEL_KEY[tab])}</h1>
           </div>
           <div className="top-actions">
             <span className={apiOnline === false ? 'node-status offline' : 'node-status'}>
               <i />
-              {apiOnline === null ? '连接服务端…' : apiOnline ? '服务端在线' : '服务端未连接'}
+              {apiOnline === null ? t('common.connecting') : apiOnline ? t('common.online') : t('common.offline')}
             </span>
             {running ? <span className="run-phase-pill">{progress.message}</span> : null}
             {saveLabel ? <span className={'save-state ' + saveState}>{saveLabel}</span> : null}
-            <button className="mode-pill" onClick={() => setModeSettingsOpen(true)} title="修改运行模式">
-              运行：{RUN_MODE_OPTIONS.find((item) => item.value === runMode)?.title}
+            <button className="mode-pill" onClick={() => setModeSettingsOpen(true)} title={t('shell.changeRunMode')}>
+              {t('shell.runMode', { mode: runMode ? t(RUN_MODE_LABEL_KEYS[runMode].title) : '' })}
             </button>
             {authUser ? (
-              <button className="ghost-button auth-user" onClick={() => void handleLogout()} title="退出当前服务端账号">
-                退出 {authUser.username}
+              <button className="ghost-button auth-user" onClick={() => void handleLogout()} title={t('settings.server.signOut')}>
+                {t('common.logout', { name: authUser.username })}
               </button>
             ) : null}
             <button
               className="theme-toggle"
+              onClick={toggleLang}
+              aria-label={t('common.switchLanguage')}
+              title={t('common.switchLanguage')}
+            >
+              <span>{lang === 'zh-CN' ? 'EN' : '中'}</span>
+              {lang === 'zh-CN' ? 'EN' : '中文'}
+            </button>
+            <button
+              className="theme-toggle"
               onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-              aria-label={theme === 'light' ? '切换深色主题' : '切换浅色主题'}
+              aria-label={theme === 'light' ? t('common.switchToDark') : t('common.switchToLight')}
             >
               <span>{theme === 'light' ? '☾' : '☀'}</span>
-              {theme === 'light' ? '深色' : '浅色'}
+              {theme === 'light' ? t('common.dark') : t('common.light')}
             </button>
           </div>
         </header>
@@ -2252,10 +2286,10 @@ function Dashboard({
 }) {
   const periods = data.coursePlans.reduce((sum, plan) => sum + Number(plan.weeklyPeriods || 0), 0);
   const stats = [
-    { code: 'CLS', label: '班级', value: data.classes.length, note: '行政班' },
-    { code: 'TCH', label: '教师', value: data.teachers.length, note: '任课关系' },
-    { code: 'ROM', label: '教室', value: data.rooms.length, note: '可用教室' },
-    { code: 'HRS', label: '待排课时', value: periods, note: '每周总量' },
+    { code: '班级', label: '班级', value: data.classes.length, note: '行政班' },
+    { code: '教师', label: '教师', value: data.teachers.length, note: '任课关系' },
+    { code: '教室', label: '教室', value: data.rooms.length, note: '可用教室' },
+    { code: '课时', label: '待排课时', value: periods, note: '每周总量' },
   ];
   const ready = issues.length === 0;
   const stateLabel = result
@@ -2280,7 +2314,7 @@ function Dashboard({
           </button>
         </div>
         <div className="hero-readout">
-          <span>TASK STATE</span>
+          <span>任务状态</span>
           <strong>{stateLabel}</strong>
           <div className="readout-track">
             <i style={{ width: result ? '100%' : ready ? '62%' : '28%' }} />
@@ -2317,9 +2351,9 @@ function Dashboard({
           </div>
           {progress.phase !== 'idle' ? <RunProgressView progress={progress} /> : null}
           <div className="field-row">
-            <span>DATA SNAPSHOT</span>
-            <b>{data.updatedAt ? fmtTime(data.updatedAt) : 'LOCAL'}</b>
-            <span>PLANS</span>
+            <span>数据快照</span>
+            <b>{data.updatedAt ? fmtTime(data.updatedAt) : '本机'}</b>
+            <span>教学计划</span>
             <b>{data.coursePlans.length}</b>
           </div>
           <div className="hero-actions">
@@ -2992,12 +3026,12 @@ function ServerPage({
       {actionError ? <Banner tone="error" title="操作未完成" onClose={() => setActionError('')}>{actionError}</Banner> : null}
       {apiOnline === false ? <Banner tone="warning" title="服务端未连接">当前无法读取服务端状态，请先启动服务端 API。</Banner> : null}
       {!stats ? (
-        <div className="server-loading"><span className="kicker">// SERVER TELEMETRY</span><strong>正在读取本机服务端状态…</strong></div>
+        <div className="server-loading"><strong>正在读取本机服务端状态…</strong></div>
       ) : (
         <>
           <section className="section-panel server-panel">
             <div className="server-head">
-              <div><span className="kicker">// SERVER TELEMETRY</span><h2>服务端</h2><p>监控服务端资源、Java 求解器和排队中的排课任务；单机与 Linux 服务端使用同一套 Java 求解线路。</p></div>
+              <div><h2>服务端</h2><p>监控服务端资源、Java 求解器和排队中的排课任务；单机与 Linux 服务端使用同一套 Java 求解线路。</p></div>
               <div className="server-head-status">
                 <span className={stats.solver.ready ? 'server-live' : 'server-live is-offline'}><i />{stats.solver.ready ? '服务在线' : '求解器未就绪'}</span>
                 <button type="button" className="tt-btn tt-btn-quiet" onClick={() => void refresh()}>刷新</button>
@@ -3156,7 +3190,7 @@ function SettingsPage({
               <article className={'settings-log-item is-' + entry.tone} key={entry.id}>
                 <div className="settings-log-meta">
                   <span className={'settings-log-tone is-' + entry.tone}>{toneLabels[entry.tone]}</span>
-                  <time>{new Date(entry.at).toLocaleString('zh-CN', { hour12: false })}</time>
+                  <time>{fmtDateTime(entry.at, undefined, { hour12: false })}</time>
                   <em>{reasonLabels[entry.reason]}</em>
                 </div>
                 <strong>{entry.title}</strong>
@@ -3396,7 +3430,7 @@ function TimetablePage({
     >
       <div className="tt-head">
         <div className="tt-head-copy">
-          <span className="kicker">// TIMETABLE WORKSPACE</span>
+          
           <h2>课表预览与手动调整</h2>
           <p>选择班级、教师或教室查看课表；在班级视图中拖动课程，或选中课程后点击空白时间格移动。</p>
         </div>
@@ -3562,7 +3596,7 @@ function TimetablePage({
         {selected ? (
           <>
             <div className="tt-selection-copy">
-              <span className="tt-selection-kicker">SELECTED LESSON</span>
+              <span className="tt-selection-kicker">已选课程</span>
               <strong>
                 {selectedGroup
                   ? findSubject(data, selectedGroup.subjectId)?.name ?? '走班'

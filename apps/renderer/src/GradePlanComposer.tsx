@@ -95,7 +95,7 @@ function GradePlanComposer({
       <div className="composer-dialog grade-plan-dialog">
         <div className="composer-head">
           <div>
-            <span className="kicker">// GRADE COURSE MATRIX</span>
+            
             <h2>按年级批量设置课程</h2>
             <p>勾选多个年级，直接修改每周课时；每个输入框失去焦点或按回车即自动保存，不需要再点应用。</p>
           </div>

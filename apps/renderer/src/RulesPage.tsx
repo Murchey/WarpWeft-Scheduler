@@ -86,7 +86,7 @@ function RulesPage({
       <section className="section-panel rules-panel">
         <div className="rules-head">
           <div>
-            <span className="kicker">// SCHEDULE POLICIES</span>
+            
             <h2>排课规则</h2>
             <p>用“必须 / 尽量 / 避免”表达学校政策；系统硬规则由求解器自动保证。</p>
           </div>
@@ -119,7 +119,7 @@ function RulesPage({
 
       {conflicts.length > 0 ? (
         <section className="section-panel rule-conflicts">
-          <div className="rule-conflicts-head"><div><span className="kicker">// CONFLICT CHECK</span><h3>规则冲突与提醒</h3></div><span className="status-tag danger">{conflicts.length} 项</span></div>
+          <div className="rule-conflicts-head"><div><h3>规则冲突与提醒</h3></div><span className="status-tag danger">{conflicts.length} 项</span></div>
           {conflicts.map((conflict) => {
             const titles = conflict.ruleIds.map((id) => rules.find((rule) => rule.id === id)).filter(Boolean).map((rule) => describeRule(rule!, data)).join(' / ');
             return <div className="rule-conflict" key={conflict.ruleIds.join('-') + conflict.message}><b>{titles || '规则'}</b><p>{conflict.message}</p></div>;
@@ -131,7 +131,7 @@ function RulesPage({
       <section className="section-panel rules-create">
         <div className="rules-create-head">
           <div>
-            <span className="kicker">// CREATE RULE</span>
+            
             <h3>新建规则</h3>
             <p>先选规则类型，再设置对象、条件和“必须 / 尽量 / 避免”。系统硬规则已由求解器自动保证。</p>
           </div>
@@ -153,7 +153,7 @@ function RulesPage({
 
       {visible.length === 0 ? (
         <section className="section-panel rules-empty">
-          <span className="kicker">// NO CUSTOM RULES</span>
+          
           <h3>还没有自定义规则</h3>
           <p>先从“学科每日上限”或“学科时间偏好”开始；系统硬规则已经自动保证。</p>
         </section>
@@ -279,7 +279,7 @@ function RuleBuilder({
     <div className="rule-overlay" role="dialog" aria-modal="true">
       <div className="rule-dialog">
         <div className="rule-dialog-head">
-          <div><span className="kicker">// RULE BUILDER</span><h2>{draft.id && allRules.some((item) => item.id === draft.id) ? '编辑规则' : '新建规则'}</h2><p>用一句话描述政策，系统会把它翻译成求解条件。</p></div>
+          <div><h2>{draft.id && allRules.some((item) => item.id === draft.id) ? '编辑规则' : '新建规则'}</h2><p>用一句话描述政策，系统会把它翻译成求解条件。</p></div>
           <button type="button" className="banner-close" onClick={onClose} aria-label="关闭">×</button>
         </div>
         <div className="rule-dialog-body">

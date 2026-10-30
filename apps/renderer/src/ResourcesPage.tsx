@@ -16,6 +16,7 @@ import { fixedSlotIdsOf } from '../../../packages/contracts/src';
 import { normalizeSoftConstraints, withSoftWeight } from './softConstraints';
 import { importChanges } from './importReview';
 import { deleteWorkspaceProject, parseWorkspace, readWorkspaceProjects, saveWorkspaceProject, serializeWorkspace, workspaceFileName } from './workspaceProject';
+import { fmtDateTime } from './i18n';
 
 type ResourceCollection = 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots';
 
@@ -1179,7 +1180,7 @@ function ResourcesPage({
           <div className="panel-head"><SectionHeading english="IMPORT / VALIDATE" title="导入来源" /></div>
           <div className="workspace-import-grid">
             <section className="workspace-import-card">
-              <span className="kicker">// TEMPLATE</span>
+              
               <h3>Excel 模板</h3>
               <p className="panel-note">适合批量导入基础资料、教学计划、规则和教师时间。</p>
               <div className="import-actions">
@@ -1191,7 +1192,7 @@ function ResourcesPage({
               </div>
             </section>
             <section className="workspace-import-card is-workspace">
-              <span className="kicker">// WORKSPACE FILE</span>
+              
               <h3>工作区数据</h3>
               <p className="panel-note">恢复已经排课的完整工作内容，包含候选/正式课表、调代课记录和审计日志。</p>
               <div className="import-actions">
@@ -1214,7 +1215,7 @@ function ResourcesPage({
               <div className="workspace-project-list">
                 {workspaceProjects.map((project) => (
                   <article className="workspace-project-row" key={project.id}>
-                    <div><b>{project.name}</b><small>{new Date(project.savedAt).toLocaleString('zh-CN', { hour12: false })} · {project.data.classes.length} 班 · {project.data.coursePlans.length} 条计划</small></div>
+                    <div><b>{project.name}</b><small>{fmtDateTime(project.savedAt, undefined, { hour12: false })} · {project.data.classes.length} 班 · {project.data.coursePlans.length} 条计划</small></div>
                     <div className="workspace-project-actions">
                       <button type="button" className="ghost-button" onClick={() => { if (!window.confirm('加载工作项目「' + project.name + '」？当前未保存的修改会被替换。')) return; onLoadWorkspace?.(project.data); setWorkspaceProjectName(project.name); setNotice('已加载工作项目：' + project.name); }}>加载</button>
                       <button type="button" className="ghost-button" onClick={() => void exportWorkspaceFile(project.name)}>导出</button>
@@ -1410,7 +1411,7 @@ function ResourcesPage({
               onClick={(event) => event.stopPropagation()}
             >
               <div className="classes-dialog-head">
-                <span className="kicker">// CLASS BINDING</span>
+                
                 <h3>{data.teachers.find((teacher) => teacher.id === classPicker.id)?.name ?? '教师'} · 负责班级</h3>
                 <p>不勾选表示不限制；可多选。排课和自动分配教师只使用这里选中的班级。</p>
               </div>

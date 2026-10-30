@@ -86,7 +86,7 @@ function AvailabilityEditor({ data, commit }: { data: SchoolData; commit: Commit
   return (
     <section className="section-panel resource-panel availability-panel">
       <div className="panel-head">
-        <div><span className="kicker">// TEACHER AVAILABILITY</span><h2>教师不可用时间</h2></div>
+        <div><h2>教师不可用时间</h2></div>
         <span className="status-tag muted">单人或批量</span>
       </div>
       <p className="panel-note">从下拉框选择教师不可用的时间段，添加后会显示为标签；点击标签即可移除。排课时会自动避开这些时间。</p>

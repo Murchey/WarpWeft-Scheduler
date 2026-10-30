@@ -2,10 +2,13 @@ import React, { useRef } from 'react';
 
 export const DAYS = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
-function SectionHeading({ english, title }: { english: string; title: string }) {
+/**
+ * 分区标题。`english` 参数为历史调用保留（44 处调用点仍会传），但**不再渲染**：
+ * 中文界面不需要英文副标题，英文模式下标题本身即为英文，装饰性 kicker 是冗余的。
+ */
+function SectionHeading({ title }: { english?: string; title: string }) {
   return (
     <div className="section-heading">
-      <span className="kicker">// {english}</span>
       <h2>{title}</h2>
     </div>
   );

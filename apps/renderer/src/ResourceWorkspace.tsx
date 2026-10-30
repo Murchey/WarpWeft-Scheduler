@@ -156,7 +156,7 @@ function ResourceWorkspace<T extends { id: string }>({
       <div className="resource-workspace">
         <header className="resource-workspace-head">
           <div>
-            <span className="kicker">// {english}</span>
+            
             <h2>{title}</h2>
             <p>共 {rows.length} 条；可按关键词查找、逐条修改，或勾选后批量编辑/删除。</p>
           </div>

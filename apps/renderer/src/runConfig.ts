@@ -1,4 +1,5 @@
 import type { RunMode, SolverOutput } from './types';
+import type { MessageKey } from './i18n';
 
 export type RunPhase =
   | 'idle'
@@ -59,6 +60,14 @@ export const RUN_MODE_OPTIONS: {
     endpoint: 'https://',
   },
 ];
+
+/** 运行模式的界面文案 key。runConfig 只保留内部 id 与端点默认值，展示文案交给 i18n。 */
+export const RUN_MODE_LABEL_KEYS: Record<RunMode, { title: MessageKey; description: MessageKey }> = {
+  single: { title: 'mode.single.title', description: 'mode.single.description' },
+  'lan-server': { title: 'mode.lanServer.title', description: 'mode.lanServer.description' },
+  'lan-client': { title: 'mode.lanClient.title', description: 'mode.lanClient.description' },
+  cloud: { title: 'mode.cloud.title', description: 'mode.cloud.description' },
+};
 
 export const RUN_STATUS_LABELS: Record<string, string> = {
   queued: '排队中',

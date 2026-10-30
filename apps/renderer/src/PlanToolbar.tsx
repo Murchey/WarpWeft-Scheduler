@@ -81,7 +81,7 @@ function PlanToolbar({
   return (
     <div className="plan-toolbar">
       <div className="plan-filter-row">
-        <span className="plan-filter-kicker">// FILTER / 筛选</span>
+        <span className="plan-filter-kicker">筛选</span>
         <label className="plan-search">
           <span aria-hidden="true">//</span>
           <input
@@ -125,7 +125,7 @@ function PlanToolbar({
         <details className="plan-menu" data-plan-menu>
           <summary className="plan-menu-trigger">新增 <span aria-hidden="true">▾</span></summary>
           <div className="plan-menu-panel plan-menu-small">
-            <p className="plan-menu-kicker">// NEW PLAN</p>
+            <p className="plan-menu-kicker">新建计划</p>
             <button type="button" onClick={(event) => { closeMenu(event.currentTarget); onAdd(); }}>批量新增教学计划</button>
             <button type="button" onClick={(event) => { closeMenu(event.currentTarget); onAddGrade(); }}>按年级批量设置</button>
           </div>
@@ -133,7 +133,7 @@ function PlanToolbar({
         <details className="plan-menu" data-plan-menu>
           <summary className="plan-menu-trigger">列设置 <span className="plan-menu-count">{visibleOptional}/{optionalColumns.length}</span></summary>
           <div className="plan-menu-panel">
-            <p className="plan-menu-kicker">// COLUMNS / 列</p>
+            <p className="plan-menu-kicker">列</p>
             <div className="plan-column-list">
               {PLAN_COLUMNS.map((column) => {
                 const checked = view.columns[column.key].visible;
@@ -161,7 +161,7 @@ function PlanToolbar({
         <details className="plan-menu" data-plan-menu>
           <summary className="plan-menu-trigger">视图 <span aria-hidden="true">▾</span></summary>
           <div className="plan-menu-panel">
-            <p className="plan-menu-kicker">// VIEW / 视图</p>
+            <p className="plan-menu-kicker">视图</p>
             <div className="plan-menu-field">
               <span>密度</span>
               <div className="plan-seg" role="group" aria-label="表格密度">
