@@ -230,7 +230,7 @@ export function ProjectLauncher(props: ProjectLauncherProps) {
             <span>{t('launcher.importFile')}</span>
             <input
               type="file"
-              accept=".zip,.json,.workspace.json,application/zip,application/json"
+              accept=".zip,application/zip"
               onChange={(event) => {
                 const file = event.target.files && event.target.files[0];
                 if (file) props.onImport(file);

@@ -172,6 +172,7 @@ export const enUS = {
   'project.action.saveAsUnbound': 'Save as project…',
   'project.unbound': 'Unsaved workspace',
   'project.unsupported': "This server doesn't support projects yet. Upgrade the server.",
+  'project.importNeedsZip': 'Please choose a .zip project archive (legacy .workspace.json is no longer supported).',
   'project.confirmDiscardWorkspace':
     "This workspace isn't saved as a project. Creating a blank project discards {classes} classes and {plans} plans. Continue?",
   'project.nameDialog.title': 'Save as project',

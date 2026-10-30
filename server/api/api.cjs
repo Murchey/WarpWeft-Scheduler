@@ -1873,40 +1873,29 @@ function startApi({
         if (req.method === 'GET' && url.pathname === '/api/projects/active') {
           return send(res, 200, projects.active());
         }
+        // 导入只接受工程包（.zip）。旧的 .workspace.json 导入已随未发版前的
+        // 单文件格式一并移除，避免维护两套解析路径。
         if (req.method === 'POST' && url.pathname === '/api/projects/import') {
-          const contentType = String(req.headers['content-type'] || '').toLowerCase();
-          // 工程包（.zip）：直接收二进制，解包后与 JSON 导入走同一条 create 链路
-          if (contentType.includes('zip') || contentType.includes('octet-stream')) {
-            let buffer;
-            try {
-              buffer = await readRawBody(req);
-            } catch (error) {
-              if (error.code === 'PAYLOAD_TOO_LARGE') return fail(res, 413, '工程包超过 5 MB', 'PAYLOAD_TOO_LARGE');
-              return fail(res, 400, '读取工程包失败：' + error.message, 'INVALID_BODY');
-            }
-            if (!isZipBuffer(buffer)) return fail(res, 400, '这不是有效的工程包（缺少 ZIP 头）', 'WORKSPACE_ARCHIVE_INVALID');
-            let doc;
-            try {
-              doc = decodeSnapshot(buffer);
-            } catch (error) {
-              return fail(res, 400, error.message, 'WORKSPACE_ARCHIVE_INVALID');
-            }
-            try {
-              const result = await projects.importWorkspace({ doc, name: doc.name, clientId });
-              audit(actor, 'project_import', result.project.id, 'src=zip:' + doc.name, ip);
-              log('info', '导入工程包：' + result.project.name);
-              return send(res, 201, result);
-            } catch (error) {
-              return projectFailure(res, error);
-            }
-          }
-          const body = await readJsonBody(req, res);
-          if (body === undefined) return;
+          let buffer;
           try {
-            const doc = body && body.format === 'warpweft-workspace' ? body : body && body.doc;
-            const result = await projects.importWorkspace({ doc, name: body && body.name, clientId });
-            audit(actor, 'project_import', result.project.id, 'src=' + ((doc && doc.name) || ''), ip);
-            log('info', '导入工程：' + result.project.name);
+            buffer = await readRawBody(req);
+          } catch (error) {
+            if (error.code === 'PAYLOAD_TOO_LARGE') return fail(res, 413, '工程包超过 5 MB', 'PAYLOAD_TOO_LARGE');
+            return fail(res, 400, '读取工程包失败：' + error.message, 'INVALID_BODY');
+          }
+          if (!isZipBuffer(buffer)) {
+            return fail(res, 400, '请选择 .zip 工程包（旧版 .workspace.json 已不再支持）', 'WORKSPACE_ARCHIVE_INVALID');
+          }
+          let doc;
+          try {
+            doc = decodeSnapshot(buffer);
+          } catch (error) {
+            return fail(res, 400, error.message, 'WORKSPACE_ARCHIVE_INVALID');
+          }
+          try {
+            const result = await projects.importWorkspace({ doc, name: doc.name, clientId });
+            audit(actor, 'project_import', result.project.id, 'src=zip:' + doc.name, ip);
+            log('info', '导入工程包：' + result.project.name);
             return send(res, 201, result);
           } catch (error) {
             return projectFailure(res, error);

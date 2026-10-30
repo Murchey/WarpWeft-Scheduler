@@ -8,7 +8,6 @@
  * 目录布局：
  *   <dataDir>/projects/index.json          工程清单 + 活动指针（单一真源，避免双文件漂移）
  *   <dataDir>/projects/p_<id>.zip          工程包：分片 JSON 的 ZIP（见 projectSnapshot.cjs）
- *   <dataDir>/projects/p_<id>.json         仅存在于 v1；读取时自动迁移为 .zip 并改名 .json.migrated
  *   <dataDir>/projects/_autosave/<id>-<ts>.zip    切换前的自动备份，每工程保留最近 3 份
  *
  * 该模块被 Windows(Electron) 与 Linux(server.cjs) 共用，因为两端都 require 同一份
@@ -120,14 +119,6 @@ function openProjectStore({ dataDir, store, sanitize = (value) => value, validat
     return path.join(dir, id + SNAPSHOT_EXT);
   }
 
-  /** v1 的单文件快照（p_<id>.json），只用于迁移。 */
-  function legacyProjectFile(id) {
-    if (!ID_PATTERN.test(String(id))) {
-      throw new ProjectError('工程标识无效', 'PROJECT_NOT_FOUND', 404);
-    }
-    return path.join(dir, id + '.json');
-  }
-
   function findEntry(index, id) {
     return index.projects.find((item) => item.id === id) || null;
   }
@@ -138,55 +129,21 @@ function openProjectStore({ dataDir, store, sanitize = (value) => value, validat
     return entry;
   }
 
-  /**
-   * 读取工程快照。新格式是分片 ZIP；若只存在 v1 的单文件 JSON，
-   * 就地迁移为 ZIP 并把旧文件改名保留，迁移失败则回退读旧文件。
-   */
+  /** 读取工程快照（分片 ZIP）。 */
   function readDocument(id) {
     const file = projectFile(id);
-    if (fs.existsSync(file)) {
-      let buffer;
-      try {
-        buffer = fs.readFileSync(file);
-      } catch (error) {
-        throw new ProjectError('工程包读取失败：' + error.message, 'PROJECT_CORRUPTED', 500);
-      }
-      try {
-        return decodeSnapshot(buffer);
-      } catch (error) {
-        throw new ProjectError('工程包已损坏：' + error.message, 'PROJECT_CORRUPTED', 500);
-      }
-    }
-
-    const legacy = legacyProjectFile(id);
-    if (fs.existsSync(legacy)) return migrateLegacySnapshot(id, legacy);
-
-    throw new ProjectError('工程快照文件缺失', 'PROJECT_NOT_FOUND', 404);
-  }
-
-  function migrateLegacySnapshot(id, legacyPath) {
-    let doc;
+    if (!fs.existsSync(file)) throw new ProjectError('工程快照文件缺失', 'PROJECT_NOT_FOUND', 404);
+    let buffer;
     try {
-      doc = JSON.parse(fs.readFileSync(legacyPath, 'utf8'));
-    } catch {
-      throw new ProjectError('旧版工程快照不是有效 JSON', 'PROJECT_CORRUPTED', 500);
-    }
-    try {
-      const { buffer } = encodeSnapshot(doc.data, { name: doc.name, savedAt: doc.savedAt });
-      writeFileAtomic(projectFile(id), buffer);
-      // 保留旧文件并改名，迁移出错时人工可回滚；不占用 index 的工程计数
-      fs.renameSync(legacyPath, legacyPath + '.migrated');
-      log('info', '工程快照已迁移为分片 ZIP：' + id);
+      buffer = fs.readFileSync(file);
     } catch (error) {
-      log('warn', '工程快照迁移失败，继续使用旧格式：' + error.message);
+      throw new ProjectError('工程包读取失败：' + error.message, 'PROJECT_CORRUPTED', 500);
     }
-    return {
-      format: WORKSPACE_FORMAT,
-      version: Number(doc.version) || 1,
-      name: typeof doc.name === 'string' ? doc.name : '未命名工程',
-      savedAt: typeof doc.savedAt === 'string' ? doc.savedAt : new Date().toISOString(),
-      data: doc.data,
-    };
+    try {
+      return decodeSnapshot(buffer);
+    } catch (error) {
+      throw new ProjectError('工程包已损坏：' + error.message, 'PROJECT_CORRUPTED', 500);
+    }
   }
 
   function writeFileAtomic(file, buffer) {
@@ -338,7 +295,7 @@ function openProjectStore({ dataDir, store, sanitize = (value) => value, validat
     entry.name = projectName;
     entry.updatedAt = new Date().toISOString();
     // 重命名要重写整个包：manifest 里的 name 是包内单一真源
-    if (fs.existsSync(projectFile(id)) || fs.existsSync(legacyProjectFile(id))) {
+    if (fs.existsSync(projectFile(id))) {
       const doc = readDocument(id);
       writeSnapshot(id, projectName, doc.data);
     }
@@ -350,9 +307,6 @@ function openProjectStore({ dataDir, store, sanitize = (value) => value, validat
     const index = readIndex();
     requireEntry(index, id);
     fs.rmSync(projectFile(id), { force: true });
-    // 迁移后的旧文件与 .migrated 备份一并清掉，避免删了工程还占磁盘
-    fs.rmSync(legacyProjectFile(id), { force: true });
-    fs.rmSync(legacyProjectFile(id) + '.migrated', { force: true });
     index.projects = index.projects.filter((item) => item.id !== id);
     if (index.activeId === id) {
       index.activeId = null;

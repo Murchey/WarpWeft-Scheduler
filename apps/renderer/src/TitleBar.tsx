@@ -86,7 +86,7 @@ export function TitleBar(props: TitleBarProps) {
         <input
           ref={fileRef}
           type="file"
-          accept=".zip,.json,.workspace.json,application/zip,application/json"
+          accept=".zip,application/zip"
           hidden
           onChange={(event) => {
             const file = event.target.files && event.target.files[0];

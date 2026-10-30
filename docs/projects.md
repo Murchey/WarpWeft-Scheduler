@@ -14,7 +14,7 @@
   projects/
     index.json                       工程清单 + 活动指针（单一真源）
     p_<id>.zip                       工程包（分片 JSON 的 ZIP）
-    p_<id>.json.migrated             v1 单文件快照的迁移备份，可人工回滚
+    p_<id>.zip                       工程包（分片 JSON 的 ZIP）
     _autosave/<id>-<ts>.zip          切换前自动备份，每工程保留最近 3 份
 ```
 
@@ -57,7 +57,7 @@ extra.json               未知字段兜底，保证前向兼容不丢数据
 | PATCH | `/api/projects/:id` | 仅重命名 `{name}` |
 | DELETE | `/api/projects/:id` | 删除；若为活动工程则清空指针 |
 | POST | `/api/projects/:id/open` | 换入工作区；`{expectedActiveId?, saveCurrent?, force?}`，成功直接返回换入后的 `data` |
-| POST | `/api/projects/import` | 导入。JSON 走 `.workspace.json`，`Content-Type: application/zip` 时收二进制工程包 |
+| POST | `/api/projects/import` | 导入工程包，请求体为 ZIP 二进制（`Content-Type: application/zip`） |
 | GET | `/api/workspace/export?name=` | 把**当前工作区**打成 `.zip` 工程包下载（不依赖已绑定工程） |
 | POST | `/api/workspace/unpack` | 解包工程包为 `{format, version, name, savedAt, data}`，**只读不落盘**（数据导入页「加载工作区」用） |
 
@@ -72,7 +72,7 @@ extra.json               未知字段兜底，保证前向兼容不丢数据
 - 配额：工程上限 30 个，**解压后**数据 4 MB（`MAX_BODY` 5 MB 的 80%），工程名 1–60 字符。超出返回 409/413，不自动删除任何数据。
 - `bytes` 记录压缩后的包体积，`rawBytes` 记录解压后体积；配额按 `rawBytes` 判定。
 - 单进程内用 Promise 链串行化 `index.json` 的读-改-写；**不支持**桌面端与 Linux 同时指向同一 `dataDir`。
-- **向后兼容**：v1 的 `p_<id>.json` 在首次读取时自动转换为 `.zip`，旧文件改名为 `.json.migrated` 保留；转换失败则回退读旧文件，不阻塞使用。删除工程时连同迁移残留一并清理。
+- **单一格式**：工程文件只有 `.zip` 一种。旧的单文件 `.workspace.json` 在正式发版前已移除——既不读也不写，避免维护两套解析路径。若传入非 ZIP 数据，返回 `WORKSPACE_ARCHIVE_INVALID`。
 
 ## 4. 双端一致性
 
@@ -89,5 +89,5 @@ extra.json               未知字段兜底，保证前向兼容不丢数据
 - 标题栏承载工程工具栏：**保存**（覆盖当前工程）/ **保存副本…**（在工程库新建，当前工程不变）/ **从文件导入** / **导出 .zip**（下载工程包）。
   「保存副本」与「导出」刻意分开命名：前者留在工程库，后者生成可分发文件。
 - 「设置 → 工程与数据」提供同一组动作与数据规模概览。
-- 数据导入页的「加载工作区文件」同时接受 `.zip` 工程包与 `.workspace.json`：前者走 `POST /api/workspace/unpack` 解包，后者前端直接解析；两种格式都不写入工程库，只替换当前工作区数据。
-- 导入入口同时接受 `.zip` 工程包与旧的 `.workspace.json`（按 ZIP 魔数区分，不依赖扩展名）。
+- 数据导入页的「加载工作区文件」接受 `.zip` 工程包，走 `POST /api/workspace/unpack` 解包；不写入工程库，只替换当前工作区数据。
+- 导入入口只接受 `.zip` 工程包（按 ZIP 魔数校验，不看扩展名）。

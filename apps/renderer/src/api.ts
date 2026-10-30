@@ -686,13 +686,6 @@ export async function openProject(
   return { ...result, data: withFixedClassRooms(result.data) };
 }
 
-export async function importProject(
-  doc: WorkspaceDocument,
-  name?: string,
-): Promise<{ project: ProjectMeta; activeId: string | null }> {
-  return sendJson('/api/projects/import', 'POST', { doc, name }, 30000);
-}
-
 /** 导出当前活动工作区为工程包（分片 ZIP），与服务端工程库同格式。 */
 export async function exportWorkspaceArchive(name: string): Promise<ArrayBuffer> {
   const response = await request(

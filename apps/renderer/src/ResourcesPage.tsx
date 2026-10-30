@@ -15,7 +15,7 @@ import { parseSubjectPreference, suggestedSubjectPreference } from './subjectPre
 import { fixedSlotIdsOf } from '../../../packages/contracts/src';
 import { normalizeSoftConstraints, withSoftWeight } from './softConstraints';
 import { importChanges } from './importReview';
-import { isWorkspaceArchive, parseWorkspace, workspaceArchiveFileName } from './workspaceProject';
+import { isWorkspaceArchive, workspaceArchiveFileName } from './workspaceProject';
 import { exportWorkspaceArchive, unpackWorkspaceArchive } from './api';
 import { fmtDateTime } from './i18n';
 
@@ -1162,10 +1162,11 @@ function ResourcesPage({
   const importWorkspaceFile = async (file: File) => {
     try {
       const buffer = await file.arrayBuffer();
-      // 工程包（.zip）交给服务端解包，旧的 .workspace.json 在前端直接解析
-      const parsed = isWorkspaceArchive(buffer)
-        ? await unpackWorkspaceArchive(buffer)
-        : parseWorkspace(new TextDecoder().decode(buffer));
+      if (!isWorkspaceArchive(buffer)) {
+        setError('请选择 .zip 工程包（旧版 .workspace.json 已不再支持）。');
+        return;
+      }
+      const parsed = await unpackWorkspaceArchive(buffer);
       if (!window.confirm('加载工作区「' + parsed.name + '」？当前未保存的修改会被替换。')) return;
       onLoadWorkspace?.(parsed.data);
       setNotice('已加载工作区：' + parsed.name);
@@ -1199,11 +1200,11 @@ function ResourcesPage({
               <div className="import-actions">
                 <label className="file-button">
                   <span>加载工作区文件</span>
-                  <input ref={workspaceFileRef} type="file" accept=".zip,.json,.workspace.json,application/zip,application/json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importWorkspaceFile(file); event.currentTarget.value = ''; }} />
+                  <input ref={workspaceFileRef} type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importWorkspaceFile(file); event.currentTarget.value = ''; }} />
                 </label>
                 <button type="button" className="file-button" onClick={() => void exportWorkspaceFile()}>{'导出当前工作区'}</button>
               </div>
-              <p className="panel-note">支持 .zip 工程包与旧的 .workspace.json。多工程保存与切换在顶部工程工具栏和启动界面。</p>
+              <p className="panel-note">仅支持 .zip 工程包。多工程保存与切换在顶部工程工具栏和启动界面。</p>
             </section>
           </div>
           {importFeedback ? (

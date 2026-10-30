@@ -7,6 +7,7 @@ export const projectMessages = {
   'project.action.saveAsUnbound': '保存为工程…',
   'project.unbound': '未保存的工作区',
   'project.unsupported': '当前服务端不支持多工程，请升级服务端。',
+  'project.importNeedsZip': '请选择 .zip 工程包（旧版 .workspace.json 已不再支持）。',
   'project.confirmDiscardWorkspace': '当前工作区还没保存为工程，新建空白工程会丢弃其中的 {classes} 个班级、{plans} 条计划。继续？',
   'project.nameDialog.title': '保存为工程',
   'project.nameDialog.lead': '当前工作区还没有关联工程。起个名字后它会出现在启动页，可在其他电脑继续编辑。',

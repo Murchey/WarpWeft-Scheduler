@@ -285,7 +285,7 @@ export function SettingsPage(props: SettingsPageProps) {
                     <span>{t('project.action.import')}</span>
                     <input
                       type="file"
-                      accept=".zip,.json,.workspace.json,application/zip,application/json"
+                      accept=".zip,application/zip"
                       onChange={(event) => {
                         const file = event.target.files && event.target.files[0];
                         if (file) props.onImportProject(file);

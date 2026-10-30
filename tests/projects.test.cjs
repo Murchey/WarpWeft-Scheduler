@@ -110,28 +110,50 @@ test('工程接口：切换冲突返回 409，force 后可继续', async (t) => 
   assert.equal(forced.status, 200);
 });
 
-test('工程接口：导入校验格式与版本', async (t) => {
+test('工程接口：导入校验工程包的格式与版本', async (t) => {
   const ctx = await boot();
   t.after(ctx.close);
   const baseline = (await json(ctx.base, 'GET', '/api/data')).body;
+  const { writeZip } = require('../server/api/zip.cjs');
 
-  const wrongFormat = await json(ctx.base, 'POST', '/api/projects/import', {
-    doc: { format: 'not-a-workspace', version: 1, data: baseline },
-  });
-  assert.equal(wrongFormat.status, 400);
-  assert.equal(wrongFormat.body.code, 'WORKSPACE_FORMAT_INVALID');
+  const postZip = (buffer) =>
+    fetch(ctx.base + '/api/projects/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/zip' },
+      body: new Uint8Array(buffer),
+    });
 
-  const wrongVersion = await json(ctx.base, 'POST', '/api/projects/import', {
-    doc: { format: 'warpweft-workspace', version: 99, name: '未来版本', data: baseline },
+  // manifest 声明了别的格式
+  const wrongFormat = writeZip({
+    'manifest.json': JSON.stringify({ format: 'not-a-workspace', version: 1, name: 'x' }),
+    'data.json': JSON.stringify(baseline),
   });
-  assert.equal(wrongVersion.status, 400);
-  assert.equal(wrongVersion.body.code, 'WORKSPACE_VERSION_UNSUPPORTED');
+  const formatResponse = await postZip(wrongFormat);
+  assert.equal(formatResponse.status, 400);
+  assert.equal((await formatResponse.json()).code, 'WORKSPACE_ARCHIVE_INVALID');
 
-  const ok = await json(ctx.base, 'POST', '/api/projects/import', {
-    doc: { format: 'warpweft-workspace', version: 1, name: '导入工程', savedAt: new Date().toISOString(), data: baseline },
+  // 版本高于当前服务端支持
+  const wrongVersion = writeZip({
+    'manifest.json': JSON.stringify({ format: 'warpweft-workspace', version: 99, name: '未来版本' }),
+    'data.json': JSON.stringify(baseline),
   });
-  assert.equal(ok.status, 201);
-  assert.equal(ok.body.project.name, '导入工程');
+  const versionResponse = await postZip(wrongVersion);
+  assert.equal(versionResponse.status, 400);
+  assert.equal((await versionResponse.json()).code, 'WORKSPACE_VERSION_UNSUPPORTED');
+
+  // 合法包正常导入
+  const ok = writeZip({
+    'manifest.json': JSON.stringify({
+      format: 'warpweft-workspace',
+      version: 2,
+      name: '导入工程',
+      savedAt: new Date().toISOString(),
+    }),
+    'data.json': JSON.stringify(baseline),
+  });
+  const okResponse = await postZip(ok);
+  assert.equal(okResponse.status, 201);
+  assert.equal((await okResponse.json()).project.name, '导入工程');
 });
 
 test('工程接口：删除工程并清理活动指针，非法 id 返回 404', async (t) => {
@@ -199,62 +221,3 @@ test('工程接口：分片 ZIP 快照可读且压缩后体积更小', async (t)
   assert.deepEqual(read.body.doc.data.coursePlans, bulk.coursePlans);
 });
 
-test('工程接口：v1 单文件快照在首次读取时自动迁移为 ZIP', async (t) => {
-  const ctx = await boot();
-  t.after(ctx.close);
-  const baseline = (await json(ctx.base, 'GET', '/api/data')).body;
-
-  const id = 'p_legacy_0001';
-  const projectsDir = path.join(ctx.dataDir, 'projects');
-  fs.mkdirSync(projectsDir, { recursive: true });
-  const now = new Date().toISOString();
-  // 手工构造 v1 布局：index.json 指向一个单文件 .json 快照
-  fs.writeFileSync(
-    path.join(projectsDir, 'index.json'),
-    JSON.stringify({
-      version: 1,
-      activeId: null,
-      activeClientId: null,
-      activeAt: null,
-      projects: [
-        {
-          id,
-          name: '旧版工程',
-          createdAt: now,
-          updatedAt: now,
-          syncedAt: null,
-          bytes: 100,
-          schoolName: baseline.school.name,
-          counts: { classes: baseline.classes.length, teachers: baseline.teachers.length, coursePlans: baseline.coursePlans.length },
-        },
-      ],
-    }),
-    'utf8',
-  );
-  fs.writeFileSync(
-    path.join(projectsDir, id + '.json'),
-    JSON.stringify({ format: 'warpweft-workspace', version: 1, name: '旧版工程', savedAt: now, data: baseline }),
-    'utf8',
-  );
-
-  const read = await json(ctx.base, 'GET', '/api/projects/' + id);
-  assert.equal(read.status, 200);
-  assert.equal(read.body.doc.name, '旧版工程');
-  assert.deepEqual(read.body.doc.data.coursePlans, baseline.coursePlans);
-
-  // 迁移结果：.zip 生成，旧文件被改名保留
-  assert.equal(fs.existsSync(path.join(projectsDir, id + '.zip')), true);
-  assert.equal(fs.existsSync(path.join(projectsDir, id + '.json')), false);
-  assert.equal(fs.existsSync(path.join(projectsDir, id + '.json.migrated')), true);
-
-  // 再次读取应走 ZIP，且内容一致
-  const again = await json(ctx.base, 'GET', '/api/projects/' + id);
-  assert.equal(again.status, 200);
-  assert.deepEqual(again.body.doc.data.classes, baseline.classes);
-
-  // 删除工程时，迁移残留也要一并清理
-  const removed = await json(ctx.base, 'DELETE', '/api/projects/' + id);
-  assert.equal(removed.status, 200);
-  assert.equal(fs.existsSync(path.join(projectsDir, id + '.zip')), false);
-  assert.equal(fs.existsSync(path.join(projectsDir, id + '.json.migrated')), false);
-});

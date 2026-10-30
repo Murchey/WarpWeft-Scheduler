@@ -8,7 +8,7 @@ import { ApiError, cancelServerJob, clearAuthToken, createUser, DEFAULT_API_BASE
 import { DAYS, SectionHeading } from './components';
 import { I18nProvider, useI18n, useFormatters } from './i18n';
 import type { MessageKey } from './i18n';
-import { createProject as createProjectApi, deleteProject as deleteProjectApi, exportWorkspaceArchive, fetchProjects, importProject as importProjectApi, importProjectArchive, openProject as openProjectApi, renameProject as renameProjectApi, saveProjectData } from './api';
+import { createProject as createProjectApi, deleteProject as deleteProjectApi, exportWorkspaceArchive, fetchProjects, importProjectArchive, openProject as openProjectApi, renameProject as renameProjectApi, saveProjectData } from './api';
 import type { ProjectMeta } from './api';
 import { ProjectLauncher } from './ProjectLauncher';
 import { TitleBar } from './TitleBar';
@@ -48,7 +48,7 @@ import { RUN_MODE_LABEL_KEYS, RUN_MODE_OPTIONS } from './runConfig';
 import { CLOUD_ENDPOINT_PLACEHOLDER, cleanEndpoint, endpointForMode, initialEndpointForMode, RUNTIME_MODE_KEY, readActiveEndpoint, readEndpointMemory, rememberEndpoint, writeActiveEndpoint, writeEndpointMemory } from './runtimeEndpoint';
 import type { EndpointMemory } from './runtimeEndpoint';
 import type { RunProgress, ShortRunRecord } from './runConfig';
-import { isWorkspaceArchive, parseWorkspace, serializeWorkspace, workspaceArchiveFileName, workspaceFileName } from './workspaceProject';
+import { isWorkspaceArchive, workspaceArchiveFileName } from './workspaceProject';
 import { EmptyState, RunProgressView } from './runViews';
 import { findClass, findRoom, findSubject, findTeacher, missingPlans, planOf, planSubjectName } from './selectors';
 import { RunsPage } from './RunsPage';
@@ -1249,29 +1249,26 @@ function App() {
   };
 
   /**
-   * 导入工程：同时支持新的 .zip 工程包与旧的 .workspace.json。
-   * 通过 ZIP 魔数区分，避免依赖扩展名（用户可能改了后缀）。
+   * 导入工程包（.zip）。旧的 .workspace.json 已不再支持——工程文件统一为
+   * 分片 ZIP，避免维护两套解析路径。
    */
   const importProjectFile = async (file: File) => {
     setLauncherBusy(true);
     setLauncherError('');
     try {
       const buffer = await file.arrayBuffer();
-      const archive = isWorkspaceArchive(buffer);
-      const parsed = archive ? null : parseWorkspace(new TextDecoder().decode(buffer));
-      const importName = parsed ? parsed.name : file.name.replace(/\.zip$/i, '');
+      if (!isWorkspaceArchive(buffer)) {
+        reportProjectError(t('project.importNeedsZip'));
+        return;
+      }
+      const importName = file.name.replace(/\.zip$/i, '');
       const { saved, hadProject } = await persistActiveProject();
       if (hadProject && !saved) return;
       if (!hadProject && data && !isWorkspaceEmpty(data)) {
         if (!window.confirm(t('project.confirmImport', { name: importName }))) return;
       }
       discardPendingSave();
-      const created = archive
-        ? await importProjectArchive(buffer)
-        : await importProjectApi(
-            { format: parsed!.format, version: parsed!.version, name: parsed!.name, savedAt: parsed!.savedAt, data: parsed!.data },
-            parsed!.name,
-          );
+      const created = await importProjectArchive(buffer);
       const opened = await openProjectApi(created.project.id, { saveCurrent: false });
       applyOpenedProject(opened);
       await refreshProjects();
@@ -1996,20 +1993,21 @@ function App() {
       publishedVersion,
       auditLog: [...(data.auditLog ?? []), audit],
     };
-    void download(
-      new Blob([serializeWorkspace(workspaceData, fileName.replace(/\.xlsx?$/i, '') + ' 工作区')], { type: 'application/json;charset=utf-8' }),
-      'application/json',
-      workspaceFileName(fileName.replace(/\.xlsx?$/i, '') + ' 工作区'),
-    ).catch((cause) => setError('同步保存工作区数据失败：' + messageOf(cause)));
-    commit(
-      {
-        ...data,
-        published: result,
-        publishedVersion,
-        auditLog: [...(data.auditLog ?? []), audit],
-      },
-      { immediate: true },
-    );
+    const archiveName = fileName.replace(/\.xlsx?$/i, '') + ' 工作区';
+    commit(workspaceData, { immediate: true });
+    // 附带保存一份工作区工程包：先等待这次 PUT 落盘，再让服务端按最新数据打包，
+    // 否则导出的是上一次保存的内容。
+    void (async () => {
+      if (!(await settlePendingSave())) return;
+      const buffer = await exportWorkspaceArchive(archiveName);
+      const saved = await download(
+        new Blob([buffer], { type: 'application/zip' }),
+        'application/zip',
+        workspaceArchiveFileName(archiveName),
+      );
+      const message = exportMessage(saved, t('project.archiveLabel'));
+      if (message && message.tone === 'error') setError(message.text);
+    })().catch((cause) => setError('同步保存工作区数据失败：' + messageOf(cause)));
     setNotice('已保存正式版：' + fileName + (outcome.path ? '（' + outcome.path + '）' : ''));
   };
 
