@@ -201,7 +201,7 @@ export const enUS = {
   'project.imported': 'Imported project: {name}',
   'project.exported': 'Project file exported: {name}',
   'launcher.title': 'Choose a project',
-  'launcher.lead': 'Each project keeps a full set of school data, timetables and adjustment records. Switch anytime.',
+  'launcher.lead': 'Each project keeps a full set of school data, timetables and adjustment records. Once inside, switch anytime from the title bar.',
   'launcher.lastUsed': 'Last opened',
   'launcher.recent': 'Recent projects',
   'launcher.createEmpty': 'New blank project',
@@ -216,6 +216,7 @@ export const enUS = {
   'launcher.saveCurrent': 'Save this workspace as a project',
   'launcher.creating': 'Creating…',
   'launcher.opening': 'Opening…',
+  'launcher.openProject': 'Open project',
   'dialog.runtime.title': 'Run mode settings',
   'dialog.runtime.choose': 'Choose how to run',
   'dialog.runtime.lead':

@@ -35,7 +35,7 @@ export const projectMessages = {
   'project.exported': '工程文件已导出：{name}',
 
   'launcher.title': '选择工程',
-  'launcher.lead': '每个工程保存一套完整的学校数据、课表与调代课记录，可随时切换。',
+  'launcher.lead': '每个工程保存一套完整的学校数据、课表与调代课记录；进入工作区后可在标题栏随时切换。',
   'launcher.lastUsed': '上次打开',
   'launcher.recent': '最近工程',
   'launcher.createEmpty': '新建空白工程',
@@ -50,6 +50,7 @@ export const projectMessages = {
   'launcher.saveCurrent': '将当前工作区保存为工程',
   'launcher.creating': '正在创建…',
   'launcher.opening': '正在打开…',
+  'launcher.openProject': '打开工程',
 
   'dialog.runtime.title': '运行模式设置',
   'dialog.runtime.choose': '选择运行模式',

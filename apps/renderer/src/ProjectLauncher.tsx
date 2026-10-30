@@ -105,7 +105,7 @@ export function ProjectLauncher(props: ProjectLauncherProps) {
             </div>
             <div className="launcher-featured-actions">
               <button className="action-button" disabled={props.busy} onClick={() => props.onOpen(featured.id)}>
-                {props.busy ? t('launcher.opening') : t('project.action.switch')} <span>→</span>
+                {props.busy ? t('launcher.opening') : t('launcher.openProject')} <span>→</span>
               </button>
               {props.online === false ? (
                 <button className="ghost-button" onClick={props.onOpenSettings}>{t('launcher.fixConnection')}</button>
