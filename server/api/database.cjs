@@ -61,4 +61,4 @@ function openDatabase(rootDir, dataDir = path.join(rootDir, 'data')) {
   };
 }
 
-module.exports = { openDatabase };
+module.exports = { openDatabase, writeJson, emptyWorkspace };

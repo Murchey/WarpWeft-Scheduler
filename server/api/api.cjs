@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { openDatabase } = require('./database.cjs');
+const { openProjectStore, ProjectError } = require('./projects.cjs');
 const { SessionStore, UserStore, publicUser } = require('./auth.cjs');
 const { AuditLog } = require('./audit.cjs');
 const SCHEMA = require('../../data-schema.json');
@@ -32,7 +33,7 @@ const LONG_JOB_MAX_STAGNATION = 60 * 60;
 
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, POST, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Client-Id, Authorization');
   res.setHeader('Cache-Control', 'no-store');
 }
@@ -594,6 +595,36 @@ function startApi({
     logs.push(item);
     if (logs.length > MAX_LOGS) logs.splice(0, logs.length - MAX_LOGS);
     return item;
+  }
+
+  // 多工程存储：与单库 store 共用同一 dataDir，切换工程即把快照写进 warpweft.json
+  const projects = openProjectStore({
+    dataDir,
+    store,
+    sanitize: sanitizeOrphanReferences,
+    validate: validateData,
+    log,
+  });
+
+  function projectFailure(res, error) {
+    if (error instanceof ProjectError) {
+      return fail(res, error.status, error.message, error.code, error.activeId === undefined ? {} : { activeId: error.activeId });
+    }
+    log('error', '工程操作失败：' + (error && error.message));
+    return fail(res, 500, (error && error.message) || '工程操作失败', 'PROJECT_OPERATION_FAILED');
+  }
+
+  async function readJsonBody(req, res) {
+    try {
+      return JSON.parse(await readBody(req));
+    } catch (error) {
+      if (error.code === 'PAYLOAD_TOO_LARGE') {
+        fail(res, 413, '请求体超过 5 MB', 'PAYLOAD_TOO_LARGE');
+        return undefined;
+      }
+      fail(res, 400, '请求不是有效 JSON', 'INVALID_BODY');
+      return undefined;
+    }
   }
 
   function jobSummary(job) {
@@ -1791,6 +1822,117 @@ function startApi({
         if (!ok) return fail(res, 404, '任务不存在或已结束', 'JOB_NOT_FOUND');
         return send(res, 200, { ok: true, status: 'cancelled' });
       }
+      // ── 多工程（工程文件）──────────────────────────────────────
+      // 与 Linux/Win 共用同一实现；startApi 的调用方无需任何改动。
+      if (url.pathname === '/api/projects' || url.pathname.startsWith('/api/projects/')) {
+        const actor = (authSession && authSession.user && authSession.user.username) || 'local';
+        const ip = (client && client.ip) || '';
+        const clientId = (client && client.id) || null;
+
+        if (req.method === 'GET' && url.pathname === '/api/projects') {
+          return send(res, 200, projects.list());
+        }
+        if (req.method === 'GET' && url.pathname === '/api/projects/active') {
+          return send(res, 200, projects.active());
+        }
+        if (req.method === 'POST' && url.pathname === '/api/projects/import') {
+          const body = await readJsonBody(req, res);
+          if (body === undefined) return;
+          try {
+            const doc = body && body.format === 'warpweft-workspace' ? body : body && body.doc;
+            const result = await projects.importWorkspace({ doc, name: body && body.name, clientId });
+            audit(actor, 'project_import', result.project.id, 'src=' + ((doc && doc.name) || ''), ip);
+            log('info', '导入工程：' + result.project.name);
+            return send(res, 201, result);
+          } catch (error) {
+            return projectFailure(res, error);
+          }
+        }
+        if (req.method === 'POST' && url.pathname === '/api/projects') {
+          const body = await readJsonBody(req, res);
+          if (body === undefined) return;
+          try {
+            const data = body.data === undefined ? store.read() : body.data;
+            const result = await projects.create({
+              name: body.name,
+              data,
+              clientId,
+              activate: body.open !== false,
+            });
+            audit(actor, 'project_create', result.project.id, 'name=' + result.project.name, ip);
+            log('info', '新建工程：' + result.project.name);
+            return send(res, 201, result);
+          } catch (error) {
+            return projectFailure(res, error);
+          }
+        }
+
+        const openRoute = url.pathname.match(/^\/api\/projects\/([^/]+)\/open$/);
+        if (req.method === 'POST' && openRoute) {
+          const body = await readJsonBody(req, res);
+          if (body === undefined) return;
+          const id = decodeURIComponent(openRoute[1]);
+          try {
+            const result = await projects.open(id, {
+              expectedActiveId: body.expectedActiveId,
+              saveCurrent: body.saveCurrent !== false,
+              force: body.force === true,
+              clientId,
+            });
+            audit(actor, 'project_open', id, 'to=' + result.project.name, ip);
+            log('info', '切换工程：' + result.project.name);
+            return send(res, 200, result);
+          } catch (error) {
+            return projectFailure(res, error);
+          }
+        }
+
+        const itemRoute = url.pathname.match(/^\/api\/projects\/([^/]+)$/);
+        if (itemRoute) {
+          const id = decodeURIComponent(itemRoute[1]);
+          if (req.method === 'GET') {
+            try {
+              return send(res, 200, projects.read(id));
+            } catch (error) {
+              return projectFailure(res, error);
+            }
+          }
+          if (req.method === 'PUT') {
+            const body = await readJsonBody(req, res);
+            if (body === undefined) return;
+            try {
+              const data = body.data === undefined ? store.read() : body.data;
+              const result = await projects.save(id, { data, name: body.name, clientId });
+              audit(actor, 'project_save', id, 'bytes=' + result.project.bytes, ip);
+              return send(res, 200, result);
+            } catch (error) {
+              return projectFailure(res, error);
+            }
+          }
+          if (req.method === 'PATCH') {
+            const body = await readJsonBody(req, res);
+            if (body === undefined) return;
+            try {
+              const result = await projects.rename(id, body.name);
+              return send(res, 200, result);
+            } catch (error) {
+              return projectFailure(res, error);
+            }
+          }
+          if (req.method === 'DELETE') {
+            try {
+              const result = await projects.remove(id);
+              audit(actor, 'project_delete', id, '', ip);
+              log('info', '删除工程：' + id);
+              return send(res, 200, result);
+            } catch (error) {
+              return projectFailure(res, error);
+            }
+          }
+        }
+        if (req.method !== 'OPTIONS') return fail(res, 404, '工程接口不存在', 'PROJECT_ROUTE_NOT_FOUND');
+      }
+
       if (req.method === 'GET' && url.pathname === '/api/data') {
         return send(res, 200, store.read());
       }

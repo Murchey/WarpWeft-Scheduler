@@ -12,6 +12,7 @@
     "subjectTimePreference",
     "subjectTimePreferenceMust",
     "subjectNoConsecutive",
-    "teacherAvailabilityImport"
+    "teacherAvailabilityImport",
+    "projects"
   ]
 }

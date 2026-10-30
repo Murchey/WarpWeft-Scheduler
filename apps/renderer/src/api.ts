@@ -591,3 +591,104 @@ export async function cancelLongJob(id: string): Promise<{ job: LongJob }> {
 export async function deleteLongJob(id: string): Promise<{ deleted: boolean; id: string }> {
   return sendJson<{ deleted: boolean; id: string }>('/api/solve/jobs/' + encodeURIComponent(id), 'DELETE');
 }
+
+// ── 工程（项目）──────────────────────────────────────────────
+// 服务端把每个工程保存为独立快照文件，切换工程 = 把快照写进活动工作区。
+// 导出/导入复用 .workspace.json 契约，因此可以脱离服务端迁移。
+
+export interface ProjectCounts {
+  classes: number;
+  teachers: number;
+  coursePlans: number;
+}
+
+export interface ProjectMeta {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  syncedAt: string | null;
+  bytes: number;
+  schoolName: string;
+  counts: ProjectCounts;
+}
+
+export interface ProjectList {
+  version: number;
+  projects: ProjectMeta[];
+  activeId: string | null;
+  active: { id: string; name: string; stale: boolean } | null;
+  limit: number;
+  maxProjectBytes: number;
+}
+
+export interface WorkspaceDocument {
+  format: string;
+  version: number;
+  name: string;
+  savedAt: string;
+  data: SchoolData;
+}
+
+export async function fetchProjects(): Promise<ProjectList> {
+  return getJson<ProjectList>('/api/projects');
+}
+
+export async function fetchActiveProject(): Promise<{
+  activeId: string | null;
+  project: ProjectMeta | null;
+  stale: boolean;
+}> {
+  return getJson('/api/projects/active');
+}
+
+export async function createProject(input: {
+  name: string;
+  data?: SchoolData;
+  open?: boolean;
+}): Promise<{ project: ProjectMeta; activeId: string | null }> {
+  return sendJson('/api/projects', 'POST', input, 20000);
+}
+
+export async function readProject(id: string): Promise<{ project: ProjectMeta; doc: WorkspaceDocument }> {
+  return getJson('/api/projects/' + encodeURIComponent(id), 20000);
+}
+
+export async function saveProjectData(
+  id: string,
+  input: { data?: SchoolData; name?: string },
+): Promise<{ project: ProjectMeta }> {
+  return sendJson('/api/projects/' + encodeURIComponent(id), 'PUT', input, 20000);
+}
+
+export async function renameProject(id: string, name: string): Promise<{ project: ProjectMeta }> {
+  return sendJson('/api/projects/' + encodeURIComponent(id), 'PATCH', { name });
+}
+
+export async function deleteProject(id: string): Promise<{ ok: boolean; activeId: string | null }> {
+  return sendJson('/api/projects/' + encodeURIComponent(id), 'DELETE');
+}
+
+export async function openProject(
+  id: string,
+  options: { expectedActiveId?: string | null; saveCurrent?: boolean; force?: boolean } = {},
+): Promise<{ project: ProjectMeta; activeId: string | null; data: SchoolData }> {
+  const result = await sendJson<{ project: ProjectMeta; activeId: string | null; data: SchoolData }>(
+    '/api/projects/' + encodeURIComponent(id) + '/open',
+    'POST',
+    {
+      expectedActiveId: options.expectedActiveId ?? undefined,
+      saveCurrent: options.saveCurrent !== false,
+      force: options.force === true,
+    },
+    30000,
+  );
+  return { ...result, data: withFixedClassRooms(result.data) };
+}
+
+export async function importProject(
+  doc: WorkspaceDocument,
+  name?: string,
+): Promise<{ project: ProjectMeta; activeId: string | null }> {
+  return sendJson('/api/projects/import', 'POST', { doc, name }, 30000);
+}

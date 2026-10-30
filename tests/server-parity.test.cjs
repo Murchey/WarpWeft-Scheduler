@@ -76,6 +76,15 @@ test('desktop and Linux entry points expose the same server capabilities', async
     assert.deepEqual(linuxData.school, desktopData.school);
     assert.deepEqual(linuxData.classes, desktopData.classes);
     assert.deepEqual(linuxData.coursePlans, desktopData.coursePlans);
+
+    // 多工程接口必须双端等价：新建的 projects 模块只存在于共用的 server/api，
+    // 这里断言两个入口都挂载了同一组路由。
+    const desktopProjects = await (await fetch('http://127.0.0.1:' + desktopPort + '/api/projects')).json();
+    const linuxProjects = await (await fetch('http://127.0.0.1:' + linuxPort + '/api/projects')).json();
+    assert.deepEqual(linuxProjects, desktopProjects);
+    assert.equal(desktopProjects.activeId, null);
+    assert.deepEqual(desktopProjects.projects, []);
+    assert.equal(desktopProjects.limit, 30);
   } finally {
     await close(desktop);
     await close(linux);
