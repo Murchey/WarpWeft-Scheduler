@@ -1963,3 +1963,14 @@ html[data-theme='dark'] tbody tr:hover{background:#222628}
 .hero-readout small{grid-column:1/-1;margin:0;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .workspace-timetable .tt-cell.is-drop{background:repeating-linear-gradient(135deg,transparent 0 8px,color-mix(in srgb,var(--signal) 8%,transparent) 8px 9px)}
 @media(max-width:680px){.hero-panel{height:auto;min-height:64px;padding:12px;align-items:flex-start}.hero-copy{flex-wrap:wrap}.hero-readout{min-width:0;width:100%;grid-template-columns:auto minmax(80px,1fr)}.hero-readout small{white-space:normal}.hero-copy h2{font-size:18px}}
+
+/* ── 语言与字体：中文交给雅黑，英文交给 Saira + Segoe UI 并收紧字距 ──
+   使用 html[lang] 属性选择器，优先级高于 :root，无需改动上方既有变量定义。 */
+html[lang='zh-CN']{--font-ui:Saira,'Arial Narrow','Microsoft YaHei',sans-serif;--font-text:'Segoe UI','Microsoft YaHei',sans-serif}
+html[lang='en-US']{--font-ui:Saira,'Segoe UI',system-ui,sans-serif;--font-text:'Segoe UI',system-ui,-apple-system,sans-serif}
+html[lang='en-US'] .brand-name,html[lang='en-US'] .nav-item,html[lang='en-US'] .kicker,html[lang='en-US'] .metric-code{letter-spacing:.08em}
+html[lang='en-US'] h1{letter-spacing:-.035em}
+html[lang='en-US'] .hero-copy h2{letter-spacing:-.05em}
+html[lang='en-US'] .nav-item{grid-template-columns:repeat(2,minmax(0,1fr));padding:11px 8px}
+html[lang='en-US'] .nav-item span:last-child{font-size:12.5px;line-height:1.25}
+html[lang='en-US'] .status-tag,html[lang='en-US'] .mini-tag{letter-spacing:.04em}

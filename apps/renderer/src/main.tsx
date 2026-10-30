@@ -6,6 +6,7 @@ import { consecutiveOf, fixedSlotIdsOf } from '../../../packages/contracts/src';
 import { exportCsv, exportWorkbook, readWorkbook } from '../../../packages/import-export/src';
 import { ApiError, cancelServerJob, clearAuthToken, createUser, DEFAULT_API_BASE, deleteServerClient, deleteUser, fetchHealth, fetchHealthAt, fetchMe, fetchServerOverview, fetchUsers, getApiBase, getAuthToken, loadData, login, logout, registerUnauthorizedHandler, saveData, setAuthToken, solveSchedule, updateServerConfig, updateUser } from './api';
 import { DAYS, SectionHeading } from './components';
+import { I18nProvider, useI18n, useFormatters } from './i18n';
 import { PreparePage } from './PreparePage';
 import type { PrepareSection } from './PreparePage';
 import { download, downloadFiles, exportMessage } from './download';
@@ -3932,7 +3933,13 @@ function TimetablePage({
   );
 }
 
-createRoot(document.getElementById('root')!).render(<HeroUIProvider><App /></HeroUIProvider>);
+createRoot(document.getElementById('root')!).render(
+  <HeroUIProvider>
+    <I18nProvider>
+      <App />
+    </I18nProvider>
+  </HeroUIProvider>,
+);
 
 
 
