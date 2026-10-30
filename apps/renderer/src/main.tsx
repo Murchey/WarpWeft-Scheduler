@@ -12,6 +12,8 @@ import { createProject as createProjectApi, deleteProject as deleteProjectApi, f
 import type { ProjectMeta } from './api';
 import { ProjectLauncher } from './ProjectLauncher';
 import { TitleBar } from './TitleBar';
+import { SettingsPage } from './SettingsPage';
+import { WorkspaceLocationCard } from './WorkspaceLocationCard';
 import { createEmptyWorkspace } from './newWorkspace';
 import { currentLang, fmtDateTime } from './i18n/format';
 import { PreparePage } from './PreparePage';
@@ -2261,10 +2263,12 @@ function App() {
           <div>
             <h1>{t(TAB_LABEL_KEY[tab])}</h1>
           </div>
-          <div className="top-actions">
-            {running ? <span className="run-phase-pill">{progress.message}</span> : null}
-            {saveLabel ? <span className={'save-state ' + saveState}>{saveLabel}</span> : null}
-          </div>
+          {running || saveLabel ? (
+            <div className="top-actions">
+              {running ? <span className="run-phase-pill">{progress.message}</span> : null}
+              {saveLabel ? <span className={'save-state ' + saveState}>{saveLabel}</span> : null}
+            </div>
+          ) : null}
         </header>
         {apiOnline === false ? (
           <Banner tone="warning" title="服务端未连接">
@@ -2419,10 +2423,31 @@ function App() {
             onThemeChange={setTheme}
             onEditMode={() => setModeSettingsOpen(true)}
             apiOnline={apiOnline}
+            serverSchema={serverSchema}
+            authUser={authUser}
+            onLogout={() => void handleLogout()}
             data={data}
             commit={commit}
             toastLogs={toastLogs}
             onClearToastLogs={clearToastLogs}
+            projects={projects}
+            activeProject={activeProject}
+            projectsSupported={projectsSupported}
+            onOpenLauncher={() => setLauncherOpen(true)}
+            onSaveProject={() => void saveActiveProject()}
+            onSaveProjectAs={() => {
+              const name = window.prompt(t('project.action.saveAs'), data.school?.name || t('project.untitled'));
+              if (name && name.trim()) void saveProjectAs(name.trim());
+            }}
+            onExportProject={() => void exportActiveProject()}
+            onImportProject={(file) => void importProjectFile(file)}
+            onRenameActiveProject={(name) => {
+              if (activeProjectId) void renameProjectById(activeProjectId, name);
+            }}
+            launcherAlways={launcherAlways}
+            onToggleLauncherAlways={toggleLauncherAlways}
+            onOpenServerPage={() => setTab('服务端')}
+            isLanServer={runMode === 'lan-server'}
           />
         ) : null}
       </main>
@@ -2450,65 +2475,6 @@ function App() {
       ) : null}
       {modeDialog}
     </div>
-  );
-}
-
-function WorkspaceLocationCard() {
-  const bridge = useMemo(() => (window as unknown as {
-    warpweft?: {
-      getWorkspace?: () => Promise<{ path?: string; customizable?: boolean }>;
-      chooseWorkspace?: () => Promise<{ status?: string; path?: string; error?: string; canceled?: boolean; restartRequired?: boolean }>;
-    };
-  }).warpweft, []);
-  const [path, setPath] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
-
-  useEffect(() => {
-    if (!bridge?.getWorkspace) {
-      setMessage('浏览器模式：工作区由服务端数据目录管理，桌面版可在此选择存放位置。');
-      return;
-    }
-    void bridge.getWorkspace().then((info) => {
-      if (info?.path) setPath(info.path);
-    }).catch((cause) => setMessage(cause instanceof Error ? cause.message : String(cause)));
-  }, [bridge]);
-
-  const choose = async () => {
-    if (!bridge?.chooseWorkspace || busy) return;
-    setBusy(true);
-    setMessage('');
-    try {
-      const result = await bridge.chooseWorkspace();
-      if (result.canceled) return;
-      if (result.status === 'failed') {
-        setMessage(result.error || '切换工作区失败');
-        return;
-      }
-      if (result.path) setPath(result.path);
-      setMessage(result.restartRequired ? '工作区位置已保存，重启应用后生效。' : '工作区位置已更新。');
-    } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <section className="section-panel workspace-location-card">
-      <div className="panel-head">
-        <SectionHeading english="WORKSPACE STORAGE" title="工作区位置" />
-        <button type="button" className="ghost-button" onClick={() => void choose()} disabled={busy || !bridge?.chooseWorkspace}>
-          {busy ? '正在选择…' : '选择文件夹'}
-        </button>
-      </div>
-      <p className="panel-note">数据库、长时任务检查点和缓存文件会保存在这个文件夹；切换后重启应用生效。</p>
-      <div className="workspace-location-path">
-        <span>当前路径</span>
-        <code>{path || '读取中…'}</code>
-      </div>
-      {message ? <p className="panel-note">{message}</p> : null}
-    </section>
   );
 }
 
@@ -3354,101 +3320,6 @@ function ServerPage({
           </section>
         </>
       )}
-    </div>
-  );
-}
-
-function SettingsPage({
-  runMode,
-  theme,
-  onThemeChange,
-  onEditMode,
-  apiOnline,
-  data,
-  commit,
-  toastLogs,
-  onClearToastLogs,
-}: {
-  runMode: RunMode | null;
-  theme: 'light' | 'dark';
-  onThemeChange: (theme: 'light' | 'dark') => void;
-  onEditMode: () => void;
-  apiOnline: boolean | null;
-  data: SchoolData;
-  commit: Commit;
-  toastLogs: ToastLogEntry[];
-  onClearToastLogs: () => void;
-}) {
-  const mode = RUN_MODE_OPTIONS.find((item) => item.value === runMode);
-  const endpoint = readActiveEndpoint(window.localStorage) || getApiBase();
-  const toneLabels: Record<ToastTone, string> = {
-    error: '错误',
-    success: '完成',
-    warning: '提醒',
-    info: '提示',
-  };
-  const reasonLabels = {
-    timeout: '30 秒后自动消失',
-    closed: '手动关闭',
-    replaced: '被新提示替换',
-  };
-  return (
-    <div className="settings-layout">
-      <Card className="business-card settings-card"><CardBody>
-        <SectionHeading english="RUNTIME" title="运行模式" />
-        <p className="panel-note">决定数据和排课服务连接到哪里。修改后会重新连接工作区。</p>
-        <div className="settings-value"><span>当前模式</span><strong>{mode?.title ?? '未选择'}</strong></div>
-        <div className="settings-value"><span>服务地址</span><strong className="settings-endpoint">{endpoint}</strong></div>
-        <Button color="primary" onPress={onEditMode}>修改运行模式</Button>
-      </CardBody></Card>
-
-      <Card className="business-card settings-card"><CardBody>
-        <SectionHeading english="APPEARANCE" title="外观" />
-        <p className="panel-note">调整工作台的显示主题。</p>
-        <Tabs selectedKey={theme} onSelectionChange={(key) => onThemeChange(String(key) as 'light' | 'dark')} aria-label="主题">
-          <Tab key="light" title="浅色" />
-          <Tab key="dark" title="深色" />
-        </Tabs>
-        <div className="settings-value"><span>深色背景</span><strong>#1C1C1C</strong></div>
-      </CardBody></Card>
-
-      <Card className="business-card settings-card settings-card-wide"><CardBody>
-        <SectionHeading english="WORKSPACE" title="当前工作区" />
-        <label className="settings-value"><span>学校名称</span><input className="settings-input" value={data.school.name} onChange={(event) => commit({ ...data, school: { ...data.school, name: event.target.value } })} /></label>
-        <label className="settings-value"><span>教室模式</span><select className="settings-input" value={data.roomMode ?? 'simplified'} onChange={(event) => commit({ ...data, roomMode: event.target.value as 'simplified' | 'full' }, { invalidate: true })}><option value="simplified">简化模式（每班一间固定教室，不需要教室表）</option><option value="full">完整模式（按教室容量/类型/冲突排课）</option></select></label>
-        <div className="settings-stats">
-          <span>班级 <b>{data.classes.length}</b></span>
-          <span>教师 <b>{data.teachers.length}</b></span>
-          <span>教学计划 <b>{data.coursePlans.length}</b></span>
-          <span>服务状态 <Chip size="sm" color={apiOnline ? 'success' : 'warning'}>{apiOnline ? '在线' : apiOnline === false ? '离线' : '检测中'}</Chip></span>
-        </div>
-        <p className="panel-note">工作区数据由当前服务端管理。设置页不会自动填充演示数据。</p>
-      </CardBody></Card>
-
-      <Card className="business-card settings-card settings-card-wide settings-log-card"><CardBody>
-        <div className="settings-card-head">
-          <SectionHeading english="ACTIVITY LOG" title="日志" />
-          <button type="button" className="tt-btn tt-btn-quiet" onClick={onClearToastLogs} disabled={toastLogs.length === 0}>清空日志</button>
-        </div>
-        <p className="panel-note">顶部 toast 会在 30 秒后自动消失；消失、手动关闭或被替换的记录保留在这里，最多 100 条。</p>
-        {toastLogs.length === 0 ? (
-          <div className="settings-log-empty">暂无日志。操作提示、排课结果和冲突原因会出现在这里。</div>
-        ) : (
-          <div className="settings-log-list">
-            {toastLogs.map((entry) => (
-              <article className={'settings-log-item is-' + entry.tone} key={entry.id}>
-                <div className="settings-log-meta">
-                  <span className={'settings-log-tone is-' + entry.tone}>{toneLabels[entry.tone]}</span>
-                  <time>{fmtDateTime(entry.at, undefined, { hour12: false })}</time>
-                  <em>{reasonLabels[entry.reason]}</em>
-                </div>
-                <strong>{entry.title}</strong>
-                <p>{entry.message}</p>
-              </article>
-            ))}
-          </div>
-        )}
-      </CardBody></Card>
     </div>
   );
 }

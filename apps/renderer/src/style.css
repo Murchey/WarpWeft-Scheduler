@@ -221,7 +221,6 @@ html { scrollbar-color: var(--rule) var(--paper); scrollbar-width: thin; }
 *::-webkit-scrollbar-track { background: var(--paper); }
 *::-webkit-scrollbar-thumb { background: var(--rule); border: 2px solid var(--paper); border-radius: 8px; }
 *::-webkit-scrollbar-thumb:hover { background: var(--signal); }
-html[data-theme='dark'] body { background: #1C1C1C; }
 html[data-theme='dark'] .command-rail { background: #111111; }
 html[data-theme='dark'] .mode-overlay { background: rgba(0,0,0,.76); }
 html[data-theme='dark'] .data-table tbody tr:hover { background: #303030; }
@@ -2048,3 +2047,70 @@ html[lang='en-US'] .status-tag,html[lang='en-US'] .mini-tag{letter-spacing:.04em
 @media(max-width:1200px){.titlebar-project-actions button:nth-child(n+3){display:none}}
 @media(max-width:980px){.titlebar-status{display:none}}
 @media print{.titlebar{display:none}.app-shell{padding-top:0}.command-rail{top:4px}}
+
+/* ── 设置页：左侧分类导航 + 右侧内容面板 ──────────────────── */
+.settings-shell{display:grid;grid-template-columns:216px minmax(0,1fr);gap:26px;align-items:start;max-width:1180px}
+.settings-nav{position:sticky;top:calc(var(--titlebar-h) + 18px);display:grid;gap:2px;border-top:4px solid var(--ink);padding-top:12px}
+.settings-nav-head h2{font-size:20px;margin:0 0 6px;letter-spacing:-.02em}
+.settings-nav-head .panel-note{margin:0 0 12px;font-size:11px;line-height:1.6}
+.settings-nav-item{display:grid;grid-template-columns:24px minmax(0,1fr);gap:8px;align-items:center;
+  border:0;border-bottom:1px solid var(--rule);background:transparent;color:var(--ink);
+  padding:11px 8px;text-align:left;cursor:pointer;font:13px var(--font-text)}
+.settings-nav-item:hover{background:var(--chip)}
+.settings-nav-item.active{background:var(--signal);color:var(--on-signal)}
+.settings-nav-no{font:600 11px var(--font-ui);color:var(--muted);letter-spacing:.1em}
+.settings-nav-item.active .settings-nav-no{color:var(--on-signal)}
+.settings-pane{display:grid;gap:18px;min-width:0}
+.settings-block{border-top:4px solid var(--ink);background:var(--panel);padding:22px 24px}
+.settings-block h3{font-size:16px;margin:0 0 12px;letter-spacing:-.01em}
+.settings-row{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:12px 0;border-bottom:1px solid var(--rule)}
+.settings-row:last-child{border-bottom:0;padding-bottom:0}
+.settings-row-label{display:grid;gap:3px;min-width:0;flex:1 1 auto}
+.settings-row-label b{font-size:13px;font-weight:600}
+.settings-row-label small{font-size:11px;color:var(--muted);line-height:1.6}
+.settings-row-control{flex:0 1 auto;display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0}
+.settings-row-control .settings-input{min-width:220px;max-width:320px}
+.settings-inline-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:flex-end}
+.settings-checkbox{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap}
+.settings-checkbox input{margin:0}
+.settings-swatch{display:inline-flex;gap:6px}
+.settings-swatch i{display:block;width:20px;height:20px;border:1px solid var(--rule)}
+.settings-endpoint{font:12px ui-monospace,monospace;color:var(--muted);word-break:break-all}
+.file-button-compact{padding:6px 10px;font-size:12px}
+
+/* 分段选择器：替代 HeroUI Tabs，避免暗色下取到浅色 token */
+.settings-segment{display:inline-flex;border:1px solid var(--ink)}
+.settings-segment button{border:0;border-right:1px solid var(--ink);background:transparent;color:var(--ink);
+  padding:7px 14px;font:12px var(--font-text);cursor:pointer;white-space:nowrap}
+.settings-segment button:last-child{border-right:0}
+.settings-segment button:hover{background:var(--chip)}
+.settings-segment button.is-active{background:var(--ink);color:var(--panel)}
+.settings-chip{display:inline-block;padding:4px 9px;font:11px var(--font-ui);letter-spacing:.06em;
+  background:var(--chip);color:var(--ink);white-space:nowrap}
+.settings-chip.is-ok{background:var(--signal);color:var(--on-signal)}
+.settings-chip.is-warn{background:var(--danger);color:#fff}
+
+/* 紧凑 hero 读数改为单行 flex：原 grid 版 4 个子元素在 64px 高度内会溢出约 4px */
+.hero-readout{display:flex;align-items:center;align-self:center;gap:10px;width:auto;min-width:0;max-width:56%;margin:0}
+.hero-readout>span{white-space:nowrap;font-size:9px;letter-spacing:.1em}
+.hero-readout strong{font-size:18px;line-height:1;margin:0;white-space:nowrap;grid-column:auto;grid-row:auto}
+.hero-readout .readout-track{flex:1 1 120px;min-width:56px;height:4px;grid-column:auto;grid-row:auto}
+.hero-readout small{margin:0;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;grid-column:auto}
+
+/* 设置页里的数据规模：由四格改为可换行的紧凑标签，避免右侧列宽挤压 */
+.settings-row-control .settings-stats{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
+.settings-row-control .settings-stats span{display:flex;align-items:baseline;gap:6px;padding:6px 10px;
+  background:var(--chip);color:var(--muted);font:11px var(--font-text);white-space:nowrap}
+.settings-row-control .settings-stats b{color:var(--ink);font:600 13px var(--font-ui)}
+@media(max-width:1080px){
+  .settings-shell{grid-template-columns:1fr;gap:18px}
+  .settings-nav{position:static;grid-template-columns:repeat(3,minmax(0,1fr));border-top:0;border-bottom:1px solid var(--rule);padding:0 0 8px}
+  .settings-nav-head{grid-column:1 / -1}
+  .settings-nav-item{border-bottom:0;border-right:1px solid var(--rule)}
+}
+@media(max-width:720px){
+  .settings-row{flex-direction:column;align-items:stretch;gap:8px}
+  .settings-row-control{justify-content:flex-start}
+  .settings-row-control .settings-input{min-width:0;width:100%;max-width:none}
+  .settings-inline-actions{justify-content:flex-start}
+}

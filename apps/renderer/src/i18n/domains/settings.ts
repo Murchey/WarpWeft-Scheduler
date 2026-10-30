@@ -14,6 +14,8 @@ export const settingsMessages = {
   'settings.general.languageHint': '切换后立即生效，并记住你的选择。',
   'settings.general.launcher': '启动时显示工程选择界面',
   'settings.general.launcherHint': '关闭后打开应用直接进入上次使用的工程。',
+  'settings.general.launcherOn': '启动时先选择工程',
+  'settings.general.launcherOff': '直接进入上次工程',
   'settings.general.workspacePath': '工作区目录',
   'settings.general.workspacePathHint': '由当前运行模式的服务端管理，桌面端可在启动时更换。',
 
@@ -39,6 +41,8 @@ export const settingsMessages = {
   'settings.project.roomSimplified': '简化模式（每班一间固定教室，不需要教室表）',
   'settings.project.roomFull': '完整模式（按教室容量/类型/冲突排课）',
   'settings.project.stats': '数据规模',
+  'settings.project.countProjects': '工程数',
+  'settings.project.namePlaceholder': '未命名工程',
   'settings.project.noActive': '尚未选择工程',
 
   'settings.server.title': '服务端',
