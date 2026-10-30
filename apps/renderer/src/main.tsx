@@ -11,6 +11,7 @@ import type { MessageKey } from './i18n';
 import { createProject as createProjectApi, deleteProject as deleteProjectApi, fetchProjects, importProject as importProjectApi, openProject as openProjectApi, renameProject as renameProjectApi, saveProjectData } from './api';
 import type { ProjectMeta } from './api';
 import { ProjectLauncher } from './ProjectLauncher';
+import { TitleBar } from './TitleBar';
 import { createEmptyWorkspace } from './newWorkspace';
 import { currentLang, fmtDateTime } from './i18n/format';
 import { PreparePage } from './PreparePage';
@@ -812,6 +813,8 @@ function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem('warpweft-theme', theme);
+    // 无边框窗口的背景色由主进程绘制，需同步，否则切换主题时边缘残留旧底色
+    void window.warpweft?.setTheme?.(theme);
   }, [theme]);
 
   // The preview toolbar is a working context, so remember it across tabs and
@@ -2198,6 +2201,27 @@ function App() {
 
   return (
     <div className="app-shell">
+      <TitleBar
+        projectName={activeProject?.name || ''}
+        projectsEnabled={projectsSupported}
+        saveState={saveState}
+        online={apiOnline}
+        modeLabel={runMode ? t(RUN_MODE_LABEL_KEYS[runMode].title) : ''}
+        theme={theme}
+        authUser={authUser}
+        onSwitchProject={() => setLauncherOpen(true)}
+        onSaveProject={() => void saveActiveProject()}
+        onSaveProjectAs={() => {
+          const name = window.prompt(t('project.action.saveAs'), data.school?.name || t('project.untitled'));
+          if (name && name.trim()) void saveProjectAs(name.trim());
+        }}
+        onExportProject={() => void exportActiveProject()}
+        onImportProject={(file) => void importProjectFile(file)}
+        onToggleTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+        onOpenSettings={() => setTab('设置')}
+        onOpenMode={() => setModeSettingsOpen(true)}
+        onLogout={() => void handleLogout()}
+      />
       <div className="signal-bar">
         <i />
         <i />
@@ -2238,46 +2262,8 @@ function App() {
             <h1>{t(TAB_LABEL_KEY[tab])}</h1>
           </div>
           <div className="top-actions">
-            <span className={apiOnline === false ? 'node-status offline' : 'node-status'}>
-              <i />
-              {apiOnline === null ? t('common.connecting') : apiOnline ? t('common.online') : t('common.offline')}
-            </span>
             {running ? <span className="run-phase-pill">{progress.message}</span> : null}
             {saveLabel ? <span className={'save-state ' + saveState}>{saveLabel}</span> : null}
-            {projectsSupported ? (
-              <>
-                <button className="mode-pill project-pill" onClick={() => setLauncherOpen(true)} title={t('project.action.switch')}>
-                  {activeProject?.name || t('settings.project.noActive')}
-                </button>
-                <button className="ghost-button" onClick={() => void saveActiveProject()}>{t('project.action.save')}</button>
-                <button className="ghost-button" onClick={() => void exportActiveProject()}>{t('project.action.export')}</button>
-              </>
-            ) : null}
-            <button className="mode-pill" onClick={() => setModeSettingsOpen(true)} title={t('shell.changeRunMode')}>
-              {t('shell.runMode', { mode: runMode ? t(RUN_MODE_LABEL_KEYS[runMode].title) : '' })}
-            </button>
-            {authUser ? (
-              <button className="ghost-button auth-user" onClick={() => void handleLogout()} title={t('settings.server.signOut')}>
-                {t('common.logout', { name: authUser.username })}
-              </button>
-            ) : null}
-            <button
-              className="theme-toggle"
-              onClick={toggleLang}
-              aria-label={t('common.switchLanguage')}
-              title={t('common.switchLanguage')}
-            >
-              <span>{lang === 'zh-CN' ? 'EN' : '中'}</span>
-              {lang === 'zh-CN' ? 'EN' : '中文'}
-            </button>
-            <button
-              className="theme-toggle"
-              onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-              aria-label={theme === 'light' ? t('common.switchToDark') : t('common.switchToLight')}
-            >
-              <span>{theme === 'light' ? '☾' : '☀'}</span>
-              {theme === 'light' ? t('common.dark') : t('common.light')}
-            </button>
           </div>
         </header>
         {apiOnline === false ? (

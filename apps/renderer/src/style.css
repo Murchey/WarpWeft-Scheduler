@@ -2009,3 +2009,42 @@ html[lang='en-US'] .status-tag,html[lang='en-US'] .mini-tag{letter-spacing:.04em
   .launcher-row{flex-direction:column;align-items:flex-start}
   .launcher-actions{flex-direction:column;align-items:stretch}
 }
+
+/* ── 自绘标题栏（仅桌面端有窗口按钮，浏览器端自动降级）────────── */
+:root{--titlebar-h:40px}
+.titlebar{position:fixed;top:0;left:0;right:0;z-index:200;height:var(--titlebar-h);display:flex;align-items:center;gap:8px;
+  padding:0 4px 0 10px;background:var(--panel);color:var(--ink);border-bottom:1px solid var(--rule);
+  -webkit-app-region:drag;user-select:none}
+.titlebar button,.titlebar input,.titlebar-project-actions,.titlebar-tools,.titlebar-window,.titlebar-status-btn{-webkit-app-region:no-drag}
+.titlebar-brand{display:flex;align-items:center;gap:7px;font:800 11px var(--font-ui);letter-spacing:.14em;flex:0 0 auto}
+.titlebar-brand img{display:block;width:16px;height:16px}
+.titlebar-project{display:flex;align-items:center;gap:2px;min-width:0;padding-left:10px;border-left:1px solid var(--rule)}
+.titlebar-project-name{display:flex;align-items:center;gap:8px;max-width:220px;border:0;background:transparent;color:var(--ink);
+  padding:5px 8px;font:13px var(--font-text);cursor:pointer}
+.titlebar-project-name span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.titlebar-project-name em{font:10px var(--font-ui);font-style:normal;color:var(--muted);letter-spacing:.06em}
+.titlebar-project-name:hover{background:var(--chip)}
+.titlebar-project-actions{display:flex}
+.titlebar-project-actions button{border:0;background:transparent;color:var(--muted);font:12px var(--font-text);padding:5px 7px;cursor:pointer}
+.titlebar-project-actions button:hover{background:var(--chip);color:var(--ink)}
+.titlebar-spacer{flex:1 1 auto;min-width:12px;align-self:stretch}
+.titlebar-status{flex:0 0 auto}
+.titlebar-status-btn{border:0;background:transparent;padding:4px 8px;cursor:pointer;color:var(--ink)}
+.titlebar-status-btn:hover{background:var(--chip)}
+.titlebar-tools{display:flex;gap:2px;flex:0 0 auto}
+.titlebar-tools button{border:0;background:transparent;color:var(--ink);font:11px var(--font-ui);letter-spacing:.06em;
+  padding:5px 8px;min-width:28px;cursor:pointer}
+.titlebar-tools button:hover{background:var(--chip)}
+.titlebar-window{display:flex;margin-left:4px;flex:0 0 auto}
+.titlebar-window button{display:grid;place-items:center;width:42px;height:var(--titlebar-h);border:0;background:transparent;
+  color:var(--ink);font:14px var(--font-ui);cursor:pointer}
+.titlebar-window button:hover{background:var(--chip)}
+.titlebar-window .is-close:hover{background:var(--danger);color:#fff}
+
+/* 把既有固定定位与最小高度算上标题栏，保持文档级单滚动条 */
+.app-shell{padding-top:var(--titlebar-h)}
+.command-rail{top:calc(4px + var(--titlebar-h))}
+.workspace{min-height:calc(100vh - var(--titlebar-h) - 4px)}
+@media(max-width:1200px){.titlebar-project-actions button:nth-child(n+3){display:none}}
+@media(max-width:980px){.titlebar-status{display:none}}
+@media print{.titlebar{display:none}.app-shell{padding-top:0}.command-rail{top:4px}}
