@@ -177,6 +177,8 @@ export const enUS = {
   'project.staleHint': 'The workspace has changes not yet written back to the project file.',
   'project.empty': 'No projects yet. Create one to start scheduling.',
   'project.savedAs': 'Saved project: {name}',
+  'project.opened': 'Opened project: {name}',
+  'project.conflictRetry': 'Switch anyway?',
   'project.imported': 'Imported project: {name}',
   'project.exported': 'Project file exported: {name}',
   'launcher.title': 'Choose a project',

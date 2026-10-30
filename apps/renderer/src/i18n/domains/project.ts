@@ -17,6 +17,8 @@ export const projectMessages = {
   'project.staleHint': '当前工作区有改动尚未写回工程文件。',
   'project.empty': '还没有任何工程。新建一个开始排课。',
   'project.savedAs': '已保存工程：{name}',
+  'project.opened': '已打开工程：{name}',
+  'project.conflictRetry': '仍要切换吗？',
   'project.imported': '已导入工程：{name}',
   'project.exported': '工程文件已导出：{name}',
 

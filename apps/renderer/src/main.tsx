@@ -8,6 +8,10 @@ import { ApiError, cancelServerJob, clearAuthToken, createUser, DEFAULT_API_BASE
 import { DAYS, SectionHeading } from './components';
 import { I18nProvider, useI18n, useFormatters } from './i18n';
 import type { MessageKey } from './i18n';
+import { createProject as createProjectApi, deleteProject as deleteProjectApi, fetchProjects, importProject as importProjectApi, openProject as openProjectApi, renameProject as renameProjectApi, saveProjectData } from './api';
+import type { ProjectMeta } from './api';
+import { ProjectLauncher } from './ProjectLauncher';
+import { createEmptyWorkspace } from './newWorkspace';
 import { currentLang, fmtDateTime } from './i18n/format';
 import { PreparePage } from './PreparePage';
 import type { PrepareSection } from './PreparePage';
@@ -39,7 +43,7 @@ import { RUN_MODE_LABEL_KEYS, RUN_MODE_OPTIONS } from './runConfig';
 import { CLOUD_ENDPOINT_PLACEHOLDER, cleanEndpoint, endpointForMode, initialEndpointForMode, RUNTIME_MODE_KEY, readActiveEndpoint, readEndpointMemory, rememberEndpoint, writeActiveEndpoint, writeEndpointMemory } from './runtimeEndpoint';
 import type { EndpointMemory } from './runtimeEndpoint';
 import type { RunProgress, ShortRunRecord } from './runConfig';
-import { serializeWorkspace, workspaceFileName } from './workspaceProject';
+import { parseWorkspace, serializeWorkspace, workspaceFileName } from './workspaceProject';
 import { EmptyState, RunProgressView } from './runViews';
 import { findClass, findRoom, findSubject, findTeacher, missingPlans, planOf, planSubjectName } from './selectors';
 import { RunsPage } from './RunsPage';
@@ -93,6 +97,18 @@ const TAB_LABEL_KEY: Record<Tab, MessageKey> = {
 };
 type SaveState = 'idle' | 'saving' | 'saved' | 'offline' | 'error';
 type View = PreviewView;
+
+/** 启动行为：auto = 直接进入上次工程；always = 每次先显示工程选择界面。 */
+const LAUNCHER_MODE_KEY = 'warpweft-launcher-mode';
+const ACTIVE_PROJECT_KEY = 'warpweft-active-project';
+
+function readLauncherAlways(): boolean {
+  try {
+    return window.localStorage.getItem(LAUNCHER_MODE_KEY) === 'always';
+  } catch {
+    return false;
+  }
+}
 
 
 
@@ -1037,6 +1053,218 @@ function App() {
     }
   };
 
+  // ── 工程（项目）──────────────────────────────────────────────
+  // 服务端把每个工程存成独立快照，切换 = 把快照写进活动工作区；
+  // 因此前端只需要在切换成功后整体替换 data，无需感知存储细节。
+  const [projects, setProjects] = useState<ProjectMeta[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [projectsSupported, setProjectsSupported] = useState(true);
+  const [launcherOpen, setLauncherOpen] = useState(false);
+  const [launcherBusy, setLauncherBusy] = useState(false);
+  const [launcherError, setLauncherError] = useState('');
+  const [launcherAlways, setLauncherAlways] = useState<boolean>(readLauncherAlways);
+  const projectsLoaded = useRef(false);
+  const activeProject = projects.find((item) => item.id === activeProjectId) || null;
+
+  const refreshProjects = useCallback(async () => {
+    try {
+      const list = await fetchProjects();
+      setProjects(list.projects);
+      setActiveProjectId(list.activeId);
+      if (list.activeId) window.localStorage.setItem(ACTIVE_PROJECT_KEY, list.activeId);
+      else window.localStorage.removeItem(ACTIVE_PROJECT_KEY);
+      setProjectsSupported(true);
+      return list;
+    } catch (cause) {
+      // 旧版服务端没有工程接口：静默降级，工具栏会提示不可用，而不是刷错误
+      if (cause instanceof ApiError && (cause.status === 404 || cause.code === 'PROJECT_ROUTE_NOT_FOUND')) {
+        setProjectsSupported(false);
+        return null;
+      }
+      throw cause;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (projectsLoaded.current || !data || apiOnline !== true) return;
+    projectsLoaded.current = true;
+    void (async () => {
+      try {
+        const list = await refreshProjects();
+        if (list && readLauncherAlways() && list.projects.length > 0) setLauncherOpen(true);
+      } catch (cause) {
+        setLauncherError(messageOf(cause));
+      }
+    })();
+  }, [data, apiOnline, refreshProjects]);
+
+  const applyOpenedProject = (next: { project: ProjectMeta; activeId: string | null; data: SchoolData }) => {
+    window.localStorage.setItem(ACTIVE_PROJECT_KEY, next.project.id);
+    setActiveProjectId(next.activeId ?? next.project.id);
+    setData(next.data);
+    setResult(next.data.candidate ?? next.data.published ?? null);
+    setSelectedClassId(next.data.classes[0]?.id ?? '');
+    setSelectedEntryId('');
+    setHistory([]);
+    pending.current = next.data;
+    setSaveState('saved');
+    setLauncherOpen(false);
+    setLauncherError('');
+    setNotice(t('project.opened', { name: next.project.name }));
+  };
+
+  /** 切换/新建之前先把当前工程写回，避免覆盖未保存的修改。 */
+  const persistActiveProject = useCallback(async () => {
+    if (!activeProjectId || !data) return;
+    try {
+      await saveProjectData(activeProjectId, { data });
+    } catch {
+      // 尽力而为：失败不阻塞切换，服务端 open 仍会做一次保存尝试
+    }
+  }, [activeProjectId, data]);
+
+  const openProjectById = async (id: string, force = false) => {
+    setLauncherBusy(true);
+    setLauncherError('');
+    try {
+      const result = await openProjectApi(id, { expectedActiveId: activeProjectId, force });
+      applyOpenedProject(result);
+      await refreshProjects();
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.code === 'PROJECT_CONFLICT' && !force) {
+        if (window.confirm(cause.message + '\n\n' + t('project.conflictRetry'))) {
+          await openProjectById(id, true);
+          return;
+        }
+      }
+      setLauncherError(messageOf(cause));
+    } finally {
+      setLauncherBusy(false);
+    }
+  };
+
+  const createProjectWithName = async (name: string) => {
+    setLauncherBusy(true);
+    setLauncherError('');
+    try {
+      await persistActiveProject();
+      const created = await createProjectApi({ name, data: createEmptyWorkspace(name), open: true });
+      const opened = await openProjectApi(created.project.id, { saveCurrent: false });
+      applyOpenedProject(opened);
+      await refreshProjects();
+    } catch (cause) {
+      setLauncherError(messageOf(cause));
+    } finally {
+      setLauncherBusy(false);
+    }
+  };
+
+  const importProjectFile = async (file: File) => {
+    setLauncherBusy(true);
+    setLauncherError('');
+    try {
+      const parsed = parseWorkspace(await file.text());
+      await persistActiveProject();
+      const created = await importProjectApi(
+        { format: parsed.format, version: parsed.version, name: parsed.name, savedAt: parsed.savedAt, data: parsed.data },
+        parsed.name,
+      );
+      const opened = await openProjectApi(created.project.id, { saveCurrent: false });
+      applyOpenedProject(opened);
+      await refreshProjects();
+    } catch (cause) {
+      setLauncherError(messageOf(cause));
+    } finally {
+      setLauncherBusy(false);
+    }
+  };
+
+  const saveActiveProject = async (): Promise<boolean> => {
+    if (!data || !projectsSupported) return false;
+    if (!activeProjectId) {
+      const name = window.prompt(t('project.action.saveAs'), data.school?.name || t('project.untitled'));
+      if (!name || !name.trim()) return false;
+      return saveProjectAs(name.trim());
+    }
+    try {
+      setSaveState('saving');
+      const result = await saveProjectData(activeProjectId, { data });
+      setSaveState('saved');
+      setNotice(t('project.savedAs', { name: result.project.name }));
+      await refreshProjects();
+      return true;
+    } catch (cause) {
+      setSaveState('error');
+      setError(messageOf(cause));
+      return false;
+    }
+  };
+
+  const saveProjectAs = async (name: string): Promise<boolean> => {
+    if (!data || !projectsSupported) return false;
+    try {
+      const created = await createProjectApi({ name, data, open: true });
+      setActiveProjectId(created.activeId ?? created.project.id);
+      window.localStorage.setItem(ACTIVE_PROJECT_KEY, created.project.id);
+      setNotice(t('project.savedAs', { name: created.project.name }));
+      await refreshProjects();
+      return true;
+    } catch (cause) {
+      setError(messageOf(cause));
+      return false;
+    }
+  };
+
+  const exportActiveProject = async () => {
+    if (!data) return;
+    const name = activeProject?.name || data.school?.name || t('project.untitled');
+    const result = await download(
+      new Blob([serializeWorkspace(data, name)], { type: 'application/json;charset=utf-8' }),
+      'application/json',
+      workspaceFileName(name),
+    );
+    const message = exportMessage(result, t('project.action.export'));
+    if (!message) return;
+    if (message.tone === 'error') setError(message.text);
+    else setNotice(message.text);
+  };
+
+  const deleteProjectById = async (id: string) => {
+    const target = projects.find((item) => item.id === id);
+    if (!window.confirm(t('project.confirmDelete', { name: target?.name ?? id }))) return;
+    setLauncherBusy(true);
+    try {
+      await deleteProjectApi(id);
+      if (activeProjectId === id) {
+        setActiveProjectId(null);
+        window.localStorage.removeItem(ACTIVE_PROJECT_KEY);
+      }
+      await refreshProjects();
+    } catch (cause) {
+      setLauncherError(messageOf(cause));
+    } finally {
+      setLauncherBusy(false);
+    }
+  };
+
+  const renameProjectById = async (id: string, name: string) => {
+    try {
+      await renameProjectApi(id, name);
+      await refreshProjects();
+    } catch (cause) {
+      setLauncherError(messageOf(cause));
+    }
+  };
+
+  const toggleLauncherAlways = (next: boolean) => {
+    setLauncherAlways(next);
+    try {
+      window.localStorage.setItem(LAUNCHER_MODE_KEY, next ? 'always' : 'auto');
+    } catch {
+      // storage disabled: applies to this session only
+    }
+  };
+
   const makeCandidateVersion = (fixed: SolverOutput, source: 'solver' | 'manual') => ({
     id: uid('version'),
     kind: 'candidate' as const,
@@ -1929,6 +2157,32 @@ function App() {
     );
   }
 
+  if (launcherOpen) {
+    return (
+      <ProjectLauncher
+        online={apiOnline}
+        projects={projects}
+        activeId={activeProjectId}
+        lastProjectId={window.localStorage.getItem(ACTIVE_PROJECT_KEY)}
+        busy={launcherBusy}
+        error={launcherError}
+        showOnStartup={launcherAlways}
+        onOpen={(id) => void openProjectById(id)}
+        onCreate={(name) => void createProjectWithName(name)}
+        onImport={(file) => void importProjectFile(file)}
+        onRename={(id, name) => void renameProjectById(id, name)}
+        onDelete={(id) => void deleteProjectById(id)}
+        onRefresh={() => void refreshProjects()}
+        onToggleStartup={toggleLauncherAlways}
+        onSkip={() => setLauncherOpen(false)}
+        onOpenSettings={() => {
+          setLauncherOpen(false);
+          setModeSettingsOpen(true);
+        }}
+      />
+    );
+  }
+
   const issues = preflight(data);
   const visibleTabs = runMode === 'lan-server' ? TABS : TABS.filter((item) => item !== '服务端');
   const saveLabel =
@@ -1990,6 +2244,15 @@ function App() {
             </span>
             {running ? <span className="run-phase-pill">{progress.message}</span> : null}
             {saveLabel ? <span className={'save-state ' + saveState}>{saveLabel}</span> : null}
+            {projectsSupported ? (
+              <>
+                <button className="mode-pill project-pill" onClick={() => setLauncherOpen(true)} title={t('project.action.switch')}>
+                  {activeProject?.name || t('settings.project.noActive')}
+                </button>
+                <button className="ghost-button" onClick={() => void saveActiveProject()}>{t('project.action.save')}</button>
+                <button className="ghost-button" onClick={() => void exportActiveProject()}>{t('project.action.export')}</button>
+              </>
+            ) : null}
             <button className="mode-pill" onClick={() => setModeSettingsOpen(true)} title={t('shell.changeRunMode')}>
               {t('shell.runMode', { mode: runMode ? t(RUN_MODE_LABEL_KEYS[runMode].title) : '' })}
             </button>

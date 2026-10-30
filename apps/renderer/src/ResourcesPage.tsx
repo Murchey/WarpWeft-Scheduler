@@ -15,7 +15,7 @@ import { parseSubjectPreference, suggestedSubjectPreference } from './subjectPre
 import { fixedSlotIdsOf } from '../../../packages/contracts/src';
 import { normalizeSoftConstraints, withSoftWeight } from './softConstraints';
 import { importChanges } from './importReview';
-import { deleteWorkspaceProject, parseWorkspace, readWorkspaceProjects, saveWorkspaceProject, serializeWorkspace, workspaceFileName } from './workspaceProject';
+import { parseWorkspace, serializeWorkspace, workspaceFileName } from './workspaceProject';
 import { fmtDateTime } from './i18n';
 
 type ResourceCollection = 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots';
@@ -129,8 +129,6 @@ function ResourcesPage({
   const [lastAdded, setLastAdded] = useState<{ collection: ResourceCollection; id: string } | null>(null);
   const [classPicker, setClassPicker] = useState<{ id: string; selected: string[] } | null>(null);
   const [templateStage, setTemplateStage] = useState<'idle' | 'generating' | 'saving'>('idle');
-  const [workspaceProjects, setWorkspaceProjects] = useState(() => readWorkspaceProjects());
-  const [workspaceProjectName, setWorkspaceProjectName] = useState(data.school.name || '未命名工作项目');
   const workspaceFileRef = useRef<HTMLInputElement | null>(null);
   const update = (
     collection: 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots',
@@ -1142,7 +1140,7 @@ function ResourcesPage({
     }
   };
 
-  const exportWorkspaceFile = async (name = workspaceProjectName) => {
+  const exportWorkspaceFile = async (name = data.school.name || '未命名工作区') => {
     const result = await download(
       new Blob([serializeWorkspace(data, name)], { type: 'application/json;charset=utf-8' }),
       'application/json',
@@ -1154,19 +1152,11 @@ function ResourcesPage({
     else setNotice(message.text);
   };
 
-  const saveProject = () => {
-    const project = saveWorkspaceProject(workspaceProjectName, data);
-    setWorkspaceProjects(readWorkspaceProjects());
-    setWorkspaceProjectName(project.name);
-    setNotice('工作项目已保存：' + project.name);
-  };
-
   const importWorkspaceFile = async (file: File) => {
     try {
       const parsed = parseWorkspace(await file.text());
       if (!window.confirm('加载工作区「' + parsed.name + '」？当前未保存的修改会被替换。')) return;
       onLoadWorkspace?.(parsed.data);
-      setWorkspaceProjectName(parsed.name);
       setNotice('已加载工作区：' + parsed.name);
     } catch (cause) {
       setError('加载工作区失败：' + messageOf(cause));
@@ -1202,30 +1192,9 @@ function ResourcesPage({
                 </label>
                 <button type="button" className="file-button" onClick={() => void exportWorkspaceFile()}>{'导出当前工作区'}</button>
               </div>
-              <div className="workspace-project-save">
-                <input value={workspaceProjectName} onChange={(event) => setWorkspaceProjectName(event.target.value)} placeholder="工作项目名称" aria-label="工作项目名称" />
-                <button type="button" className="action-button" onClick={saveProject}>保存为工作项目 <span>→</span></button>
-              </div>
+              <p className="panel-note">这里只处理单个工作区文件。多工程保存与切换已移到顶部工程工具栏和启动时的工程选择界面。</p>
             </section>
           </div>
-          {workspaceProjects.length > 0 ? (
-            <section className="workspace-projects" aria-label="工作项目列表">
-              <div className="panel-head"><SectionHeading english="PROJECT FILES" title="工作项目" /><span className="status-tag">{workspaceProjects.length} / 20</span></div>
-              <p className="panel-note">工作项目保存在本机浏览器中，与当前服务端工作区分开；适合保存多个学校、学期或方案版本。</p>
-              <div className="workspace-project-list">
-                {workspaceProjects.map((project) => (
-                  <article className="workspace-project-row" key={project.id}>
-                    <div><b>{project.name}</b><small>{fmtDateTime(project.savedAt, undefined, { hour12: false })} · {project.data.classes.length} 班 · {project.data.coursePlans.length} 条计划</small></div>
-                    <div className="workspace-project-actions">
-                      <button type="button" className="ghost-button" onClick={() => { if (!window.confirm('加载工作项目「' + project.name + '」？当前未保存的修改会被替换。')) return; onLoadWorkspace?.(project.data); setWorkspaceProjectName(project.name); setNotice('已加载工作项目：' + project.name); }}>加载</button>
-                      <button type="button" className="ghost-button" onClick={() => void exportWorkspaceFile(project.name)}>导出</button>
-                      <button type="button" className="ghost-button is-danger" onClick={() => { if (!window.confirm('删除工作项目「' + project.name + '」？')) return; deleteWorkspaceProject(project.id); setWorkspaceProjects(readWorkspaceProjects()); }}>删除</button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </section>
-          ) : null}
           {importFeedback ? (
             <div
               className={'import-feedback is-' + importFeedback.tone}
