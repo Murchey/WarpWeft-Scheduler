@@ -15,7 +15,8 @@ import { parseSubjectPreference, suggestedSubjectPreference } from './subjectPre
 import { fixedSlotIdsOf } from '../../../packages/contracts/src';
 import { normalizeSoftConstraints, withSoftWeight } from './softConstraints';
 import { importChanges } from './importReview';
-import { parseWorkspace, serializeWorkspace, workspaceFileName } from './workspaceProject';
+import { isWorkspaceArchive, parseWorkspace, workspaceArchiveFileName } from './workspaceProject';
+import { exportWorkspaceArchive, unpackWorkspaceArchive } from './api';
 import { fmtDateTime } from './i18n';
 
 type ResourceCollection = 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots';
@@ -1141,20 +1142,30 @@ function ResourcesPage({
   };
 
   const exportWorkspaceFile = async (name = data.school.name || '未命名工作区') => {
-    const result = await download(
-      new Blob([serializeWorkspace(data, name)], { type: 'application/json;charset=utf-8' }),
-      'application/json',
-      workspaceFileName(name),
-    );
-    const message = exportMessage(result, '工作区数据');
-    if (!message) return;
-    if (message.tone === 'error') setError(message.text);
-    else setNotice(message.text);
+    try {
+      // 与服务端工程库同格式：分片 ZIP，可直接在另一台机器加载/导入
+      const buffer = await exportWorkspaceArchive(name);
+      const result = await download(
+        new Blob([buffer], { type: 'application/zip' }),
+        'application/zip',
+        workspaceArchiveFileName(name),
+      );
+      const message = exportMessage(result, '工作区数据');
+      if (!message) return;
+      if (message.tone === 'error') setError(message.text);
+      else setNotice(message.text);
+    } catch (cause) {
+      setError('导出工作区失败：' + messageOf(cause));
+    }
   };
 
   const importWorkspaceFile = async (file: File) => {
     try {
-      const parsed = parseWorkspace(await file.text());
+      const buffer = await file.arrayBuffer();
+      // 工程包（.zip）交给服务端解包，旧的 .workspace.json 在前端直接解析
+      const parsed = isWorkspaceArchive(buffer)
+        ? await unpackWorkspaceArchive(buffer)
+        : parseWorkspace(new TextDecoder().decode(buffer));
       if (!window.confirm('加载工作区「' + parsed.name + '」？当前未保存的修改会被替换。')) return;
       onLoadWorkspace?.(parsed.data);
       setNotice('已加载工作区：' + parsed.name);
@@ -1187,12 +1198,12 @@ function ResourcesPage({
               <p className="panel-note">恢复已经排课的完整工作内容，包含候选/正式课表、调代课记录和审计日志。</p>
               <div className="import-actions">
                 <label className="file-button">
-                  <span>加载工作区 JSON</span>
-                  <input ref={workspaceFileRef} type="file" accept=".json,.workspace.json,application/json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importWorkspaceFile(file); event.currentTarget.value = ''; }} />
+                  <span>加载工作区文件</span>
+                  <input ref={workspaceFileRef} type="file" accept=".zip,.json,.workspace.json,application/zip,application/json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importWorkspaceFile(file); event.currentTarget.value = ''; }} />
                 </label>
                 <button type="button" className="file-button" onClick={() => void exportWorkspaceFile()}>{'导出当前工作区'}</button>
               </div>
-              <p className="panel-note">这里只处理单个工作区文件。多工程保存与切换已移到顶部工程工具栏和启动时的工程选择界面。</p>
+              <p className="panel-note">支持 .zip 工程包与旧的 .workspace.json。多工程保存与切换在顶部工程工具栏和启动界面。</p>
             </section>
           </div>
           {importFeedback ? (

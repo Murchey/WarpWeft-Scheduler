@@ -114,3 +114,39 @@ test('导入：根本不是 ZIP 时返回 400', async (t) => {
   assert.equal(response.status, 400);
   assert.equal((await response.json()).code, 'WORKSPACE_ARCHIVE_INVALID');
 });
+
+test('解包：工程包还原为工作区数据，且不产生新工程', async (t) => {
+  const ctx = await boot();
+  t.after(ctx.close);
+  const baseline = await (await fetch(ctx.base + '/api/data')).json();
+
+  const exported = await fetch(ctx.base + '/api/workspace/export?name=' + encodeURIComponent('解包测试'));
+  const buffer = Buffer.from(await exported.arrayBuffer());
+
+  const response = await fetch(ctx.base + '/api/workspace/unpack', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/zip' },
+    body: new Uint8Array(buffer),
+  });
+  assert.equal(response.status, 200);
+  const doc = await response.json();
+  assert.equal(doc.name, '解包测试');
+  assert.deepEqual(doc.data.classes, baseline.classes);
+  assert.deepEqual(doc.data.coursePlans, baseline.coursePlans);
+
+  // 解包只读：不得写入工程库
+  const list = await (await fetch(ctx.base + '/api/projects')).json();
+  assert.equal(list.projects.length, 0);
+});
+
+test('解包：非工程包返回 400', async (t) => {
+  const ctx = await boot();
+  t.after(ctx.close);
+  const response = await fetch(ctx.base + '/api/workspace/unpack', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: new Uint8Array(Buffer.from('not a zip')),
+  });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).code, 'WORKSPACE_ARCHIVE_INVALID');
+});

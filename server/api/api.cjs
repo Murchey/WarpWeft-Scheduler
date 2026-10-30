@@ -2012,6 +2012,23 @@ function startApi({
           return fail(res, 500, '打包工作区失败：' + error.message, 'WORKSPACE_EXPORT_FAILED');
         }
       }
+      // ── 解包工程包（数据导入页「加载工作区」用）────────────────
+      // 只解包不落盘：前端拿到 data 后自行决定载入当前工作区。
+      if (req.method === 'POST' && url.pathname === '/api/workspace/unpack') {
+        let buffer;
+        try {
+          buffer = await readRawBody(req);
+        } catch (error) {
+          if (error.code === 'PAYLOAD_TOO_LARGE') return fail(res, 413, '工程包超过 5 MB', 'PAYLOAD_TOO_LARGE');
+          return fail(res, 400, '读取工程包失败：' + error.message, 'INVALID_BODY');
+        }
+        if (!isZipBuffer(buffer)) return fail(res, 400, '这不是有效的工程包（缺少 ZIP 头）', 'WORKSPACE_ARCHIVE_INVALID');
+        try {
+          return send(res, 200, decodeSnapshot(buffer));
+        } catch (error) {
+          return fail(res, 400, error.message, 'WORKSPACE_ARCHIVE_INVALID');
+        }
+      }
       if (req.method === 'GET' && url.pathname === '/api/data') {
         return send(res, 200, store.read());
       }

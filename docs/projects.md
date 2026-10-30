@@ -6,7 +6,7 @@
 
 - `data/warpweft.json` 始终代表**当前正在编辑的工作区**，`store.read()/write()` 语义不变。
 - **切换工程 = 把工程快照写进 `warpweft.json`**，所以 `PUT /api/data`、350ms 防抖保存、`validateData`、排课链路都不需要改动。
-- 工程包是**分片 JSON 的 ZIP**（见下），导出仍是单个 `.workspace.json`，两者格式同源可互转。
+- 工程包是**分片 JSON 的 ZIP**（见下）；**导出也用同一格式**，导出的 `.zip` 可直接在另一台机器导入还原。
 
 ```
 <dataDir>/
@@ -57,7 +57,9 @@ extra.json               未知字段兜底，保证前向兼容不丢数据
 | PATCH | `/api/projects/:id` | 仅重命名 `{name}` |
 | DELETE | `/api/projects/:id` | 删除；若为活动工程则清空指针 |
 | POST | `/api/projects/:id/open` | 换入工作区；`{expectedActiveId?, saveCurrent?, force?}`，成功直接返回换入后的 `data` |
-| POST | `/api/projects/import` | 导入 `.workspace.json`，校验 `format` 与 `version` |
+| POST | `/api/projects/import` | 导入。JSON 走 `.workspace.json`，`Content-Type: application/zip` 时收二进制工程包 |
+| GET | `/api/workspace/export?name=` | 把**当前工作区**打成 `.zip` 工程包下载（不依赖已绑定工程） |
+| POST | `/api/workspace/unpack` | 解包工程包为 `{format, version, name, savedAt, data}`，**只读不落盘**（数据导入页「加载工作区」用） |
 
 错误码：`PROJECT_NOT_FOUND`、`PROJECT_LIMIT_REACHED`、`PROJECT_INVALID_NAME`、`PROJECT_TOO_LARGE`、`PROJECT_CORRUPTED`、`PROJECT_CONFLICT`、`WORKSPACE_FORMAT_INVALID`、`WORKSPACE_VERSION_UNSUPPORTED`、`INVALID_DATA`。
 
@@ -84,6 +86,8 @@ extra.json               未知字段兜底，保证前向兼容不丢数据
 ## 5. 前端行为
 
 - 首次启动（`localStorage['warpweft-launcher-mode'] === 'always'`）先显示工程选择界面；默认 `auto` 直接进入上次工程。
-- 标题栏承载工程工具栏（保存 / 另存 / 导入 / 导出）与当前工程名，保存状态以「未保存 / 保存中 / 保存失败」显示在工程名旁。
+- 标题栏承载工程工具栏：**保存**（覆盖当前工程）/ **保存副本…**（在工程库新建，当前工程不变）/ **从文件导入** / **导出 .zip**（下载工程包）。
+  「保存副本」与「导出」刻意分开命名：前者留在工程库，后者生成可分发文件。
 - 「设置 → 工程与数据」提供同一组动作与数据规模概览。
-- 数据导入页只保留单个工作区文件的导入导出，不再维护 localStorage 工程列表，避免两套工程体系并存。
+- 数据导入页的「加载工作区文件」同时接受 `.zip` 工程包与 `.workspace.json`：前者走 `POST /api/workspace/unpack` 解包，后者前端直接解析；两种格式都不写入工程库，只替换当前工作区数据。
+- 导入入口同时接受 `.zip` 工程包与旧的 `.workspace.json`（按 ZIP 魔数区分，不依赖扩展名）。

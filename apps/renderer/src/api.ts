@@ -707,6 +707,22 @@ export async function exportWorkspaceArchive(name: string): Promise<ArrayBuffer>
   return response.arrayBuffer();
 }
 
+/** 解包工程包为工作区数据（不落盘），供「加载工作区」使用。 */
+export async function unpackWorkspaceArchive(buffer: ArrayBuffer): Promise<WorkspaceDocument> {
+  const response = await request(
+    `${getApiBase()}/api/workspace/unpack`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/zip' },
+      body: buffer,
+    },
+    30000,
+  );
+  const text = await response.text();
+  if (!response.ok) throw failure(response, text);
+  return JSON.parse(text) as WorkspaceDocument;
+}
+
 /** 导入工程包（.zip）。服务端解包后与 JSON 导入走同一条创建链路。 */
 export async function importProjectArchive(
   buffer: ArrayBuffer,
