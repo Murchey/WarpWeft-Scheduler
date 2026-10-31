@@ -60,6 +60,44 @@ async function request(ctx, pathname, options = {}, token = '', clientId = 'auth
   return { response, body };
 }
 
+test('server monitoring and config require an admin role', async () => {
+  const ctx = await start();
+  try {
+    const adminLogin = await login(ctx, 'admin', 'admin-pass-123');
+    const adminToken = adminLogin.body.token;
+    const teacher = await request(ctx, '/api/users', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'monitor-user', password: 'monitor-pass-123', role: 'user' }),
+    }, adminToken);
+    assert.equal(teacher.response.status, 201);
+    const teacherLogin = await login(ctx, 'monitor-user', 'monitor-pass-123', 'monitor-client');
+    const teacherToken = teacherLogin.body.token;
+
+    // 普通账号不能读取服务端拓扑（已连接电脑 IP、CPU 型号、日志），也不能改限额。
+    for (const [pathname, method] of [
+      ['/api/server/overview', 'GET'],
+      ['/api/server/stats', 'GET'],
+      ['/api/server/logs', 'GET'],
+      ['/api/server/clients', 'GET'],
+      ['/api/server/config', 'PUT'],
+    ]) {
+      const result = await request(ctx, pathname, { method, body: method === 'PUT' ? '{}' : undefined }, teacherToken, 'monitor-client');
+      assert.equal(result.response.status, 403, pathname + ' must be admin-only');
+      assert.equal(result.body.code, 'FORBIDDEN', pathname);
+      assert.equal(JSON.stringify(result.body).includes('127.0.0.1'), false, pathname + ' must not leak addresses');
+    }
+
+    // 管理员仍可正常读写。
+    const adminOverview = await request(ctx, '/api/server/overview', {}, adminToken);
+    assert.equal(adminOverview.response.status, 200);
+    const adminConfig = await request(ctx, '/api/server/config', { method: 'PUT', body: JSON.stringify({ queueCapacity: 24 }) }, adminToken);
+    assert.equal(adminConfig.response.status, 200);
+  } finally {
+    await ctx.close();
+    fs.rmSync(ctx.dataDir, { recursive: true, force: true });
+  }
+});
+
 function login(ctx, username, password, clientId = 'auth-test') {
   return request(ctx, '/api/auth/login', {
     method: 'POST',

@@ -3375,8 +3375,13 @@ function ServerPage({
   const logRef = useRef<HTMLDivElement | null>(null);
   const inFlightRef = useRef(false);
 
+  // 服务端监控与限额接口在 Linux 服务端只对管理员开放；
+  // 普通账号不应轮询这些接口，否则会不断收到 403 并弹出监控异常横幅。
+  const canManageServer = !showUserManagement || authUser?.role === 'admin';
+
   const refresh = useCallback(async () => {
     if (inFlightRef.current) return;
+    if (!canManageServer) return;
     inFlightRef.current = true;
     try {
       const overview = await fetchServerOverview(sinceRef.current);
@@ -3400,7 +3405,7 @@ function ServerPage({
     } finally {
       inFlightRef.current = false;
     }
-  }, []);
+  }, [canManageServer]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3474,7 +3479,9 @@ function ServerPage({
       {pollError ? <Banner tone="error" title="服务端监控异常" onClose={() => setPollError('')}>{pollError}</Banner> : null}
       {actionError ? <Banner tone="error" title="操作未完成" onClose={() => setActionError('')}>{actionError}</Banner> : null}
       {apiOnline === false ? <Banner tone="warning" title="服务端未连接">当前无法读取服务端状态，请先启动服务端 API。</Banner> : null}
-      {!stats ? (
+      {!canManageServer ? (
+        <div className="server-loading"><strong>服务端监控只对管理员开放</strong></div>
+      ) : !stats ? (
         <div className="server-loading"><strong>正在读取本机服务端状态…</strong></div>
       ) : (
         <>
@@ -3501,9 +3508,9 @@ function ServerPage({
             </div>
             {stats.warnings.length > 0 ? <div className="server-warning">{stats.warnings.join('；')}</div> : null}
           </section>
-          {config && effective ? <ServerConfigCard stats={stats} config={config} effective={effective} onSaved={handleConfigSaved} /> : null}
-          {showUserManagement && authUser?.role === 'admin' ? <UsersCard currentUser={authUser} /> : null}
-          <ServerClientsCard clients={clients} active={stats.clients.active} max={stats.clients.max} busyId={busyClientId} onDisconnect={(id) => void disconnectClient(id)} />
+          {config && effective && canManageServer ? <ServerConfigCard stats={stats} config={config} effective={effective} onSaved={handleConfigSaved} /> : null}
+          {showUserManagement && canManageServer ? <UsersCard currentUser={authUser as AuthUser} /> : null}
+          {canManageServer ? <ServerClientsCard clients={clients} active={stats.clients.active} max={stats.clients.max} busyId={busyClientId} onDisconnect={(id) => void disconnectClient(id)} /> : null}
           <section className="section-panel">
             <div className="panel-head">
               <SectionHeading english="TASK QUEUE" title="任务队列" />

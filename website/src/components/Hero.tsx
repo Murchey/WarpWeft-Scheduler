@@ -1,9 +1,12 @@
 import React from 'react';
+import { DOWNLOAD_URL } from '../content';
 import { useSiteI18n } from '../i18n';
 
 export function Hero() {
   const { t } = useSiteI18n();
   const tags = ['hero.tag.desktop', 'hero.tag.local', 'hero.tag.solver', 'hero.tag.selfhost'] as const;
+  // 下载链接由 VITE_DOWNLOAD_URL 构建期注入；未配置时不渲染按钮，避免出现死链。
+  const downloadHref = DOWNLOAD_URL;
 
   return (
     <section className="site-hero" id="overview">
@@ -17,6 +20,11 @@ export function Hero() {
         <a className="site-cta ghost" href="#deploy">
           {t('hero.ctaDeploy')}
         </a>
+        {downloadHref ? (
+          <a className="site-cta ghost" href={downloadHref} rel="noopener">
+            {t('hero.ctaDownload')}
+          </a>
+        ) : null}
       </div>
       <div className="site-tags">
         {tags.map((key) => (

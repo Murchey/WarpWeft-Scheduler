@@ -297,7 +297,7 @@ test('overview stays responsive while jobs are running', async () => {
   }
 });
 
-test('static pages do not consume client slots', async () => {
+test('static pages and read-only monitoring do not consume client slots', async () => {
   const ctx = await start();
   try {
     await configure(ctx, { maxClients: 1 });
@@ -307,7 +307,20 @@ test('static pages do not consume client slots', async () => {
     assert.notEqual(page.status, 429);
     const clients = await fetch(`${ctx.base}/api/server/clients`, { headers: headers('admin-local') }).then((response) => response.json());
     assert.equal(clients.clients.length, 1);
-    const other = await fetch(`${ctx.base}/api/server/overview`, { headers: headers('pc-other') });
+    // 只读监控接口不占名额：官网状态面板每 10 秒轮询 /api/server/overview，
+    // 若按实名登记，几个浏览器标签页就能把教务电脑挤下线（429 CLIENT_LIMIT）。
+    for (const pathname of ['/api/health', '/api/server/stats', '/api/server/overview', '/api/server/logs']) {
+      const response = await fetch(`${ctx.base}${pathname}`, { headers: headers('site-visitor') });
+      assert.equal(response.status, 200, pathname);
+    }
+    const still = await fetch(`${ctx.base}/api/server/clients`, { headers: headers('admin-local') }).then((response) => response.json());
+    assert.equal(still.clients.length, 1);
+    // 写操作仍然实名：每台的并发与排队配额要按客户端计数。
+    const other = await fetch(`${ctx.base}/api/server/config`, {
+      method: 'PUT',
+      headers: headers('pc-other'),
+      body: JSON.stringify({ queueCapacity: 24 }),
+    });
     assert.equal(other.status, 429);
   } finally {
     await ctx.close();

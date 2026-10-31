@@ -19,6 +19,7 @@ export const zhCN = {
     '单机与局域网小规模排课：Electron/React 商务界面、本地 JSON 数据层、独立 Java 21 求解器。数据留在你自己的机器或服务器上，不依赖云端。',
   'hero.ctaApp': '进入应用',
   'hero.ctaDeploy': '如何部署',
+  'hero.ctaDownload': '下载桌面版',
   'hero.tag.desktop': '桌面版 Electron',
   'hero.tag.local': '本地 JSON 数据层',
   'hero.tag.solver': '独立 Java 21 求解器',

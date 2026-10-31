@@ -1,0 +1,7 @@
+# WarpWeft 官网：产品/部署、界面截图与静态资源允许抓取；
+# /app/（排课应用）与 /api/（后端接口）禁止抓取，避免索引器碰到需登录的工作区数据。
+User-agent: *
+Allow: /$
+Allow: /site/
+Disallow: /app/
+Disallow: /api/

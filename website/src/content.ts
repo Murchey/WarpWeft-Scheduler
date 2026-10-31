@@ -275,6 +275,12 @@ export const SCREENSHOTS: Screenshot[] = [
   },
 ];
 
+/** 桌面版下载链接：由 VITE_DOWNLOAD_URL 构建期注入，未注入时为空串。 */
+export const DOWNLOAD_URL: string = typeof __SITE_DOWNLOAD_URL__ === 'string' ? __SITE_DOWNLOAD_URL__ : '';
+
+/** 站点规范地址：由 VITE_SITE_ORIGIN 构建期注入，用于 canonical/og:url。 */
+export const SITE_ORIGIN: string = typeof __SITE_ORIGIN__ === 'string' ? __SITE_ORIGIN__ : '';
+
 export interface DeployStep {
   title: Bilingual;
   body: Bilingual;

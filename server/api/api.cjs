@@ -25,6 +25,8 @@ const MAX_JOBS = 100;
 const SLOT_KIND_VALUES = ['morning', 'regular', 'study', 'aftercare', 'evening', 'makeup'];
 const SOFT_RULE_KINDS = ['SUBJECT_DISTRIBUTION', 'TEACHER_CONTINUOUS', 'TEACHER_GAPS', 'TEACHER_WORKLOAD_BALANCE', 'CLASS_GAPS', 'SUBJECT_TIME_PREFERENCE'];
 const MAX_LOGS = 500;
+/** 只读监控接口：不登记到「已连接电脑」配额（见 createServer 内的 touchClient 调用）。 */
+const NO_ADMISSION_PATHS = new Set(['/api/health', '/api/server/stats', '/api/server/overview', '/api/server/logs']);
 const CLIENT_TTL_MS = 90_000;
 const CLIENT_PRUNE_MS = 30_000;
 const MAX_LONG_JOBS = 20;
@@ -1625,7 +1627,11 @@ function startApi({
       // Static assets are served without admission control: a browser loading
       // the page would otherwise burn one "computer" slot per connection.
       const isApi = url.pathname.startsWith('/api/');
-      const client = isApi ? touchClient(req, res, url.pathname !== '/api/health') : null;
+      // 只读监控接口不占「已连接电脑」名额：官网「运行状态」面面板会持续轮询
+      // /api/server/overview，若按实名登记，几个浏览器标签页就能把教务电脑挤下线。
+      // 这些只读接口不含写操作，且各自有独立的鉴权与角色校验。
+      const admitFree = NO_ADMISSION_PATHS.has(url.pathname);
+      const client = isApi ? touchClient(req, res, !admitFree) : null;
       if (isApi && !client) return;
 
       if (req.method === 'GET' && url.pathname === '/api/health') {
@@ -1784,6 +1790,19 @@ function startApi({
         } catch (error) {
           return userApiFailure(res, error);
         }
+      }
+
+      // 服务端监控接口泄漏内网拓扑（已连接电脑 IP、CPU 型号、绝对路径、求解日志），
+      // 因此桌面模式（authEnabled=false）照旧开放，Linux 服务端仅限管理员。
+      if (authEnabled && isApi && authSession && authSession.user.role !== 'admin' && (
+        (req.method === 'GET' && (
+          url.pathname === '/api/server/stats' ||
+          url.pathname === '/api/server/overview' ||
+          url.pathname === '/api/server/logs' ||
+          url.pathname === '/api/server/clients'
+        )) || (req.method === 'PUT' && url.pathname === '/api/server/config')
+      )) {
+        return fail(res, 403, '只有管理员可以查看或修改服务端状态', 'FORBIDDEN');
       }
 
       if (req.method === 'GET' && url.pathname === '/api/server/stats') {

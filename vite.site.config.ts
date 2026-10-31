@@ -12,6 +12,20 @@ import react from '@vitejs/plugin-react';
  * 因此官网必须拥有自己的 root、base 与 outDir，两者物理隔离。
  */
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
+/**
+ * 桌面版下载链接与站点规范地址由部署方在构建期注入：
+ *   VITE_DOWNLOAD_URL=https://…/WarpWeft-Setup.exe  npm run build:site
+ *   VITE_SITE_ORIGIN=https://warpweft.example.edu   npm run build:site
+ * 未注入时官网不显示下载按钮、不输出 canonical，避免出现指向不存在的链接。
+ */
+const downloadUrl = String(process.env.VITE_DOWNLOAD_URL ?? '').trim();
+const siteOrigin = String(process.env.VITE_SITE_ORIGIN ?? '').trim().replace(/\/+$/, '');
+if (downloadUrl && !/^https?:\/\//i.test(downloadUrl)) {
+  throw new Error('VITE_DOWNLOAD_URL 必须是绝对 http(s) 地址，当前：' + downloadUrl);
+}
+if (siteOrigin && !/^https?:\/\//i.test(siteOrigin)) {
+  throw new Error('VITE_SITE_ORIGIN 必须是绝对 http(s) 地址，当前：' + siteOrigin);
+}
 const siteRoot = here('./website');
 const repoRoot = here('.');
 
@@ -23,6 +37,11 @@ export default defineConfig({
   base: '/site/',
   publicDir: here('./website/public'),
   plugins: [react()],
+  // 注入官网可读取的部署期配置（未注入时为空串，官网据此隐藏入口）。
+  define: {
+    __SITE_DOWNLOAD_URL__: JSON.stringify(downloadUrl),
+    __SITE_ORIGIN__: JSON.stringify(siteOrigin),
+  },
   server: {
     port: 5174,
     host: '127.0.0.1',

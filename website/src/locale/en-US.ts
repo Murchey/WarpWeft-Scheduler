@@ -23,6 +23,7 @@ export const enUS: Partial<Record<SiteKey, string>> = {
     'Timetabling for single machines and small LANs: an Electron/React interface, a local JSON data layer, and a standalone Java 21 solver. Your data stays on your own machine or server — no cloud dependency.',
   'hero.ctaApp': 'Open app',
   'hero.ctaDeploy': 'How to deploy',
+  'hero.ctaDownload': 'Download desktop app',
   'hero.tag.desktop': 'Electron desktop app',
   'hero.tag.local': 'Local JSON data layer',
   'hero.tag.solver': 'Standalone Java 21 solver',
