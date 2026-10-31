@@ -79,6 +79,7 @@ import type {
   Teacher,
   TimeSlot,
   RunMode,
+  ThemeMode,
 } from './types';
 import './style.css';
 
@@ -113,6 +114,30 @@ function readLauncherAlways(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * 外观优先级：?theme= → localStorage → system。
+ * 默认 system 表示跟随操作系统，系统切换深色时界面实时跟随。
+ */
+function readThemeMode(): ThemeMode {
+  try {
+    const fromUrl = new URLSearchParams(window.location.search).get('theme');
+    if (fromUrl === 'light' || fromUrl === 'dark' || fromUrl === 'system') return fromUrl;
+  } catch {
+    // 非浏览器环境
+  }
+  try {
+    const saved = window.localStorage.getItem('warpweft-theme');
+    if (saved === 'light' || saved === 'dark' || saved === 'system') return saved;
+  } catch {
+    // 存储不可用
+  }
+  return 'system';
+}
+
+function prefersDarkMode(): boolean {
+  return Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
 }
 
 
@@ -650,7 +675,6 @@ function App() {
   const electronShell = Boolean((window as unknown as { warpweft?: unknown }).warpweft);
   const requestedTab = params.get('tab');
   const normalizedTab = requestedTab === '基础资料' || requestedTab === '教学计划' ? '排课准备' : requestedTab;
-  const initialTheme = params.get('theme');
   const [tab, setTab] = useState<Tab>(
     normalizedTab && (TABS as readonly string[]).includes(normalizedTab) ? (normalizedTab as Tab) : '工作台',
   );
@@ -663,12 +687,10 @@ function App() {
         ? 'plans'
         : 'classes',
   );
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    if (initialTheme === 'dark' || initialTheme === 'light') return initialTheme;
-    const saved = window.localStorage.getItem('warpweft-theme');
-    if (saved === 'dark' || saved === 'light') return saved;
-    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  });
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => readThemeMode());
+  const [systemDark, setSystemDark] = useState<boolean>(() => prefersDarkMode());
+  // 跟随系统时用系统偏好，否则用显式选择；resolved 值用于 dataset 与各组件
+  const theme: 'light' | 'dark' = themeMode === 'system' ? (systemDark ? 'dark' : 'light') : themeMode;
   const [runMode, setRunMode] = useState<RunMode | null>(() => {
     // Deep links can pin the runtime mode/endpoint, e.g. a LAN server handing
     // out `?mode=single&endpoint=http://192.168.1.20:4317` to its clients.
@@ -851,12 +873,31 @@ function App() {
   const saveTimer = useRef<number | null>(null);
   const pending = useRef<SchoolData | null>(null);
 
+  // 系统主题变化时，跟随模式要实时切换（不必重启）
+  useEffect(() => {
+    if (!window.matchMedia) return undefined;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches);
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, []);
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem('warpweft-theme', theme);
+    // 让原生滚动条与表单控件跟随同一主题
+    document.documentElement.style.colorScheme = theme;
     // 无边框窗口的背景色由主进程绘制，需同步，否则切换主题时边缘残留旧底色
     void window.warpweft?.setTheme?.(theme);
   }, [theme]);
+
+  // 持久化的是"模式"而不是解析后的主题，否则跟随系统会被固化成某一种
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('warpweft-theme', themeMode);
+    } catch {
+      // 存储不可用时仅本次会话生效
+    }
+  }, [themeMode]);
 
   // The preview toolbar is a working context, so remember it across tabs and
   // restarts. Transient modes (fullscreen, swapping, drag) stay local.
@@ -2397,16 +2438,12 @@ function App() {
         onSaveProjectAs={openNameDialog}
         onExportProject={() => void exportActiveProject()}
         onImportProject={(file) => void importProjectFile(file)}
-        onToggleTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+        onToggleTheme={() => setThemeMode(theme === 'light' ? 'dark' : 'light')}
         onOpenSettings={() => setTab('设置')}
         onOpenMode={() => setModeSettingsOpen(true)}
         onLogout={() => void handleLogout()}
       />
-      <div className="signal-bar">
-        <i />
-        <i />
-        <i />
-      </div>
+      <div className="signal-bar" />
       <aside className="command-rail">
         <div className="brand-lockup">
           <span className="brand-mark">
@@ -2595,7 +2632,8 @@ function App() {
           <SettingsPage
             runMode={runMode}
             theme={theme}
-            onThemeChange={setTheme}
+            themeMode={themeMode}
+            onThemeModeChange={setThemeMode}
             onEditMode={() => setModeSettingsOpen(true)}
             apiOnline={apiOnline}
             serverSchema={serverSchema}

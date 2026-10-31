@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { Commit, RunMode, SchoolData } from './types';
+import type { Commit, RunMode, SchoolData, ThemeMode } from './types';
 import type { ProjectMeta } from './api';
 import type { ToastLogEntry, ToastTone } from './toastLog';
 import type { MessageKey } from './i18n';
@@ -36,7 +36,8 @@ function readInitialTab(): SettingsTabId {
 export interface SettingsPageProps {
   runMode: RunMode | null;
   theme: 'light' | 'dark';
-  onThemeChange: (theme: 'light' | 'dark') => void;
+  themeMode: ThemeMode;
+  onThemeModeChange: (mode: ThemeMode) => void;
   onEditMode: () => void;
   apiOnline: boolean | null;
   serverSchema: number | null;
@@ -216,14 +217,18 @@ export function SettingsPage(props: SettingsPageProps) {
             <h3>{t('settings.appearance.title')}</h3>
             <SettingsRow label={t('settings.appearance.theme')} hint={t('settings.appearance.themeHint')}>
               <Segmented
-                value={props.theme}
+                value={props.themeMode}
                 ariaLabel={t('settings.appearance.theme')}
-                onChange={(next) => props.onThemeChange(next)}
+                onChange={(next) => props.onThemeModeChange(next)}
                 options={[
+                  { value: 'system', label: t('settings.appearance.themeSystem') },
                   { value: 'light', label: t('common.light') },
                   { value: 'dark', label: t('common.dark') },
                 ]}
               />
+            </SettingsRow>
+            <SettingsRow label={t('settings.appearance.themeCurrent')}>
+              <span className="settings-chip">{props.theme === 'dark' ? t('common.dark') : t('common.light')}</span>
             </SettingsRow>
             <SettingsRow label={t('settings.appearance.palette')} hint={t('settings.appearance.paletteHint')}>
               <span className="settings-swatch">

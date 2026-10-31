@@ -213,6 +213,9 @@ export interface SchoolData {
 
 export type RunMode = 'single' | 'lan-server' | 'lan-client' | 'cloud';
 
+/** 外观模式：system = 跟随操作系统（默认），light/dark = 显式选择。 */
+export type ThemeMode = 'system' | 'light' | 'dark';
+
 export type Commit = (next: SchoolData, options?: { invalidate?: boolean; immediate?: boolean }) => void;
 
 

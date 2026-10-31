@@ -21,7 +21,9 @@ export const settingsMessages = {
 
   'settings.appearance.title': '外观',
   'settings.appearance.theme': '主题',
-  'settings.appearance.themeHint': '浅色与深色共用同一套版式，仅切换色板。',
+  'settings.appearance.themeHint': '默认跟随系统外观；也可固定为浅色或深色。',
+  'settings.appearance.themeSystem': '跟随系统',
+  'settings.appearance.themeCurrent': '当前生效',
   'settings.appearance.palette': '当前色板',
   'settings.appearance.paletteHint': '色板随主题自动切换，无需手动调整。',
   'settings.appearance.swatchPaper': '背景',
