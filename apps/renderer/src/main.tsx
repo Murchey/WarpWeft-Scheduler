@@ -886,8 +886,14 @@ function App() {
     document.documentElement.dataset.theme = theme;
     // 让原生滚动条与表单控件跟随同一主题
     document.documentElement.style.colorScheme = theme;
-    // 无边框窗口的背景色由主进程绘制，需同步，否则切换主题时边缘残留旧底色
-    void window.warpweft?.setTheme?.(theme);
+    // 无边框窗口的背景色由主进程绘制，需同步，否则切换主题时边缘残留旧底色。
+    // 这里必须整体容错：主题切换只做显示层的事，任何 IPC/环境异常都不应
+    // 中断渲染流程（表现为「切主题后应用像重启了一样」）。
+    try {
+      void window.warpweft?.setTheme?.(theme)?.catch(() => undefined);
+    } catch {
+      // 桥不可用时仅本次会话用 CSS 主题
+    }
   }, [theme]);
 
   // 持久化的是"模式"而不是解析后的主题，否则跟随系统会被固化成某一种
@@ -1032,14 +1038,23 @@ function App() {
     const memory = readEndpointMemory(window.localStorage);
     rememberEndpoint(memory, nextMode, normalized, DEFAULT_API_BASE);
     writeEndpointMemory(memory, window.localStorage);
+    // 模式与地址都没变时只是关闭对话框：不能清空工作区再重新引导，
+    // 否则「打开设置又保存一次」就会看到启动加载页闪现、工作区被重载。
+    const nextEndpoint = normalized || (nextMode === 'cloud' ? CLOUD_ENDPOINT_PLACEHOLDER : DEFAULT_API_BASE);
+    const unchanged = nextMode === runMode && nextEndpoint === readActiveEndpoint(window.localStorage);
     window.localStorage.setItem(RUNTIME_MODE_KEY, nextMode);
-    writeActiveEndpoint(normalized || (nextMode === 'cloud' ? CLOUD_ENDPOINT_PLACEHOLDER : DEFAULT_API_BASE), window.localStorage);
+    writeActiveEndpoint(nextEndpoint, window.localStorage);
     setRunMode(nextMode);
     setModeSettingsOpen(false);
-    setApiOnline(null);
+    if (unchanged) {
+      if (nextMode === 'lan-server') setTab('服务端');
+      else if (tab === '服务端') setTab('工作台');
+      return;
+    }
+    // 真正切换模式/地址：保留当前工作区数据在屏上，后台重新校验连接；
+    // 不预先 setData(null)，避免用户看到「应用重启」。失败时由 bootstrap
+    // 置 apiOnline=false 并给出错误信息，成功则整体换成新服务端的数据。
     setAuthUser(null);
-    setData(null);
-    setResult(null);
     setAuthError('');
     setModeRevision((value) => value + 1);
     if (nextMode === 'lan-server') setTab('服务端');
@@ -2303,7 +2318,9 @@ function App() {
     return <RuntimeModeDialog current={null} onSave={saveRunMode} />;
   }
 
-  if (authChecking) {
+  // 重新校验连接时不再把工作区清成启动加载页：已有数据就继续显示，
+  // 仅首次启动（还没有任何数据）才展示启动加载页。
+  if (authChecking && !data) {
     return (
       <div className="boot-screen">
         <div className="boot-mark">W</div>
