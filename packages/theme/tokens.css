@@ -1,0 +1,11 @@
+/*
+ * 官网使用的设计令牌快照。
+ *
+ * 取值必须与 apps/renderer/src/style.css 中**实际生效**的那一组一致——
+ * 该文件末尾「Apple-like high-contrast monochrome foundation」段的 :root 与
+ * html[data-theme='dark'] 会覆盖文件开头那组变量，因此这里复制的是末尾生效值。
+ * 官网刻意不 @import 应用的 style.css：那是 2000+ 行的产品样式表，
+ * 会把整套产品 CSS 拖进官网 bundle。两份令牌由 tests/design-tokens.test.cjs 守着漂移。
+ */
+:root{--paper:#f5f5f7;--panel:#ffffff;--ink:#1d1d1f;--muted:#6e6e73;--rule:#d2d2d7;--chip:#e8e8ed;--signal:#ffcc00;--on-signal:#1d1d1f;--danger:#c9342c;--info:#0071e3;--info-strong:#0066cc;--info-soft:#eaf3ff;--info-rule:#b7d7ff}
+html[data-theme='dark']{--paper:#000000;--panel:#1d1d1f;--ink:#f5f5f7;--muted:#a1a1a6;--rule:#424245;--chip:#2c2c2e;--signal:#ffd60a;--on-signal:#1d1d1f;--danger:#ff6961;--info:#2997ff;--info-strong:#64b5ff;--info-soft:#102a44;--info-rule:#24527d}
