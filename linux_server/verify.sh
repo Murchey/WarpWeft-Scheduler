@@ -54,10 +54,25 @@ if [ "$auth_required" = "1" ]; then
   fi
 fi
 
-if curl -fsS --max-time 10 "$base_url/" | grep -q '<div id="root">'; then
+# 根路径现在是官网首页，应用入口统一为 /app/。
+# Node 的静态兜底会把未知路径回落 dist/index.html，因此直连 4317 与经 Nginx 反代
+# （location ^~ /app/ 剥前缀）两种 base_url 都能命中应用入口。
+if curl -fsS --max-time 10 "$base_url/app/" | grep -q '<div id="root">'; then
   echo "[ok] renderer index"
 else
   fail "renderer index"
+fi
+
+# 官网自检：默认 base_url 指向 Node 时根路径是应用，需要显式给出站点地址
+site_url="${WARPVEFT_SITE_URL:-}"
+if [ -n "$site_url" ]; then
+  if curl -fsS --max-time 10 "$site_url/" | grep -q 'id="site-root"'; then
+    echo "[ok] marketing site"
+  else
+    fail "marketing site"
+  fi
+else
+  echo "[skip] marketing site (设置 WARPVEFT_SITE_URL 可校验官网首页)"
 fi
 
 if [ "$auth_required" = "1" ] && [ -z "$token" ]; then

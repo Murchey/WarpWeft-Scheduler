@@ -14,8 +14,8 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if [ ! -f "$source_dir/linux_server/server.cjs" ] || [ ! -f "$source_dir/dist/index.html" ]; then
-  echo "安装包不完整：需要 linux_server/server.cjs 和 dist/index.html。" >&2
+if [ ! -f "$source_dir/linux_server/server.cjs" ] || [ ! -f "$source_dir/dist/index.html" ] || [ ! -f "$source_dir/dist/site/index.html" ]; then
+  echo "安装包不完整：需要 linux_server/server.cjs、dist/index.html 和 dist/site/index.html。" >&2
   exit 1
 fi
 if ! command -v node >/dev/null 2>&1; then

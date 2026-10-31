@@ -69,3 +69,47 @@ test('Linux build manifest verifier catches a partially updated package', () => 
     fs.rmSync(appDir, { recursive: true, force: true });
   }
 });
+
+test('Linux build manifest verifier checks the marketing site when the package ships one', () => {
+  const appDir = fs.mkdtempSync(path.join(os.tmpdir(), 'warpweft-manifest-site-'));
+  const siteIndex = path.join(appDir, 'dist', 'site', 'index.html');
+  const siteAsset = path.join(appDir, 'dist', 'site', 'assets', 'site.js');
+  const siteIndexContent = '<div id="site-root"></div>';
+  write(siteAsset, 'console.log("site");');
+  const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
+  const manifest = {
+    appVersion: '0.1.0',
+    schemaVersion: 4,
+    solverProtocol: '1.0',
+    capabilities: ['homeroom'],
+    assetHashes: { '/site/assets/site.js': sha256(siteAsset) },
+    hashes: { siteIndex: digest(siteIndexContent) },
+  };
+  write(path.join(appDir, 'warpweft-build.json'), JSON.stringify(manifest));
+  write(path.join(appDir, 'data-schema.json'), JSON.stringify({ version: 4, solverProtocol: '1.0', features: ['homeroom'] }));
+  const healthFile = path.join(appDir, 'health.json');
+  write(healthFile, JSON.stringify({
+    appVersion: '0.1.0',
+    schemaVersion: 4,
+    solverProtocol: '1.0',
+    capabilities: ['homeroom'],
+  }));
+
+  try {
+    // 清单登记了官网入口，但包里没有这个文件 → 必须失败
+    const missing = spawnSync(process.execPath, [verifier, healthFile, appDir], { encoding: 'utf8' });
+    assert.notEqual(missing.status, 0, 'a missing marketing site must fail verification');
+    assert.match(missing.stdout + missing.stderr, /siteIndex|site/);
+
+    write(siteIndex, siteIndexContent);
+    const ok = spawnSync(process.execPath, [verifier, healthFile, appDir], { encoding: 'utf8' });
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+
+    // 官网资源被替换 → 必须失败
+    write(siteAsset, 'console.log("tampered");');
+    const stale = spawnSync(process.execPath, [verifier, healthFile, appDir], { encoding: 'utf8' });
+    assert.notEqual(stale.status, 0, 'a stale site asset must fail verification');
+  } finally {
+    fs.rmSync(appDir, { recursive: true, force: true });
+  }
+});

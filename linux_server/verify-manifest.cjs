@@ -60,18 +60,21 @@ else {
 
     const files = {
       rendererIndex: path.join(appDir, 'dist', 'index.html'),
+      siteIndex: path.join(appDir, 'dist', 'site', 'index.html'),
       serverApi: path.join(appDir, 'server', 'api', 'api.cjs'),
       serverEntry: path.join(appDir, 'linux_server', 'server.cjs'),
       dataSchema: path.join(appDir, 'data-schema.json'),
       solverJar: path.join(appDir, 'resources', 'solver', 'warpweft-solver.jar'),
     };
     for (const [key, file] of Object.entries(files)) {
+      const expectedHash = manifest.hashes && manifest.hashes[key];
+      // 构建清单里没有登记哈希的条目不参与校验：不带官网的旧安装包不会被新脚本判失败
+      if (!expectedHash) continue;
       if (!fs.existsSync(file)) {
         fail('缺少文件：' + file);
         continue;
       }
-      const expectedHash = manifest.hashes && manifest.hashes[key];
-      if (expectedHash && sha256(file) !== expectedHash) {
+      if (sha256(file) !== expectedHash) {
         fail(key + ' 哈希不一致，安装包可能被部分覆盖或未重新构建');
       }
     }
