@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { Commit, RuleInstance, SchoolData } from './types';
 import { AvailabilityEditor } from './AvailabilityEditor';
 import { PlansPage } from './PlansPage';
 import { ElectivePage } from './ElectivePage';
 import { ResourcesPage } from './ResourcesPage';
+import type { ImportFooterState } from './ResourcesPage';
 import { RulesPage } from './RulesPage';
 import { SemesterPage } from './SemesterPage';
 import { buildImportTemplate } from '../../../packages/import-export/src';
@@ -38,6 +39,10 @@ function PreparePage({
 }) {
   const { t } = useI18n();
   const [importOpen, setImportOpen] = useState(false);
+  const [importFooter, setImportFooter] = useState<ImportFooterState | null>(null);
+  const drawerRef = useRef<HTMLDivElement | null>(null);
+  /** mousedown 是否落在遮罩自身；配合 click 的 target 判断，避免"内部按下、外部抬起"误关。 */
+  const overlayPressRef = useRef(false);
   const [templateBusy, setTemplateBusy] = useState(false);
   const unavailableCount = data.teachers.filter((teacher) => (data.unavailableSlots ?? []).some((item) => item.teacherId === teacher.id)).length;
   const items: { id: PrepareSection; labelKey: MessageKey; count: string }[] = [
@@ -83,6 +88,30 @@ function PreparePage({
   };
   const resourceKinds = ['import', 'classes', 'teachers', 'subjects', 'rooms', 'timeSlots'] as const;
   const isResource = resourceKinds.includes(section as (typeof resourceKinds)[number]);
+  const openImport = () => {
+    setImportFooter(null);
+    setImportOpen(true);
+  };
+  const closeImport = () => {
+    setImportOpen(false);
+    setImportFooter(null);
+  };
+  // 抽屉打开期间：锁背景滚动 + Esc 关闭 + 焦点移入抽屉。
+  // 写法对齐 PlansPage / ShortRunDialog 的既有惯例。
+  useEffect(() => {
+    if (!importOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    drawerRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeImport();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [importOpen]);
   return (
     <div className="prepare-layout">
       <aside className="prepare-nav" aria-label={t('prepare.subnavAria')}>
@@ -96,7 +125,7 @@ function PreparePage({
               key={item.id}
               type="button"
               className={'prepare-nav-item' + (section === item.id ? ' active' : '')}
-              onClick={() => item.id === 'import' ? setImportOpen(true) : selectSection(item.id)}
+              onClick={() => item.id === 'import' ? openImport() : selectSection(item.id)}
               aria-current={section === item.id ? 'page' : undefined}
             >
               <span><b>{t(item.labelKey)}</b></span>
@@ -119,7 +148,7 @@ function PreparePage({
             <button type="button" className="ghost-button" onClick={() => void exportTemplate()} disabled={templateBusy}>
               {templateBusy ? t('prepare.exporting') : t('prepare.exportTemplate')}
             </button>
-            <button type="button" className="action-button" onClick={() => setImportOpen(true)}>{t('prepare.importExcel')} <span>↗</span></button>
+            <button type="button" className="action-button" onClick={openImport}>{t('prepare.importExcel')} <span>↗</span></button>
           </div>
         </div>
         {section === 'semester' ? (
@@ -141,10 +170,43 @@ function PreparePage({
         </div>
       </div>
       {importOpen ? (
-        <div className="import-overlay" role="dialog" aria-modal="true">
-          <div className="import-drawer">
-            <div className="import-drawer-head"><div><h2>{t('prepare.importExcel')}</h2></div><button type="button" className="banner-close" onClick={() => setImportOpen(false)} aria-label={t('prepare.closeImport')}>×</button></div>
-            <ResourcesPage data={data} commit={commit} setError={setError} setNotice={setNotice} onLoadWorkspace={onLoadWorkspace} kind="import" />
+        <div
+          className="import-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('prepare.importExcel')}
+          onMouseDown={(event) => { overlayPressRef.current = event.target === event.currentTarget; }}
+          onClick={(event) => { if (overlayPressRef.current && event.target === event.currentTarget) closeImport(); }}
+        >
+          <div className="import-drawer" ref={drawerRef} tabIndex={-1}>
+            <div className="import-drawer-head">
+              <div><h2>{t('prepare.importExcel')}</h2></div>
+              <button type="button" className="banner-close" onClick={closeImport} aria-label={t('prepare.closeImport')}>×</button>
+            </div>
+            <div className="import-drawer-body">
+              <ResourcesPage
+                data={data}
+                commit={commit}
+                setError={setError}
+                setNotice={setNotice}
+                onLoadWorkspace={onLoadWorkspace}
+                kind="import"
+                onImportFooterChange={setImportFooter}
+              />
+            </div>
+            <div className="import-drawer-actions">
+              <div>
+                <button type="button" className="ghost-button" onClick={closeImport}>{t('common.close')}</button>
+              </div>
+              <div>
+                {importFooter?.secondary ? (
+                  <button type="button" className="ghost-button" onClick={importFooter.secondary.onClick}>{importFooter.secondary.label}</button>
+                ) : null}
+                {importFooter?.primary ? (
+                  <button type="button" className="action-button" onClick={importFooter.primary.onClick} disabled={importFooter.primary.disabled}>{importFooter.primary.label}</button>
+                ) : null}
+              </div>
+            </div>
           </div>
         </div>
       ) : null}
