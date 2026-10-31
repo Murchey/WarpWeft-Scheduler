@@ -11,6 +11,6 @@
     "allowImportingTsExtensions": true,
     "types": ["node", "react", "react-dom", "vite/client"]
   },
-  "include": ["apps/renderer/src", "packages"]
+  "include": ["apps/renderer/src", "packages", "website/src"]
 }
 
