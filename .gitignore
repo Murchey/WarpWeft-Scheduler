@@ -13,6 +13,7 @@ out/
 *.exe
 *.msi
 *.nsis.*
+.workbuddy/
 
 # Local application data and SQLite runtime files
 data/
