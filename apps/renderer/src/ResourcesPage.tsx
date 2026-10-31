@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { buildImportTemplate, normalizeGradeList, readWorkbookWithMeta } from '../../../packages/import-export/src';
 import type { ClassRoom, Commit, CoursePlan, Room, SchoolData, SlotKind, Subject, Teacher, TimeSlot } from './types';
 import { DAYS, EditableTable, SectionHeading } from './components';
@@ -99,12 +99,25 @@ function parseRuleParams(value: string, kind: RuleKind): Record<string, string |
   }
   return params;
 }
+/** 导入抽屉底栏里的一枚按钮描述：由 ResourcesPage 发布给外层外壳渲染。 */
+export interface ImportFooterAction {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}
+/** 外壳底栏需要的操作集合；primary 为主操作（确认），secondary 为次操作（取消）。 */
+export interface ImportFooterState {
+  primary: ImportFooterAction | null;
+  secondary: ImportFooterAction | null;
+}
+
 function ResourcesPage({
   data,
   commit,
   setError,
   setNotice,
   onLoadWorkspace,
+  onImportFooterChange,
   kind = 'import',
 }: {
   data: SchoolData;
@@ -112,6 +125,8 @@ function ResourcesPage({
   setError: (value: string) => void;
   setNotice: (value: string) => void;
   onLoadWorkspace?: (next: SchoolData) => void;
+  /** 供导入抽屉把「确认应用导入 / 取消导入」提升到固定底栏；不传则按原样渲染在内容流里。 */
+  onImportFooterChange?: (state: ImportFooterState | null) => void;
   kind?: 'import' | 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots';
 }) {
   const days = DAYS.slice(1).map((label, index) => ({ value: String(index + 1), label }));
@@ -1110,6 +1125,25 @@ function ResourcesPage({
     setNotice('Excel 导入已应用，请查看保存状态');
   };
 
+  // 把「确认应用导入 / 取消导入」发布给外层底栏，让抽屉的操作区固定可见。
+  // 不传 onImportFooterChange 时整段不执行，内联渲染（?section=import）保持自治。
+  useEffect(() => {
+    const publish = onImportFooterChange;
+    if (!publish) return;
+    if (!importDraft) {
+      publish(null);
+      return;
+    }
+    publish({
+      primary: { label: '确认应用导入', onClick: confirmImport, disabled: importDraft.base !== data },
+      secondary: { label: '取消导入', onClick: () => { setImportDraft(null); setImportFeedback(null); } },
+    });
+    return () => publish(null);
+    // confirmImport 每次渲染都是新引用，故意不进依赖数组：一旦进依赖，
+    // effect 每次渲染都跑 → publish() → 外层 setState → 死循环。
+    // 它只依赖 importDraft / data，这两者变化时本 effect 会重跑并重新捕获最新闭包。
+  }, [importDraft, data, onImportFooterChange]);
+
   const downloadTemplate = async () => {
     if (templateStage !== 'idle') return;
     setTemplateStage('generating');
@@ -1250,10 +1284,12 @@ function ResourcesPage({
               <p className="panel-note">学校：{importDraft.base.school.name} → {importDraft.next.school.name}。学期：{importDraft.next.semester ? importDraft.next.semester.startDate + ' ~ ' + importDraft.next.semester.endDate : '未设置'}。</p>
               <p className="panel-note">确认后清除当前候选课表及其锁定/手动调整，需重新排课；正式版仍保留。教学计划的新 ID 会计为新增与移除。</p>
               {importDraft.replace ? <p className="inline-warning">清空模式同时清除调代课与授课记录。请先通过排课准备页导出当前数据备份。</p> : null}
-              <div className="hero-actions">
-                <button type="button" className="action-button" onClick={confirmImport} disabled={importDraft.base !== data}>确认应用导入</button>
-                <button type="button" className="ghost-button" onClick={() => { setImportDraft(null); setImportFeedback(null); }}>取消导入</button>
-              </div>
+              {!onImportFooterChange ? (
+                <div className="hero-actions">
+                  <button type="button" className="action-button" onClick={confirmImport} disabled={importDraft.base !== data}>确认应用导入</button>
+                  <button type="button" className="ghost-button" onClick={() => { setImportDraft(null); setImportFeedback(null); }}>取消导入</button>
+                </div>
+              ) : null}
               {importDraft.base !== data ? <p role="alert">工作区已变化，请重新选择文件生成预览。</p> : null}
             </section>
           ) : null}
