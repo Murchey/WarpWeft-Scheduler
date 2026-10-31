@@ -8,6 +8,7 @@ import { PlanMatrixPanel } from './PlanMatrixPanel';
 import { PlanToolbar } from './PlanToolbar';
 import { PlanTable } from './PlanTable';
 import { PlanDetailDrawer } from './PlanDetailDrawer';
+import { PlanPreviewPanel } from './PlanPreviewPanel';
 import {
   EMPTY_PLAN_FILTERS,
   EMPTY_PLAN_SORT,
@@ -37,6 +38,7 @@ function PlansPage({
 }) {
   const [view, setView] = useState<PlanTableView>(() => loadPlanView());
   const [fullscreen, setFullscreen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [filters, setFilters] = useState<PlanFilters>(EMPTY_PLAN_FILTERS);
   const [sort, setSort] = useState<PlanSort>(EMPTY_PLAN_SORT);
   const [page, setPage] = useState(1);
@@ -88,7 +90,7 @@ function PlansPage({
       if (event.key !== 'Escape') return;
       // A menu or the fixed-slot dialog consumes the first Esc.
       if (document.querySelector('details[data-plan-menu][open]')) return;
-      if (document.querySelector('.composer-overlay, .fixed-slots-overlay')) return;
+      if (document.querySelector('.composer-overlay, .fixed-slots-overlay, .plan-drawer-overlay, .plan-preview-overlay')) return;
       if (!drawerId && !fixedEditor) setFullscreen(false);
     };
     window.addEventListener('keydown', onKeyDown);
@@ -97,6 +99,16 @@ function PlansPage({
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [fullscreen, drawerId, fixedEditor]);
+
+  // 课时汇总页签没有明细表可放大，切过去时收起预览
+  useEffect(() => {
+    if (view.tab !== 'detail') setPreviewOpen(false);
+  }, [view.tab]);
+
+  const openPreview = () => {
+    setFullscreen(false);
+    setPreviewOpen(true);
+  };
 
   const update = (id: string, patch: Partial<CoursePlan>) => {
     const plans = data.coursePlans.map((plan) => (plan.id === id ? { ...plan, ...patch } : plan));
@@ -226,6 +238,90 @@ function PlansPage({
 
   const editingPlan = fixedEditor ? data.coursePlans.find((plan) => plan.id === fixedEditor) : undefined;
   const drawerPlan = drawerId ? data.coursePlans.find((plan) => plan.id === drawerId) : undefined;
+  // 内联与放大预览共用同一份表格区：同一时刻只挂载一份，避免 <datalist> 重复 id、
+  // 三个列菜单重复注册监听、以及两处滚动状态打架。
+  const tableBlock = (
+    <>
+      <PlanToolbar
+        filters={filters}
+        onFiltersChange={setFilters}
+        options={filterOptions}
+        total={data.coursePlans.length}
+        filteredCount={filtered.length}
+        view={view}
+        onViewChange={setViewPatch}
+        onToggleColumn={toggleColumn}
+        onShowAllColumns={showAllColumns}
+        onDefaultColumns={defaultColumns}
+        onResetColumnWidths={() => changeColumnWidths(null)}
+        onResetView={resetView}
+        onAdd={openComposer}
+        onAddGrade={openGradeComposer}
+        fullscreen={fullscreen}
+        onToggleFullscreen={() => { setPreviewOpen(false); setFullscreen((current) => !current); }}
+      />
+      <PlanTable
+        plans={sorted}
+        lookups={lookups}
+        view={view}
+        onViewChange={setViewPatch}
+        columnWidths={columnWidths}
+        onColumnWidthsChange={changeColumnWidths}
+        page={page}
+        onPageChange={setPage}
+        sort={sort}
+        onSortChange={setSort}
+        selected={selected}
+        onToggleSelect={(id) => setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])}
+        onSelectPage={(ids, checked) => setSelected((current) => checked ? Array.from(new Set([...current, ...ids])) : current.filter((id) => !ids.includes(id)))}
+        onSelectAllFiltered={() => setSelected(filtered.map((plan) => plan.id))}
+        onClearSelection={() => setSelected([])}
+        onUpdate={update}
+        onDelete={(id) => { removePlan(id); }}
+        onBatch={(key, value) => batchEdit(selected, key, value)}
+        onBatchDelete={() => {
+          if (!selected.length) return;
+          if (!window.confirm('删除选中的 ' + selected.length + ' 条教学计划？相关候选课表会被清空。')) return;
+          removeMany(selected);
+          setSelected([]);
+        }}
+        onOpenDrawer={setDrawerId}
+        onOpenFixed={setFixedEditor}
+        roomTypes={roomTypes}
+      />
+    </>
+  );
+
+  // 抽屉 / 固定时间 / 批量新增这几个浮层：预览打开时挂到 overlay 下，否则留在原来的位置
+  const floatingLayers = (
+    <>
+      {drawerPlan ? (
+        <PlanDetailDrawer
+          plan={drawerPlan}
+          lookups={lookups}
+          roomTypes={roomTypes}
+          onClose={() => setDrawerId(null)}
+          onSave={(patch) => update(drawerPlan.id, patch)}
+          onDelete={() => removePlan(drawerPlan.id)}
+          onOpenFixed={() => setFixedEditor(drawerPlan.id)}
+          escapeDisabled={Boolean(fixedEditor)}
+        />
+      ) : null}
+      {fixedEditor && editingPlan ? (
+        <FixedSlotsDialog
+          title={'固定时间：' + (lookups.classById.get(editingPlan.classId)?.name ?? '') + ' / ' + (lookups.subjectById.get(editingPlan.subjectId)?.name ?? '')}
+          slots={data.timeSlots}
+          value={fixedSlotIdsOf(editingPlan)}
+          max={Number(editingPlan.weeklyPeriods ?? 0)}
+          onChange={saveFixedSlots}
+          onClose={() => setFixedEditor(null)}
+        />
+      ) : null}
+      {composerOpen ? <PlanComposer data={data} commit={commit} setError={setError} onClose={() => setComposerOpen(false)} /> : null}
+      {gradeComposerOpen ? <GradePlanComposer data={data} commit={commit} setError={setError} onClose={() => setGradeComposerOpen(false)} /> : null}
+    </>
+  );
+
   const panelClass = 'section-panel table-panel plan-panel' + (fullscreen ? ' is-fullscreen' : '');
 
   return (
@@ -264,60 +360,20 @@ function PlansPage({
             <button type="button" className="ghost-button plan-exit-fullscreen" onClick={() => setFullscreen(false)}>
               退出全屏
             </button>
-          ) : null}
+          ) : (
+            <button type="button" className="ghost-button plan-preview-open" onClick={openPreview}>
+              放大预览
+            </button>
+          )}
         </div>
       </div>
 
       {view.tab === 'detail' ? (
-        <>
-          <PlanToolbar
-            filters={filters}
-            onFiltersChange={setFilters}
-            options={filterOptions}
-            total={data.coursePlans.length}
-            filteredCount={filtered.length}
-            view={view}
-            onViewChange={setViewPatch}
-            onToggleColumn={toggleColumn}
-            onShowAllColumns={showAllColumns}
-            onDefaultColumns={defaultColumns}
-            onResetColumnWidths={() => changeColumnWidths(null)}
-            onResetView={resetView}
-            onAdd={openComposer}
-            onAddGrade={openGradeComposer}
-            fullscreen={fullscreen}
-            onToggleFullscreen={() => setFullscreen((current) => !current)}
-          />
-          <PlanTable
-            plans={sorted}
-            lookups={lookups}
-            view={view}
-            onViewChange={setViewPatch}
-            columnWidths={columnWidths}
-            onColumnWidthsChange={changeColumnWidths}
-            page={page}
-            onPageChange={setPage}
-            sort={sort}
-            onSortChange={setSort}
-            selected={selected}
-            onToggleSelect={(id) => setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])}
-            onSelectPage={(ids, checked) => setSelected((current) => checked ? Array.from(new Set([...current, ...ids])) : current.filter((id) => !ids.includes(id)))}
-            onSelectAllFiltered={() => setSelected(filtered.map((plan) => plan.id))}
-            onClearSelection={() => setSelected([])}
-            onUpdate={update}
-            onDelete={(id) => { removePlan(id); }}
-            onBatch={(key, value) => batchEdit(selected, key, value)}
-            onBatchDelete={() => {
-              if (!selected.length) return;
-              if (!window.confirm('删除选中的 ' + selected.length + ' 条教学计划？相关候选课表会被清空。')) return;
-              removeMany(selected);
-              setSelected([]);
-            }}
-            onOpenDrawer={setDrawerId}
-            onOpenFixed={setFixedEditor}
-            roomTypes={roomTypes}
-          />
-        </>
+        previewOpen ? (
+          <p className="panel-note">表格已在放大预览面板中打开，关闭后回到此处。</p>
+        ) : (
+          tableBlock
+        )
       ) : (
         <PlanMatrixPanel data={data} />
       )}
@@ -326,30 +382,18 @@ function PlansPage({
         明细支持拖动列宽、双击分隔线恢复单列；约束与固定时间可从「约束」列或「更多」打开。视图、列显示与列宽保存在本机浏览器。
       </p>
 
-      {drawerPlan ? (
-        <PlanDetailDrawer
-          plan={drawerPlan}
-          lookups={lookups}
-          roomTypes={roomTypes}
-          onClose={() => setDrawerId(null)}
-          onSave={(patch) => update(drawerPlan.id, patch)}
-          onDelete={() => removePlan(drawerPlan.id)}
-          onOpenFixed={() => setFixedEditor(drawerPlan.id)}
-          escapeDisabled={Boolean(fixedEditor)}
-        />
-      ) : null}
-      {fixedEditor && editingPlan ? (
-        <FixedSlotsDialog
-          title={'固定时间：' + (lookups.classById.get(editingPlan.classId)?.name ?? '') + ' / ' + (lookups.subjectById.get(editingPlan.subjectId)?.name ?? '')}
-          slots={data.timeSlots}
-          value={fixedSlotIdsOf(editingPlan)}
-          max={Number(editingPlan.weeklyPeriods ?? 0)}
-          onChange={saveFixedSlots}
-          onClose={() => setFixedEditor(null)}
-        />
-      ) : null}
-      {composerOpen ? <PlanComposer data={data} commit={commit} setError={setError} onClose={() => setComposerOpen(false)} /> : null}
-      {gradeComposerOpen ? <GradePlanComposer data={data} commit={commit} setError={setError} onClose={() => setGradeComposerOpen(false)} /> : null}
+      {previewOpen && view.tab === 'detail' ? (
+        <PlanPreviewPanel
+          title="教学计划预览"
+          meta={<>共 {data.coursePlans.length} 条 · 筛选后 {filtered.length} 条 · 每页 {view.pageSize} 条 · 已选 {selected.length} 条</>}
+          floating={floatingLayers}
+          onClose={() => setPreviewOpen(false)}
+        >
+          {tableBlock}
+        </PlanPreviewPanel>
+      ) : (
+        floatingLayers
+      )}
     </section>
   );
 }
