@@ -46,6 +46,7 @@
 - 服务端监控页：CPU/内存、Java 求解器状态、任务队列、排队/运行/完成状态和实时求解日志
 - Linux 服务端：同一套浏览器 UI + Java Solver，可独立部署为 systemd 服务；带账号登录、管理员用户管理；部署包由 `build_appliction.bat` 选项 2 或 `npm run dist:linux` 生成
 - 正式版版本记录与审计日志；每次发布保留可追溯的版本 ID、时间和课时数量
+- 产品介绍官网：部署后根路径是公开的产品官网（定位、功能、界面截图、部署指引），`/app/` 是需要登录的排课应用；官网内嵌只读的服务端状态面板（CPU/内存、求解器、任务队列与日志）
 
 ## 本地运行
 
@@ -114,6 +115,35 @@ npm run dist:linux
 ```
 
 Linux 部署包包含 systemd 单元、安装/卸载/验证脚本和 Nginx 示例，不需要在服务器上安装 Electron 或执行 `npm install`。完整安装、TLS、备份和排障步骤见 [guideline.md](guideline.md)，本地服务端/UI 对照见 [docs/linux-server-parity.md](docs/linux-server-parity.md)。安装后 `sudo bash /opt/warpweft/linux_server/verify.sh` 会同时核对运行中服务与安装包清单（版本、schema、capabilities、渲染资源、API/Server/Solver 哈希），避免 Linux 包与本地 UI/API 版本不一致。
+
+## 官网与部署（单域名三入口）
+
+Linux 服务端部署完成后，**运维只需要把 `linux_server/nginx.conf.example` 里的 `server_name` 改成自己的子域名**，同一个域名即可提供：
+
+| 路径 | 内容 | 是否需要登录 |
+| --- | --- | --- |
+| `/` | 产品介绍官网（公开） | 否 |
+| `/site/` | 官网资源 | 否 |
+| `/app/` | 排课应用（完整界面） | 是 |
+| `/api/` | 后端接口 | 是（`/api/health`、`/api/auth/login` 除外） |
+
+官网源码在 `website/`，是独立于应用的 Vite 入口：
+
+```powershell
+npm run dev:site       # 本地预览 http://127.0.0.1:5174/site/
+npm run build:site     # 产出 dist/site/（应用仍是 npm run build，产出 dist/）
+```
+
+两条构建的顺序不能交换：应用构建会清空 `dist/`，官网产物必须在其之后生成。`npm run dist:linux` 已按正确顺序串行执行。
+
+官网与应用的约定：
+
+- 官网 `base` 固定为 `/site/`，**不能改成 `./`**：否则官网资源会解析成 `/assets/*`，与应用 bundle 抢占同一 URL 前缀。
+- 官网配色复用 `packages/theme/tokens.css`，该快照与 `apps/renderer/src/style.css` 中实际生效的令牌由 `tests/design-tokens.test.cjs` 守护漂移。
+- 官网界面语言与主题偏好跟应用共用 `warpweft-locale` 与 `warpweft-theme`，一处切换两处生效。
+- 状态面板与 `/app/` 应用共用同一个浏览器凭证，登录一次即可。
+
+新增官网截图请放在 `website/src/images/`。**不要新建名为 `shots/` 或 `screenshots/` 的目录**：`.gitignore` 的这两条是非锚定目录模式，任何层级的同名目录都会被忽略，截图会静默不进版本库。提交前可用 `git check-ignore -v website/src/images/*.png` 自检（应无输出）。
 
 ## 数据与打包
 

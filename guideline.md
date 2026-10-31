@@ -13,13 +13,16 @@
 ## 2. 架构与数据流
 
 ```
-浏览器（同一套 React UI）
-        │  HTTP/HTTPS，同源静态页面 + /api/*
+浏览器（官网 + 同一套 React UI）
+        │  HTTP/HTTPS
         ▼
-Nginx（可选：TLS、Basic Auth、访问日志）
-        │  proxy_pass 127.0.0.1:4317
-        ▼
-linux_server/server.cjs（Node，HTTP API + 静态文件）
+Nginx（TLS；可选 Basic Auth、访问日志）
+        ├── / 与 /site/  → 官网静态文件（/opt/warpweft/dist/site，公开）
+        ├── /app/        → proxy_pass 127.0.0.1:4317/（应用，需登录）
+        ├── /assets/     → proxy_pass 127.0.0.1:4317（应用 bundle 兜底）
+        └── /api/        → proxy_pass 127.0.0.1:4317（接口，需登录）
+                              ▼
+linux_server/server.cjs（Node，HTTP API + 应用静态文件）
         ├── /var/lib/warpweft/warpweft.json     工作区数据
         ├── /var/lib/warpweft/server-config.json 服务端限额
         ├── /var/lib/warpweft/users.json         Linux 用户与密码哈希
@@ -31,7 +34,7 @@ linux_server/server.cjs（Node，HTTP API + 静态文件）
               Java Solver（每个任务一个 JVM，默认 -Xmx512m）
 ```
 
-- 静态页面由 Node 从安装目录的 `dist/` 提供；生产环境不需要 Vite。
+- 应用页面由 Node 从安装目录的 `dist/` 提供（对外路径 `/app/`）；官网页面是 `dist/site/` 下的静态文件，由 Nginx 直接提供，不经过 Node。生产环境不需要 Vite。
 - 短时排课请求和长时检查点任务共用同一个 Java 求解器。
 - 默认单工作区、单长时任务；短时任务按服务端配置排队。
 - 数据以 UTF-8 JSON 文件保存，写入采用临时文件 + rename；没有外部数据库。
@@ -150,7 +153,8 @@ warpweft/
   linux_server/warpweft.env.example
   linux_server/nginx.conf.example
   server/api/*.cjs      # 含 auth.cjs、audit.cjs
-  dist/                 # 浏览器 UI
+  dist/                 # 浏览器 UI（应用入口 index.html）
+  dist/site/            # 产品介绍官网（静态页面，由 Nginx 直接提供）
   resources/solver/warpweft-solver.jar
   data-schema.json
   package.json          # 精简运行时元数据，无 Electron/Vite 依赖
@@ -186,7 +190,14 @@ journalctl -u warpweft -n 50 --no-pager
 bash /opt/warpweft/linux_server/verify.sh
 ```
 
-登录启用时，`verify.sh` 默认只检查 health 和页面；设置 `WARPVEFT_VERIFY_USERNAME`/`WARPVEFT_VERIFY_PASSWORD` 后会额外登录并检查 `/api/data`。
+登录启用时，`verify.sh` 默认只检查 health 和应用页面（应用入口已统一为 `/app/`，直连 4317 与经 Nginx 反代都能命中）；设置 `WARPVEFT_VERIFY_USERNAME`/`WARPVEFT_VERIFY_PASSWORD` 后会额外登录并检查 `/api/data`，设置 `WARPVEFT_SITE_URL` 后会额外校验官网首页。例如：
+
+```bash
+WARPVEFT_BASE_URL=https://scheduler.example.edu \
+WARPVEFT_SITE_URL=https://scheduler.example.edu \
+WARPVEFT_VERIFY_USERNAME=admin WARPVEFT_VERIFY_PASSWORD='<密码>' \
+  bash /opt/warpweft/linux_server/verify.sh
+```
 
 ### 6.1 只通过 Nginx 访问（推荐）
 
@@ -199,13 +210,36 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
+同一个子域名提供三个入口，**部署者只需要把示例配置里的 `server_name` 改成自己的域名**：
+
+| 路径 | 内容 | 是否需要登录 |
+| --- | --- | --- |
+| `/` | 产品介绍官网（静态页面） | 否 |
+| `/site/` | 官网资源 | 否 |
+| `/app/` | 排课应用（完整界面） | 是 |
+| `/api/` | 后端接口 | 是（`/api/health`、`/api/auth/login` 除外） |
+
 把浏览器访问地址设为：
 
 ```text
-http://<服务器域名或IP>/
+http://<服务器域名或IP>/         # 官网
+http://<服务器域名或IP>/app/     # 排课应用（需登录）
 ```
 
 如果使用 HTTPS，用 certbot 或现有证书配置 443，再把 80 重定向到 443。Nginx 示例中的 `X-Forwarded-For $remote_addr` 会覆盖客户端伪造头，服务端只信任同机回环代理。
+
+`certbot --nginx --redirect` 之后务必用 `sudo nginx -T` 复核四个 `location`（`/`、`/site/`、`/app/`、`/api/`）都还在 443 的 server 块内。
+
+### 6.1.1 官网内嵌的只读状态面板
+
+官网「运行状态」区块会调用 `/api/health` 与 `/api/server/overview`，展示 CPU、内存、求解器状态、任务队列与求解日志。
+
+- **只读**：不提供取消任务、删除任务、修改服务端配置等写操作。
+- **需要登录**：面板的登录态与 `/app/` 应用共用同一个浏览器凭证（localStorage 的 `warpweft-auth-token:<origin>`），在应用里登录后再打开官网无需重复登录。
+- **脱敏**：日志中的 IPv4、绝对路径与账号名会被掩码替换；面板不展示服务端监听地址、内网 IP 与求解器 jar 的绝对路径。
+- **仅登录用户可见**：任何持有账号的登录者都能看到该面板，公网匿名访客看不到任务与日志。如需进一步收敛，应在 Nginx 层限制 `/api/server/*` 的访问来源。
+
+会话默认 12 小时过期，服务端重启会清空内存会话，面板会提示重新登录。
 
 ### 6.2 直连局域网（不推荐公网）
 
@@ -242,7 +276,7 @@ sudo htpasswd -c /etc/nginx/.htpasswd warpweft-admin
 sudo certbot --nginx -d scheduler.example.edu
 ```
 
-并在 Nginx `location /` 中启用示例里的 `auth_basic` / `auth_basic_user_file`。TLS 终止在 Nginx，Node 只监听回环；服务端环境保留：
+并在 Nginx 的 `location ^~ /app/` 与 `location ^~ /api/` 内部启用示例里的 `auth_basic` / `auth_basic_user_file`。**不要写在 server 级或 `location /`**：那会把本应公开访问的官网首页也加上认证弹窗。TLS 终止在 Nginx，Node 只监听回环；服务端环境保留：
 
 ```text
 WARPVEFT_TRUST_PROXY=1
@@ -454,7 +488,7 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-此时用 `http://scheduler.example.edu/` 应能打开登录页。**在配置 HTTPS 之前不要录入真实密码**，先用临时测试账号或直接进入下一步。
+此时 `http://scheduler.example.edu/` 应打开产品介绍官网；加上 `/app/`（即 `http://scheduler.example.edu/app/`）才进入需要登录的排课应用。**在配置 HTTPS 之前不要录入真实密码**，先用临时测试账号或直接进入下一步。
 
 申请 Let's Encrypt 证书并强制跳转 HTTPS：
 
@@ -479,7 +513,7 @@ sudo apt install -y apache2-utils
 sudo htpasswd -c /etc/nginx/.htpasswd warpweft-admin
 ```
 
-然后在 Nginx 的 `location /` 中启用示例里的 `auth_basic` 和 `auth_basic_user_file`，执行 `sudo nginx -t && sudo systemctl reload nginx`。这会让所有访问者先弹一次浏览器认证框；课堂多人使用时通常只保留应用登录即可，或用 VPN/安全组限制来源。
+然后在 Nginx 的 `location ^~ /app/` 与 `location ^~ /api/` 内部启用示例里的 `auth_basic` 和 `auth_basic_user_file`（**不要写在 `location /`**，否则公开访问的官网首页也会被弹框），执行 `sudo nginx -t && sudo systemctl reload nginx`。这会让访问应用与接口的人先弹一次浏览器认证框；课堂多人使用时通常只保留应用登录即可，或用 VPN/安全组限制来源。
 
 #### 6.5.5 云上验收
 
@@ -491,6 +525,12 @@ curl -I http://scheduler.example.edu/
 
 # 2. HTTPS 应返回 200，证书链正常
 curl -I https://scheduler.example.edu/
+
+# 2b. 官网首页（公开）应返回官网挂载点
+curl -s https://scheduler.example.edu/ | grep 'id="site-root"'
+
+# 2c. 应用入口（需登录）应返回应用挂载点
+curl -s https://scheduler.example.edu/app/ | grep '<div id="root">'
 
 # 3. 4317 从公网必须不可达（超时或拒绝）
 curl -m 5 http://<公网IP>:4317/
