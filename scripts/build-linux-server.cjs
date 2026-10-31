@@ -35,9 +35,9 @@ function sha256(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
-function verifyRendererAssets(distDir) {
-  const indexPath = path.join(distDir, 'index.html');
-  if (!fs.existsSync(indexPath)) throw new Error('构建产物缺少 dist/index.html');
+function verifyRendererAssets(distDir, htmlRelative = 'index.html') {
+  const indexPath = path.join(distDir, htmlRelative);
+  if (!fs.existsSync(indexPath)) throw new Error('构建产物缺少 dist/' + htmlRelative);
   const html = fs.readFileSync(indexPath, 'utf8');
   const refs = Array.from(html.matchAll(/(?:src|href)="([^"]+)"/g), (match) => match[1])
     .filter((ref) => ref && !/^(?:https?:|data:|#|\/\/)/i.test(ref));
@@ -72,15 +72,22 @@ function copyRenderer(source, target) {
 }
 
 if (!skipBuild) {
-  console.log('[linux-server] Building renderer and Java solver…');
+  console.log('[linux-server] 构建渲染层、Java 求解器与官网…');
+  // 顺序不可交换：应用构建会清空 dist/，官网产物（dist/site）必须在其之后生成。
   if (process.platform === 'win32') {
-    run('cmd.exe', ['/d', '/s', '/c', 'npm run build']);
+    run('cmd.exe', ['/d', '/s', '/c', 'npm run build && npm run build:site']);
   } else {
     run('npm', ['run', 'build']);
+    run('npm', ['run', 'build:site']);
   }
 }
 
-for (const required of ['dist/index.html', 'data-schema.json', 'resources/solver/warpweft-solver.jar']) {
+for (const required of [
+  'dist/index.html',
+  'dist/site/index.html',
+  'data-schema.json',
+  'resources/solver/warpweft-solver.jar',
+]) {
   if (!fs.existsSync(path.join(root, required))) {
     throw new Error('缺少打包文件：' + required + (required.includes('solver') ? '（先运行 npm run build:solver）' : ''));
   }
@@ -112,17 +119,22 @@ const runtimePackage = {
 };
 fs.writeFileSync(path.join(stage, 'package.json'), JSON.stringify(runtimePackage, null, 2) + '\n', 'utf8');
 
-const renderer = verifyRendererAssets(path.join(stage, 'dist'));
+// 应用入口与官网入口的资源引用合并进同一份 assetHashes：
+// verify-manifest.cjs 按 dist/<引用路径> 解析，因此官网资源（dist/site/assets/*）
+// 无需改动校验脚本即可获得完整性保护。
+const renderer = verifyRendererAssets(path.join(stage, 'dist'), 'index.html');
+const site = verifyRendererAssets(path.join(stage, 'dist'), 'site/index.html');
 const manifest = {
   appVersion: version,
   schemaVersion: Number(schema.version) || 1,
   solverProtocol: schema.solverProtocol || '1.0',
   capabilities: Array.isArray(schema.features) ? schema.features : [],
   builtAt: new Date().toISOString(),
-  assetCount: renderer.count,
-  assetHashes: renderer.hashes,
+  assetCount: renderer.count + site.count,
+  assetHashes: { ...renderer.hashes, ...site.hashes },
   hashes: {
     rendererIndex: sha256(path.join(stage, 'dist', 'index.html')),
+    siteIndex: sha256(path.join(stage, 'dist', 'site', 'index.html')),
     serverApi: sha256(path.join(stage, 'server', 'api', 'api.cjs')),
     serverEntry: sha256(path.join(stage, 'linux_server', 'server.cjs')),
     dataSchema: sha256(path.join(stage, 'data-schema.json')),
@@ -130,7 +142,11 @@ const manifest = {
   },
 };
 fs.writeFileSync(path.join(stage, 'warpweft-build.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
-console.log('[linux-server] renderer assets: ' + renderer.count + ', schema v' + manifest.schemaVersion);
+console.log(
+  '[linux-server] renderer assets: ' + renderer.count +
+    ', site assets: ' + site.count +
+    ', schema v' + manifest.schemaVersion,
+);
 
 fs.mkdirSync(outputDir, { recursive: true });
 fs.rmSync(tarPath, { force: true });
