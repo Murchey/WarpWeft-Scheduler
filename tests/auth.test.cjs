@@ -60,7 +60,7 @@ async function request(ctx, pathname, options = {}, token = '', clientId = 'auth
   return { response, body };
 }
 
-test('server monitoring and config require an admin role', async () => {
+test('monitoring is readable by any signed-in account, but redacted for non-admins', async () => {
   const ctx = await start();
   try {
     const adminLogin = await login(ctx, 'admin', 'admin-pass-123');
@@ -73,25 +73,43 @@ test('server monitoring and config require an admin role', async () => {
     const teacherLogin = await login(ctx, 'monitor-user', 'monitor-pass-123', 'monitor-client');
     const teacherToken = teacherLogin.body.token;
 
-    // 普通账号不能读取服务端拓扑（已连接电脑 IP、CPU 型号、日志），也不能改限额。
-    for (const [pathname, method] of [
-      ['/api/server/overview', 'GET'],
-      ['/api/server/stats', 'GET'],
-      ['/api/server/logs', 'GET'],
-      ['/api/server/clients', 'GET'],
-      ['/api/server/config', 'PUT'],
-    ]) {
-      const result = await request(ctx, pathname, { method, body: method === 'PUT' ? '{}' : undefined }, teacherToken, 'monitor-client');
-      assert.equal(result.response.status, 403, pathname + ' must be admin-only');
-      assert.equal(result.body.code, 'FORBIDDEN', pathname);
-      assert.equal(JSON.stringify(result.body).includes('127.0.0.1'), false, pathname + ' must not leak addresses');
+    // 教师账号也能看到负载与任务 —— 这是产品要求，不是回归。
+    for (const pathname of ['/api/server/overview', '/api/server/stats', '/api/server/logs', '/api/server/clients']) {
+      const result = await request(ctx, pathname, {}, teacherToken, 'monitor-client');
+      assert.equal(result.response.status, 200, pathname + ' must be readable by a signed-in user');
     }
 
-    // 管理员仍可正常读写。
+    const teacherOverview = await request(ctx, '/api/server/overview', {}, teacherToken, 'monitor-client');
+    const tStats = teacherOverview.body.stats;
+    // 能拿到运行指标
+    assert.equal(typeof tStats.cpu.usage, 'number');
+    assert.equal(typeof tStats.uptimeSeconds, 'number');
+    assert.ok(tStats.queue);
+    assert.ok(Array.isArray(teacherOverview.body.jobs));
+    // 但拿不到内网拓扑
+    assert.equal(tStats.host, '·');
+    assert.deepEqual(tStats.addresses, []);
+    assert.equal(tStats.solver.jar, '·');
+    assert.equal(tStats.java.command, '·');
+    assert.deepEqual(tStats.config.allowedCidrs, []);
+    for (const client of teacherOverview.body.clients) assert.equal(client.ip, '·');
+    // 日志在服务端就已脱敏（不依赖前端正则）
+    for (const item of teacherOverview.body.logs.items) {
+      assert.doesNotMatch(String(item.message), /\b\d{1,3}(?:\.\d{1,3}){3}\b/, 'log must not contain raw IP');
+    }
+
+    // 管理员看到完整拓扑
     const adminOverview = await request(ctx, '/api/server/overview', {}, adminToken);
     assert.equal(adminOverview.response.status, 200);
-    const adminConfig = await request(ctx, '/api/server/config', { method: 'PUT', body: JSON.stringify({ queueCapacity: 24 }) }, adminToken);
-    assert.equal(adminConfig.response.status, 200);
+    assert.notEqual(adminOverview.body.stats.host, '·');
+    assert.notEqual(adminOverview.body.stats.solver.jar, '·');
+
+    // 写操作仍然只限管理员
+    const configByUser = await request(ctx, '/api/server/config', { method: 'PUT', body: JSON.stringify({ queueCapacity: 30 }) }, teacherToken, 'monitor-client');
+    assert.equal(configByUser.response.status, 403);
+    assert.equal(configByUser.body.code, 'FORBIDDEN');
+    const configByAdmin = await request(ctx, '/api/server/config', { method: 'PUT', body: JSON.stringify({ queueCapacity: 24 }) }, adminToken);
+    assert.equal(configByAdmin.response.status, 200);
   } finally {
     await ctx.close();
     fs.rmSync(ctx.dataDir, { recursive: true, force: true });

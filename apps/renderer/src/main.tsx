@@ -3375,13 +3375,12 @@ function ServerPage({
   const logRef = useRef<HTMLDivElement | null>(null);
   const inFlightRef = useRef(false);
 
-  // 服务端监控与限额接口在 Linux 服务端只对管理员开放；
-  // 普通账号不应轮询这些接口，否则会不断收到 403 并弹出监控异常横幅。
+  // 监控数据对所有已登录账号可见（教师也能看负载与任务）；
+  // 管理员额外拥有改限额、断开客户端与用户管理的能力。
   const canManageServer = !showUserManagement || authUser?.role === 'admin';
 
   const refresh = useCallback(async () => {
     if (inFlightRef.current) return;
-    if (!canManageServer) return;
     inFlightRef.current = true;
     try {
       const overview = await fetchServerOverview(sinceRef.current);
@@ -3405,7 +3404,7 @@ function ServerPage({
     } finally {
       inFlightRef.current = false;
     }
-  }, [canManageServer]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -3479,9 +3478,7 @@ function ServerPage({
       {pollError ? <Banner tone="error" title="服务端监控异常" onClose={() => setPollError('')}>{pollError}</Banner> : null}
       {actionError ? <Banner tone="error" title="操作未完成" onClose={() => setActionError('')}>{actionError}</Banner> : null}
       {apiOnline === false ? <Banner tone="warning" title="服务端未连接">当前无法读取服务端状态，请先启动服务端 API。</Banner> : null}
-      {!canManageServer ? (
-        <div className="server-loading"><strong>服务端监控只对管理员开放</strong></div>
-      ) : !stats ? (
+      {!stats ? (
         <div className="server-loading"><strong>正在读取本机服务端状态…</strong></div>
       ) : (
         <>

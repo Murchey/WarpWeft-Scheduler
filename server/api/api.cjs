@@ -1586,6 +1586,51 @@ function startApi({
     };
   }
 
+  /**
+   * 非管理员视图：保留负载、队列与任务，去掉内网拓扑。
+   * 教师需要的是「服务器忙不忙、我的排课跑到哪了」，不是内网 IP 与安装路径。
+   */
+  function redactStatsForNonAdmin(stats) {
+    return {
+      ...stats,
+      host: '·',
+      port: 0,
+      addresses: [],
+      pid: 0,
+      cpu: { ...stats.cpu, model: '·' },
+      java: { available: stats.java.available, version: stats.java.version, command: '·', output: '' },
+      solver: { engine: stats.solver.engine, jar: '·', ready: stats.solver.ready },
+      config: { ...stats.config, allowedCidrs: [] },
+    };
+  }
+
+  /**
+   * 非管理员看到的日志做服务端脱敏。
+   * 前端 maskText 只是兜底；真正的出口在服务端，否则 curl 一下就能拿到原文。
+   */
+  function redactLogMessage(message) {
+    return String(message ?? '')
+      .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, '***.***.***.***')
+      .replace(/https?:\/\/[^\s，,。]+/g, '<url>')
+      .replace(/\/(?:var|opt|home|etc|root|usr)\/[^\s，,。]*/g, '<path>')
+      .replace(/[A-Za-z]:\\[^\s，,。]*/g, '<path>');
+  }
+
+  /** 非管理员看不到其他电脑的 IP 与 clinetId。 */
+  function redactClientForNonAdmin(client) {
+    return {
+      id: client.idShort ? client.idShort : String(client.id || '').slice(0, 8),
+      idShort: client.idShort || String(client.id || '').slice(0, 8),
+      ip: '·',
+      anonymous: client.anonymous,
+      firstSeen: client.firstSeen,
+      lastSeen: client.lastSeen,
+      requests: client.requests,
+      running: client.running,
+      queued: client.queued,
+    };
+  }
+
   function applyConfig(patch, req, res) {
     const normalized = normalizeConfig(patch, config);
     const previousBind = config.bindAddress;
@@ -1794,32 +1839,36 @@ function startApi({
         }
       }
 
-      // 服务端监控接口泄漏内网拓扑（已连接电脑 IP、CPU 型号、绝对路径、求解日志），
-      // 因此桌面模式（authEnabled=false）照旧开放，Linux 服务端仅限管理员。
-      if (authEnabled && isApi && authSession && authSession.user.role !== 'admin' && (
-        (req.method === 'GET' && (
-          url.pathname === '/api/server/stats' ||
-          url.pathname === '/api/server/overview' ||
-          url.pathname === '/api/server/logs' ||
-          url.pathname === '/api/server/clients'
-        )) || (req.method === 'PUT' && url.pathname === '/api/server/config')
+      // 监控只读接口对所有已登录账号开放：管理员与普通用户都能看到负载与任务，
+      // 但非管理员拿到的是脱敏视图（无客户端 IP、无监听地址、无求解器绝对路径）。
+      // 写操作仍限管理员：改限额、断开客户端、取消他人任务。
+      const isNonAdmin = Boolean(authEnabled && isApi && authSession && authSession.user.role !== 'admin');
+      if (isNonAdmin && (
+        (req.method === 'PUT' && url.pathname === '/api/server/config') ||
+        (req.method === 'DELETE' && /^\/api\/server\/clients\/[^/]+$/.test(url.pathname))
       )) {
-        return fail(res, 403, '只有管理员可以查看或修改服务端状态', 'FORBIDDEN');
+        return fail(res, 403, '只有管理员可以修改服务端配置或断开客户端', 'FORBIDDEN');
       }
 
       if (req.method === 'GET' && url.pathname === '/api/server/stats') {
-        return send(res, 200, serverStats());
+        const stats = serverStats();
+        return send(res, 200, isNonAdmin ? redactStatsForNonAdmin(stats) : stats);
       }
       if (req.method === 'GET' && url.pathname === '/api/server/overview') {
         const since = Number(url.searchParams.get('sinceLog') || url.searchParams.get('since') || 0);
         const items = logs.filter((item) => item.seq > since);
+        const stats = serverStats();
+        const clientList = Array.from(clients.values()).map(clientSummary);
         return send(res, 200, {
-          stats: serverStats(),
+          stats: isNonAdmin ? redactStatsForNonAdmin(stats) : stats,
           jobs: jobs.slice().reverse().map(jobSummary),
-          logs: { items, lastSeq: logSequence },
-          config,
+          logs: {
+            items: isNonAdmin ? items.map((item) => ({ ...item, message: redactLogMessage(item.message) })) : items,
+            lastSeq: logSequence,
+          },
+          config: isNonAdmin ? { ...config, allowedCidrs: [] } : config,
           effective,
-          clients: Array.from(clients.values()).map(clientSummary),
+          clients: isNonAdmin ? clientList.map(redactClientForNonAdmin) : clientList,
         });
       }
       if (req.method === 'GET' && url.pathname === '/api/server/jobs') {
@@ -1828,11 +1877,15 @@ function startApi({
       if (req.method === 'GET' && url.pathname === '/api/server/logs') {
         const since = Number(url.searchParams.get('since') || 0);
         const items = logs.filter((item) => item.seq > since);
-        return send(res, 200, { logs: items, lastSeq: logSequence });
+        return send(res, 200, {
+          logs: isNonAdmin ? items.map((item) => ({ ...item, message: redactLogMessage(item.message) })) : items,
+          lastSeq: logSequence,
+        });
       }
       if (req.method === 'GET' && url.pathname === '/api/server/clients') {
+        const list = Array.from(clients.values()).map(clientSummary);
         return send(res, 200, {
-          clients: Array.from(clients.values()).map(clientSummary),
+          clients: isNonAdmin ? list.map(redactClientForNonAdmin) : list,
           max: config.maxClients,
         });
       }

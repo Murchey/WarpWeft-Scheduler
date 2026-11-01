@@ -120,18 +120,21 @@ export function StatusPanel() {
         ) : null}
 
         {status.phase === 'anonymous' ? (
-          <div className="site-status-grid">
-            <div className="site-status-cell">
-              <span>{t('status.publicInfo')}</span>
-              <b>{status.health?.appVersion ?? '—'}</b>
-            </div>
-            <div className="site-status-cell">
-              <span>SCHEMA</span>
-              <b>{status.health?.schemaVersion ?? '—'}</b>
-            </div>
-            <div className="site-status-cell">
-              <span>{t('status.solver')}</span>
-              <b>{status.health?.solver?.ready ? t('status.solverReady') : t('status.solverDown')}</b>
+          <div>
+            <p className="site-status-note">{t('status.anonymousHint')}</p>
+            <div className="site-status-grid">
+              <div className="site-status-cell">
+                <span>{t('status.publicInfo')}</span>
+                <b>{status.health?.appVersion ?? '—'}</b>
+              </div>
+              <div className="site-status-cell">
+                <span>SCHEMA</span>
+                <b>{status.health?.schemaVersion ?? '—'}</b>
+              </div>
+              <div className="site-status-cell">
+                <span>{t('status.solver')}</span>
+                <b>{status.health?.solver?.ready ? t('status.solverReady') : t('status.solverDown')}</b>
+              </div>
             </div>
           </div>
         ) : null}
