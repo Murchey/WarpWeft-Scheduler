@@ -66,6 +66,8 @@ function startFromEnv(env = process.env, overrides = {}) {
     port,
     host,
     packaged: false,
+    // Linux 端只提供官网 + 监控 + API，不提供桌面 UI（排课界面只在 Electron 里跑）。
+    serverUi: false,
     solverJar,
     configFile: path.join(dataDir, 'server-config.json'),
     trustProxy,

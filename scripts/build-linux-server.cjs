@@ -54,23 +54,6 @@ function verifyRendererAssets(distDir, htmlRelative = 'index.html') {
   return { count: refs.length, hashes };
 }
 
-function copyRenderer(source, target) {
-  const src = path.join(root, source);
-  const dst = path.join(stage, target);
-  fs.mkdirSync(dst, { recursive: true });
-  const excluded = new Set([
-    'linux-server',
-    'win-unpacked',
-    'builder-debug.yml',
-    'builder-effective-config.yaml',
-    'latest.yml',
-  ]);
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    if (excluded.has(entry.name) || entry.name.endsWith('.exe') || entry.name.endsWith('.blockmap')) continue;
-    fs.cpSync(path.join(src, entry.name), path.join(dst, entry.name), { recursive: true });
-  }
-}
-
 if (!skipBuild) {
   console.log('[linux-server] 构建渲染层、Java 求解器与官网…');
   // 顺序不可交换：应用构建会清空 dist/，官网产物（dist/site）必须在其之后生成。
@@ -82,8 +65,9 @@ if (!skipBuild) {
   }
 }
 
+// Linux 端只发布官网（dist/site）。桌面 UI（dist/index.html + dist/assets）刻意不进包：
+// Linux 服务端的职责是「官网 + 监控 + API 运算」，不是把 Electron 界面搬到浏览器里跑。
 for (const required of [
-  'dist/index.html',
   'dist/site/index.html',
   'data-schema.json',
   'resources/solver/warpweft-solver.jar',
@@ -104,7 +88,8 @@ fs.mkdirSync(stage, { recursive: true });
 
 copy('linux_server', 'linux_server');
 copy('server/api', 'server/api');
-copyRenderer('dist', 'dist');
+// 只拷贝 dist/site（官网产物），不拷贝 dist/index.html 与 dist/assets（桌面 UI）。
+copy(path.join('dist', 'site'), path.join('dist', 'site'));
 copy('resources/solver/warpweft-solver.jar', 'resources/solver/warpweft-solver.jar');
 copy('data-schema.json', 'data-schema.json');
 copy('guideline.md', 'guideline.md');
@@ -119,10 +104,7 @@ const runtimePackage = {
 };
 fs.writeFileSync(path.join(stage, 'package.json'), JSON.stringify(runtimePackage, null, 2) + '\n', 'utf8');
 
-// 应用入口与官网入口的资源引用合并进同一份 assetHashes：
-// verify-manifest.cjs 按 dist/<引用路径> 解析，因此官网资源（dist/site/assets/*）
-// 无需改动校验脚本即可获得完整性保护。
-const renderer = verifyRendererAssets(path.join(stage, 'dist'), 'index.html');
+// 只校验官网资源。Linux 包不再包含桌面 UI，因此没有 renderer 入口可校验。
 const site = verifyRendererAssets(path.join(stage, 'dist'), 'site/index.html');
 const manifest = {
   appVersion: version,
@@ -130,10 +112,10 @@ const manifest = {
   solverProtocol: schema.solverProtocol || '1.0',
   capabilities: Array.isArray(schema.features) ? schema.features : [],
   builtAt: new Date().toISOString(),
-  assetCount: renderer.count + site.count,
-  assetHashes: { ...renderer.hashes, ...site.hashes },
+  assetCount: site.count,
+  assetHashes: { ...site.hashes },
   hashes: {
-    rendererIndex: sha256(path.join(stage, 'dist', 'index.html')),
+    // rendererIndex 已移除：Linux 端不发布桌面 UI。
     siteIndex: sha256(path.join(stage, 'dist', 'site', 'index.html')),
     serverApi: sha256(path.join(stage, 'server', 'api', 'api.cjs')),
     serverEntry: sha256(path.join(stage, 'linux_server', 'server.cjs')),
@@ -143,9 +125,7 @@ const manifest = {
 };
 fs.writeFileSync(path.join(stage, 'warpweft-build.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 console.log(
-  '[linux-server] renderer assets: ' + renderer.count +
-    ', site assets: ' + site.count +
-    ', schema v' + manifest.schemaVersion,
+  '[linux-server] site assets: ' + site.count + ', schema v' + manifest.schemaVersion,
 );
 
 fs.mkdirSync(outputDir, { recursive: true });

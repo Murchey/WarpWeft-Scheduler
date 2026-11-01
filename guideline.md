@@ -13,16 +13,14 @@
 ## 2. 架构与数据流
 
 ```
-浏览器（官网 + 同一套 React UI）
-        │  HTTP/HTTPS
-        ▼
-Nginx（TLS；可选 Basic Auth、访问日志）
+浏览器（仅官网 + 运行状态面板）        Electron 桌面端（排课等全部功能）
+        │  HTTP/HTTPS                          │  HTTP(S) /api
+        ▼                                      │
+Nginx（TLS；可选 Basic Auth、访问日志）        │
         ├── / 与 /site/  → 官网静态文件（/opt/warpweft/dist/site，公开）
-        ├── /app/        → proxy_pass 127.0.0.1:4317/（应用，需登录）
-        ├── /assets/     → proxy_pass 127.0.0.1:4317（应用 bundle 兜底）
-        └── /api/        → proxy_pass 127.0.0.1:4317（接口，需登录）
+        └── /api/        → proxy_pass 127.0.0.1:4317（接口，需登录） ◄──┘
                               ▼
-linux_server/server.cjs（Node，HTTP API + 应用静态文件）
+linux_server/server.cjs（Node，纯 API 服务，不提供网页界面）
         ├── /var/lib/warpweft/warpweft.json     工作区数据
         ├── /var/lib/warpweft/server-config.json 服务端限额
         ├── /var/lib/warpweft/users.json         Linux 用户与密码哈希
@@ -34,7 +32,8 @@ linux_server/server.cjs（Node，HTTP API + 应用静态文件）
               Java Solver（每个任务一个 JVM，默认 -Xmx512m）
 ```
 
-- 应用页面由 Node 从安装目录的 `dist/` 提供（对外路径 `/app/`）；官网页面是 `dist/site/` 下的静态文件，由 Nginx 直接提供，不经过 Node。生产环境不需要 Vite。
+- **Linux 服务端只做三件事**：官网（静态）、运行状态监控（浏览器，管理员登录）、以及供桌面端调用的 API 运算。**不提供网页版排课界面**——排课、导入、调代课、导出等全部功能只在 Electron 桌面端运行，`/app/` 与 `/assets/` 一律 404。
+- 官网页面是 `dist/site/` 下的静态文件，由 Nginx 直接提供，不经过 Node；Linux 安装包里**不包含**桌面 UI（`dist/index.html` 与 `dist/assets/`），包体因此从 4.1 MiB 降到 3.2 MiB。生产环境不需要 Vite。
 - 短时排课请求和长时检查点任务共用同一个 Java 求解器。
 - 默认单工作区、单长时任务；短时任务按服务端配置排队。
 - 数据以 UTF-8 JSON 文件保存，写入采用临时文件 + rename；没有外部数据库。
@@ -153,8 +152,8 @@ warpweft/
   linux_server/warpweft.env.example
   linux_server/nginx.conf.example
   server/api/*.cjs      # 含 auth.cjs、audit.cjs
-  dist/                 # 浏览器 UI（应用入口 index.html）
   dist/site/            # 产品介绍官网（静态页面，由 Nginx 直接提供）
+                        # 注：包内不再包含桌面 UI（dist/index.html、dist/assets/）
   resources/solver/warpweft-solver.jar
   data-schema.json
   package.json          # 精简运行时元数据，无 Electron/Vite 依赖
@@ -190,7 +189,7 @@ journalctl -u warpweft -n 50 --no-pager
 bash /opt/warpweft/linux_server/verify.sh
 ```
 
-登录启用时，`verify.sh` 默认只检查 health 和应用页面（应用入口已统一为 `/app/`，直连 4317 与经 Nginx 反代都能命中）；设置 `WARPVEFT_VERIFY_USERNAME`/`WARPVEFT_VERIFY_PASSWORD` 后会额外登录并检查 `/api/data`，设置 `WARPVEFT_SITE_URL` 后会额外校验官网首页。例如：
+登录启用时，`verify.sh` 会检查 health、**确认 `/app/` 确实返回 404**（Linux 端不应有桌面 UI），并在设置 `WARPVEFT_SITE_URL` 后校验官网首页、设置 `WARPVEFT_VERIFY_USERNAME`/`WARPVEFT_VERIFY_PASSWORD` 后登录并检查 `/api/data`。例如：
 
 ```bash
 WARPVEFT_BASE_URL=https://scheduler.example.edu \
@@ -215,20 +214,23 @@ sudo systemctl reload nginx
 | 路径 | 内容 | 是否需要登录 |
 | --- | --- | --- |
 | `/` | 产品介绍官网（静态页面） | 否 |
-| `/site/` | 官网资源 | 否 |
-| `/app/` | 排课应用（完整界面） | 是 |
+| `/site/` | 官网资源（含运行状态面板） | 否 |
 | `/api/` | 后端接口 | 是（`/api/health`、`/api/auth/login` 除外） |
+| `/app/` | **不提供**，返回 404 | — |
+
+> ⚠️ Linux 服务端**不再是网页版排课系统**。排课、导入、调代课、导出等全部功能只在 Electron 桌面端运行；浏览器里只能看官网和管理员可见的运行状态面板。`/app/` 与 `/assets/` 会被明确拒绝，避免把桌面 UI 搬到浏览器里。
 
 把浏览器访问地址设为：
 
 ```text
-http://<服务器域名或IP>/         # 官网
-http://<服务器域名或IP>/app/     # 排课应用（需登录）
+http://<服务器域名或IP>/         # 官网（含运行状态面板）
 ```
+
+桌面端连接此服务器时，在「设置 → 运行模式」里选 `lan-client` 或 `cloud`，填入 `https://<域名>`。
 
 如果使用 HTTPS，用 certbot 或现有证书配置 443，再把 80 重定向到 443。Nginx 示例中的 `X-Forwarded-For $remote_addr` 会覆盖客户端伪造头，服务端只信任同机回环代理。
 
-`certbot --nginx --redirect` 之后务必用 `sudo nginx -T` 复核四个 `location`（`/`、`/site/`、`/app/`、`/api/`）都还在 443 的 server 块内。
+`certbot --nginx --redirect` 之后务必用 `sudo nginx -T` 复核三个 `location`（`/`、`/site/`、`/api/`）都还在 443 的 server 块内。
 
 > 上面是「照做就能跑」的最短路径。示例配置里每个 `location` **为什么这么写**、改错会有什么现象、以及 `sites-available` 布局的差异，见 **6.3.1**。官网的备案号与公告配置见 **6.1.2**。
 
@@ -237,7 +239,7 @@ http://<服务器域名或IP>/app/     # 排课应用（需登录）
 官网「运行状态」区块会调用 `/api/health` 与 `/api/server/overview`，展示 CPU、内存、求解器状态、任务队列与求解日志。
 
 - **只读**：不提供取消任务、删除任务、修改服务端配置等写操作。
-- **需要登录**：面板的登录态与 `/app/` 应用共用同一个浏览器凭证（localStorage 的 `warpweft-auth-token:<origin>`），在应用里登录后再打开官网无需重复登录。
+- **需要登录**：在官网「运行状态」区块直接登录服务端账号（凭证存在 localStorage 的 `warpweft-auth-token:<origin>`）。
 - **仅管理员可见**：`/api/server/{overview,stats,logs,clients}` 与 `PUT /api/server/config` 都会校验 admin 角色，普通账号请求返回 403；公网匿名访客只能拿到 `/api/health` 的公开字段。
 - **不占连接名额**：上述只读监控接口不计入「已连接电脑」配额（默认 8 台），官网轮询不会挤掉教务电脑；写操作仍按客户端实名计数。
 - **脱敏**：日志中的 IPv4、绝对路径与账号名会被掩码替换；面板不展示服务端监听地址、内网 IP 与求解器 jar 的绝对路径。
@@ -346,7 +348,7 @@ sudo htpasswd -c /etc/nginx/.htpasswd warpweft-admin
 sudo certbot --nginx -d scheduler.example.edu
 ```
 
-并在 Nginx 的 `location ^~ /app/` 与 `location ^~ /api/` 内部启用示例里的 `auth_basic` / `auth_basic_user_file`。**不要写在 server 级或 `location /`**：那会把本应公开访问的官网首页也加上认证弹窗。TLS 终止在 Nginx，Node 只监听回环；服务端环境保留：
+并在 Nginx 的 `location ^~ /api/` 内部启用示例里的 `auth_basic` / `auth_basic_user_file`。**不要写在 server 级或 `location /`**：那会把本应公开访问的官网首页（及其运行状态登录框）也加上认证弹窗。TLS 终止在 Nginx，Node 只监听回环；服务端环境保留：
 
 ```text
 WARPVEFT_TRUST_PROXY=1
@@ -363,7 +365,7 @@ WARPVEFT_TRUST_PROXY=1
 ```text
 https://scheduler.example.edu/                → 官网首页（公开，Nginx 读磁盘）
 https://scheduler.example.edu/site/…          → 官网资源（公开，Nginx 读磁盘）
-https://scheduler.example.edu/app/…           → 排课应用（需登录，反代到 Node）
+https://scheduler.example.edu/app/…           → 404（Linux 端不提供桌面 UI）
 https://scheduler.example.edu/api/…           → 后端接口（需登录，反代到 Node）
 ```
 
@@ -435,26 +437,14 @@ location = / {
 - `location = /index.html { return 301 /; }` —— 历史上 `/index.html` 是应用入口，现在让给官网；
 - `location = /site/ { return 301 /; }` —— 让 `/site/` 也落到官网首页。
 
-#### `location ^~ /app/`：剥前缀反代
+#### `location = /app` 与 `^~ /app/`：明确拒绝
 
 ```nginx
-location = /app { return 301 /app/$is_args$args; }   # 补尾斜杠
-
-location ^~ /app/ {
-    proxy_pass http://warpweft_server/;   # ← 末尾的 / 很关键
-    proxy_buffering off;
-    proxy_read_timeout 900s;
-    proxy_send_timeout 900s;
-}
+location = /app  { return 404; }
+location ^~ /app/ { return 404; }
 ```
 
-- **`proxy_pass` 末尾带 `/`** 表示"把 `/app/` 前缀替换掉再转发"：`/app/assets/x.js` → `/assets/x.js` → `dist/assets/x.js`。若漏掉末尾斜杠，Node 收到的是 `/app/assets/x.js`，找不到文件。
-- **补尾斜杠的重定向**：应用产物用的是相对路径 `./assets/`，只有 `/app/` 形态才能正确解析；`/app`（无斜杠）会解析成 `/assets/`，因此 301 到 `/app/`。
-- `proxy_buffering off` + 900s 超时：长时排课的结果是流式返回的，缓冲打开会导致进度迟迟不到、或大响应被截断。
-
-#### `location ^~ /assets/`：应用 bundle 的根路径兜底
-
-再代理一层，接住 `/app` 无斜杠时解析出的 `/assets/*`，也作为漏配 `/app/` 时的缓冲。
+Linux 服务端不提供网页版排课界面（见第 2 章）。这里**主动返回 404 而不是交给 Node**：一旦哪天有人把桌面 UI 打回包里，Nginx 这一层仍然挡住，不会意外把 Electron 界面暴露到浏览器。同理也不再需要 `location ^~ /assets/` 兜底。
 
 #### `location ^~ /api/`
 
@@ -481,12 +471,11 @@ location ^~ /api/ {
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
 | 官网白屏，控制台 `Failed to load module script` / MIME 不符 | `/site/` 缺少 `try_files … =404`，404 资源回落成 HTML | 补 `try_files $uri =404` |
-| `/app/` 打开是官网首页 | `proxy_pass` 漏了末尾 `/`，或 `location = /` 抢了匹配 | 检查 `proxy_pass http://warpweft_server/;` |
-| `/app`（无斜杠）样式全丢、控制台 404 `/assets/*` | 缺少 301 补斜杠 | 补 `location = /app { return 301 /app/…; }` |
+| `/app/` 竟然能打开排课界面 | 桌面 UI 被打回了包里，或 Nginx 少了拒绝规则 | 确认包内无 `dist/index.html`；`location ^~ /app/ { return 404; }` 必须在 |
 | 改完备案号/公告不生效 | 命中了 `^~ /site/` 的 1 小时缓存 | 确认有 `location = /site/site-config.json` 且为 `no-cache` |
-| 官网首页被弹 Basic Auth | `auth_basic` 写在了 server 级或 `location /` | 只写在 `/app/` 与 `/api/` 内部 |
+| 官网首页被弹 Basic Auth | `auth_basic` 写在了 server 级或 `location /` | 只写在 `/api/` 内部 |
 | 登录限流失效 / 网段白名单形同虚设 | `X-Forwarded-For` 用了 `$proxy_add_x_forwarded_for` | 改回 `$remote_addr` 覆盖 |
-| 长时任务进度不动、响应截断 | 缺少 `proxy_buffering off` | 在 `/app/`、`/api/` 内补上 |
+| 长时任务进度不动、响应截断 | 缺少 `proxy_buffering off` | 在 `/api/` 内补上 |
 | 上传工作区报 413 | `client_max_body_size` 小于实际数据 | 调大（示例 8m，服务端上限 5 MiB） |
 
 #### 非 conf.d 布局（sites-available / sites-enabled）
@@ -510,7 +499,7 @@ sudo systemctl reload nginx         # reload 不断连接；restart 会掐断正
 
 # 四个入口逐个验证
 curl -sSI https://scheduler.example.edu/            | head -1   # 200
-curl -sSI https://scheduler.example.edu/app/        | head -1   # 200
+curl -sSI https://scheduler.example.edu/app/        | head -1   # 404（预期）
 curl -sS  https://scheduler.example.edu/site/site-config.json -D- -o/dev/null | grep -i cache-control  # no-cache
 curl -sS  https://scheduler.example.edu/api/health                # {"ok":true,...}
 ```
@@ -721,7 +710,7 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-此时 `http://scheduler.example.edu/` 应打开产品介绍官网；加上 `/app/`（即 `http://scheduler.example.edu/app/`）才进入需要登录的排课应用。**在配置 HTTPS 之前不要录入真实密码**，先用临时测试账号或直接进入下一步。
+此时 `http://scheduler.example.edu/` 应打开产品介绍官网，其中的「运行状态」区块可登录管理员查看服务端负载；`/app/` 返回 404——排课在桌面端进行。**在配置 HTTPS 之前不要录入真实密码**，先用临时测试账号或直接进入下一步。
 
 申请 Let's Encrypt 证书并强制跳转 HTTPS：
 
@@ -746,7 +735,7 @@ sudo apt install -y apache2-utils
 sudo htpasswd -c /etc/nginx/.htpasswd warpweft-admin
 ```
 
-然后在 Nginx 的 `location ^~ /app/` 与 `location ^~ /api/` 内部启用示例里的 `auth_basic` 和 `auth_basic_user_file`（**不要写在 `location /`**，否则公开访问的官网首页也会被弹框），执行 `sudo nginx -t && sudo systemctl reload nginx`。这会让访问应用与接口的人先弹一次浏览器认证框；课堂多人使用时通常只保留应用登录即可，或用 VPN/安全组限制来源。
+然后在 Nginx 的 `location ^~ /api/` 内部启用示例里的 `auth_basic` 和 `auth_basic_user_file`（**不要写在 `location /`**，否则公开访问的官网首页也会被弹框），执行 `sudo nginx -t && sudo systemctl reload nginx`。这会让访问应用与接口的人先弹一次浏览器认证框；课堂多人使用时通常只保留应用登录即可，或用 VPN/安全组限制来源。
 
 #### 6.5.5 云上验收
 
@@ -762,8 +751,8 @@ curl -I https://scheduler.example.edu/
 # 2b. 官网首页（公开）应返回官网挂载点
 curl -s https://scheduler.example.edu/ | grep 'id="site-root"'
 
-# 2c. 应用入口（需登录）应返回应用挂载点
-curl -s https://scheduler.example.edu/app/ | grep '<div id="root">'
+# 2c. 桌面 UI 不应存在（Linux 端只提供官网与 API）
+curl -s -o /dev/null -w '%{http_code}\n' https://scheduler.example.edu/app/   # 期望 404
 
 # 3. 4317 从公网必须不可达（超时或拒绝）
 curl -m 5 http://<公网IP>:4317/
@@ -1447,7 +1436,7 @@ sudo nginx -T 2>/dev/null | grep -i warpweft || true
 | 官网页脚没有备案号 | `icp` 为空或含多余空格；填完整备案号后强制刷新。 |
 | 升级后官网配置被重置 | `install.sh` 整体替换 `/opt/warpweft`，`dist/site/site-config.json` 被覆盖；按 6.1.2 备份还原。 |
 | 普通账号打开「服务端」页显示「只对管理员开放」 | 设计如此：监控与限额接口校验 admin 角色；用管理员账号查看，或参考 6.1.1。 |
-| `/app`（无斜杠）打开样式丢失、请求 `/assets/*` 404 | 缺 `location = /app { return 301 /app/…; }`；见 6.3.1。 |
+| `/app/` 竟然能打开排课界面 | 桌面 UI 被打回了包里，或 Nginx 少了拒绝规则；见 6.3.1。 |
 
 ## 10. 验收清单
 
@@ -1502,8 +1491,7 @@ Nginx/TLS 部署还要验证：
 
 ```bash
 curl -sSI https://scheduler.example.edu/         | head -1   # 200，官网首页
-curl -sSI https://scheduler.example.edu/app/     | head -1   # 200，应用外壳
-curl -sSI https://scheduler.example.edu/app      | head -1   # 301 到 /app/
+curl -sSI https://scheduler.example.edu/app/     | head -1   # 404（预期，桌面 UI 不在此提供）
 curl -sS  https://scheduler.example.edu/api/health          # {"ok":true,...}
 # 官网配置：状态 200、Content-Type 为 application/json、Cache-Control 为 no-cache
 curl -sS -D- -o/dev/null https://scheduler.example.edu/site/site-config.json | grep -iE 'HTTP/|content-type|cache-control'
@@ -1514,7 +1502,8 @@ curl -sS -D- -o/dev/null https://scheduler.example.edu/site/site-config.json | g
 - [ ] 官网首页能正常渲染（不是白屏、控制台无 `Failed to load module script`）；
 - [ ] 页面顶部与页脚符合 `site-config.json` 的设置（私有实例提示 / 公告 / 备案号）；
 - [ ] 修改 `site-config.json` 后强制刷新，改动立即生效；
-- [ ] 未登录访问 `/app/` 显示登录框，登录后可正常排课；
+- [ ] `/app/` 返回 404（Linux 端不提供排课界面）；
+- [ ] 管理员在官网「运行状态」登录后能看到 CPU/内存/队列；普通账号看到「只对管理员开放」；
 - [ ] 普通账号打开「服务端」页显示「只对管理员开放」，管理员可看到监控数据。
 
 云服务器还要从**外部机器**验证：

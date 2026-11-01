@@ -1,11 +1,16 @@
-# WarpWeft Scheduler — 单域名三入口配置。
+# WarpWeft Scheduler — Linux 服务端单域名配置。
 #
 # 复制到 /etc/nginx/conf.d/warpweft.conf 后，部署者只需要修改 server_name 一行。
 #
+# Linux 服务端只承担三件事：官网、运行状态监控、供桌面端调用的 API。
+# **不提供排课界面**：排课/导入/调代课等全部功能在 Electron 桌面端完成。
+#
 #   /        产品介绍官网（公开，Nginx 直接提供静态文件，不经过 Node）
 #   /site/   官网资源（公开，静态文件）
-#   /app/    排课应用（需服务端账号登录）
 #   /api/    后端接口（除 /api/health 与 /api/auth/login 外均需登录）
+#   /app/    刻意不提供（返回 404），避免把桌面 UI 搬到浏览器
+#
+# 官网「运行状态」区块登录管理员账号后可查看服务端负载与任务队列。
 #
 # Node 服务保持在 127.0.0.1:4317，不要把它直接暴露到公网。
 # 公网部署必须启用 TLS：sudo certbot --nginx -d <你的域名> --redirect
@@ -64,45 +69,13 @@ server {
     location = /index.html { return 301 /; }
     location = /site/      { return 301 /; }
 
-    # ---------- 3) 排课应用 ----------
-    # 统一收敛到带尾斜杠的 /app/，相对路径解析才唯一确定
-    location = /app { return 301 /app/$is_args$args; }
+    # ---------- 3) 桌面端 UI：Linux 端不提供 ----------
+    # 排课界面只在 Electron 桌面端运行；Linux 服务端只做监控与 API。
+    # 显式拒绝而不是交给 Node，避免把「浏览器里跑排课」这种形态复活。
+    location = /app { return 404; }
+    location ^~ /app/ { return 404; }
 
-    location ^~ /app/ {
-        # proxy_pass 带 URI("/")：Nginx 把 /app/ 前缀替换掉再转发，
-        #   /app/            -> /            -> dist/index.html（应用入口）
-        #   /app/assets/x.js -> /assets/x.js -> dist/assets/x.js（真实文件）
-        #   /app/未知路径     -> Node 的 SPA 兜底 -> 应用入口
-        proxy_pass http://warpweft_server/;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        # 覆盖而非追加：应用只信任第一个地址
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Connection "";
-        proxy_read_timeout 900s;
-        proxy_send_timeout 900s;
-        # 长时求解结果流式返回，必须关闭缓冲
-        proxy_buffering off;
-    }
-
-    # ---------- 4) 兜底：应用 bundle 的根路径形态 ----------
-    # 兼容 /app（无尾斜杠）下解析出的 /assets/*，也作为上一段漏配时的缓冲
-    location ^~ /assets/ {
-        proxy_pass http://warpweft_server;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Connection "";
-        proxy_read_timeout 900s;
-        proxy_send_timeout 900s;
-        proxy_buffering off;
-    }
-
-    # ---------- 5) 后端接口 ----------
+    # ---------- 4) 后端接口 ----------
     location ^~ /api/ {
         proxy_pass http://warpweft_server;
         proxy_http_version 1.1;
@@ -116,7 +89,7 @@ server {
         proxy_buffering off;
     }
 
-    # ---------- 6) 其余路径交给 Node（如 /icon.svg） ----------
+    # ---------- 5) 其余路径交给 Node（如 /icon.svg），未命中会得到 404 ----------
     location / {
         proxy_pass http://warpweft_server;
         proxy_http_version 1.1;
@@ -131,7 +104,8 @@ server {
     }
 
     # Basic Auth 是可选的第二层保护。
-    # ★ 只能放在 /app/ 或 /api/ 的 location 内部——写在 server 级会把本应公开的官网首页也加上弹窗。
+    # ★ 只能放在 /api/ 的 location 内部——写在 server 级会把本应公开的官网首页也加上弹窗，
+    #   而官网「运行状态」区块的登录框同样会被这一步挡住。
     #
     # auth_basic "WarpWeft";
     # auth_basic_user_file /etc/nginx/.htpasswd;

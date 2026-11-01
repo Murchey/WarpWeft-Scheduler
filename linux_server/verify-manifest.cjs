@@ -59,7 +59,7 @@ else {
     }
 
     const files = {
-      rendererIndex: path.join(appDir, 'dist', 'index.html'),
+      // Linux 端不再发布桌面 UI，因此没有 rendererIndex 可校验。
       siteIndex: path.join(appDir, 'dist', 'site', 'index.html'),
       serverApi: path.join(appDir, 'server', 'api', 'api.cjs'),
       serverEntry: path.join(appDir, 'linux_server', 'server.cjs'),

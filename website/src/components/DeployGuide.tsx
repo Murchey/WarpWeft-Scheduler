@@ -4,8 +4,8 @@ import { useSiteI18n } from '../i18n';
 
 const PATHS = [
   { path: '/', key: 'deploy.pathRoot' },
-  { path: '/app/', key: 'deploy.pathApp' },
   { path: '/api/', key: 'deploy.pathApi' },
+  { path: '/app/', key: 'deploy.pathApp' },
 ] as const;
 
 export function DeployGuide() {

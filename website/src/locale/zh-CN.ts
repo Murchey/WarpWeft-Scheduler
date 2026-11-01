@@ -8,7 +8,7 @@ export const zhCN = {
   'nav.shots': '界面',
   'nav.status': '运行状态',
   'nav.deploy': '部署',
-  'nav.enterApp': '进入应用',
+  'nav.enterApp': '服务端状态',
 
   'theme.switch': '主题',
   'lang.switch': 'EN',
@@ -17,14 +17,14 @@ export const zhCN = {
   'hero.kicker': 'WarpWeft Scheduler',
   'hero.lead':
     '单机与局域网小规模排课：Electron/React 商务界面、本地 JSON 数据层、独立 Java 21 求解器。数据留在你自己的机器或服务器上，不依赖云端。',
-  'hero.ctaApp': '进入应用',
+  'hero.ctaApp': '查看运行状态',
   'hero.ctaDeploy': '如何部署',
   'hero.ctaDownload': '下载桌面版',
   'hero.tag.desktop': '桌面版 Electron',
   'hero.tag.local': '本地 JSON 数据层',
   'hero.tag.solver': '独立 Java 21 求解器',
   'hero.tag.selfhost': '支持自部署',
-  'hero.note': '部署后访问 /app/ 打开排课应用，需要服务端账号登录。',
+  'hero.note': 'Linux 服务端只提供官网、运行状态与 API；排课在桌面端完成。管理员登录后可查看服务端负载与任务队列。',
 
   'metrics.title': '规模与性能',
   'metrics.lead': '以下数据来自实测工作区与求解器基准，仅作能力参考。',
@@ -43,7 +43,7 @@ export const zhCN = {
   'status.anonymous': '该实例未启用服务端登录',
   'status.anonymousHint': '仅展示可公开的最小元信息，不显示任务与日志。',
   'status.signinTitle': '登录后查看服务端状态',
-  'status.signinHint': '使用服务端账号登录；会话与 /app/ 应用互通，无需重复登录。',
+  'status.signinHint': '使用服务端账号登录。管理员可查看完整面板；普通教师账号无权查看。',
   'status.username': '账号',
   'status.password': '密码',
   'status.login': '登录',
@@ -73,7 +73,7 @@ export const zhCN = {
   'status.resume': '恢复轮询',
   'status.forget': '清除本站会话',
   'status.forgetHint':
-    '清除本浏览器保存的登录凭证（与 /app/ 应用共用同一凭证，清除后两处都需要重新登录）；不会调用服务端注销接口。',
+    '清除本浏览器保存的登录凭证；这是本地操作，不会调用服务端注销接口（服务端会话仍会在 12 小时后过期）。',
   'status.paused': '轮询已暂停',
   'status.updated': '更新于',
   'status.maskNote': '日志中的 IP 与账号已做脱敏处理。',
@@ -83,7 +83,7 @@ export const zhCN = {
   'deploy.lead': '把部署包放到任意一台 Linux 服务器上，改一行 Nginx 配置即可对外提供服务。',
   'deploy.paths': '访问路径',
   'deploy.pathRoot': '产品介绍官网（公开）',
-  'deploy.pathApp': '排课应用（需登录）',
+  'deploy.pathApp': '桌面端排课界面不在此提供',
   'deploy.pathApi': '后端接口（需登录）',
 
   'footer.built': '官网与排课应用由同一个服务端提供。',

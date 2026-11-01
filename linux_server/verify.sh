@@ -54,16 +54,16 @@ if [ "$auth_required" = "1" ]; then
   fi
 fi
 
-# 根路径现在是官网首页，应用入口统一为 /app/。
-# Node 的静态兜底会把未知路径回落 dist/index.html，因此直连 4317 与经 Nginx 反代
-# （location ^~ /app/ 剥前缀）两种 base_url 都能命中应用入口。
-if curl -fsS --max-time 10 "$base_url/app/" | grep -q '<div id="root">'; then
-  echo "[ok] renderer index"
+# Linux 服务端不提供桌面 UI：排课界面只在 Electron 桌面端运行。
+# 因此这里断言「确实没有」——若又出现排课界面，说明桌面 UI 被打回了包里。
+app_status="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$base_url/app/" || true)"
+if [ "$app_status" = "404" ] || [ "$app_status" = "302" ] || [ "$app_status" = "000" ]; then
+  echo "[ok] desktop UI not served (/app/ -> $app_status)"
 else
-  fail "renderer index"
+  fail "/app/ 返回 $app_status：Linux 端不应再提供桌面 UI"
 fi
 
-# 官网自检：默认 base_url 指向 Node 时根路径是应用，需要显式给出站点地址
+# 官网自检：显式给出站点地址（直连 Node 时根路径会 302 到 /site/）
 site_url="${WARPVEFT_SITE_URL:-}"
 if [ -n "$site_url" ]; then
   if curl -fsS --max-time 10 "$site_url/" | grep -q 'id="site-root"'; then

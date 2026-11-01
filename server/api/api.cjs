@@ -579,6 +579,8 @@ function startApi({
   port = 4317,
   host,
   packaged = false,
+  /** 是否对外提供桌面 UI（Electron 渲染层）。Linux 服务端传 false：只做监控与 API。 */
+  serverUi = true,
   solverCommand,
   solverArgs,
   solverJar,
@@ -2188,14 +2190,35 @@ function startApi({
         }
         const distDir = path.resolve(rootDir, 'dist');
         const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
+        // Linux 服务端不提供桌面 UI（排课界面只在 Electron 里跑）。
+        // 显式拒绝根路径与应用 bundle，避免「把 Electron 界面搬到浏览器」的形态复活。
+        if (!serverUi && (relative === 'index.html' || relative === '' || relative.startsWith('assets/'))) {
+          // 直连 4317 时给运维一个有用去处，而不是干巴巴的 404。
+          if (relative === '' || relative === 'index.html') {
+            res.statusCode = 302;
+            res.setHeader('Location', '/site/');
+            res.end();
+            return;
+          }
+          return fail(res, 404, 'Not found', 'NOT_FOUND');
+        }
         let target = path.resolve(distDir, relative);
         if (!target.startsWith(distDir + path.sep) && target !== path.resolve(distDir, 'index.html')) {
           return fail(res, 403, 'Forbidden', 'FORBIDDEN');
         }
+        // 目录形态（/site/）没有 index 兜底，显式补一次，避免直连时 404。
+        if (fs.existsSync(target) && fs.statSync(target).isDirectory()) {
+          const dirIndex = path.join(target, 'index.html');
+          if (fs.existsSync(dirIndex)) target = dirIndex;
+        }
+        // 未知路径不回落到 index.html，否则任意 URL 都会拿到排课界面。
+        if (!serverUi && !fs.existsSync(target)) {
+          return fail(res, 404, 'Not found', 'NOT_FOUND');
+        }
         if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
           target = path.resolve(distDir, 'index.html');
         }
-        if (!fs.existsSync(target)) return fail(res, 404, 'Renderer not built', 'NOT_FOUND');
+        if (!fs.existsSync(target)) return fail(res, 404, 'Not found', 'NOT_FOUND');
         const immutable = target.startsWith(path.join(distDir, 'assets') + path.sep);
         return sendFile(req, res, target, immutable);
       }

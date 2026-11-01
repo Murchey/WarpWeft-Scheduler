@@ -67,9 +67,20 @@ test('desktop and Linux entry points expose the same server capabilities', async
     // capabilities and limits.
     assert.deepEqual(normalizedHealth(linuxHealth), normalizedHealth(desktopHealth));
 
-    const desktopIndex = await (await fetch('http://127.0.0.1:' + desktopPort + '/')).text();
-    const linuxIndex = await (await fetch('http://127.0.0.1:' + linuxPort + '/')).text();
-    assert.equal(linuxIndex, desktopIndex, 'both entries must serve the same built renderer');
+    // 渲染层只在桌面端提供：Linux 服务端明确不发布桌面 UI。
+    // 不能假设本地存在 dist/index.html —— Linux 包本来就不带它。
+    if (fs.existsSync(path.join(root, 'dist', 'index.html'))) {
+      const desktopIndex = await fetch('http://127.0.0.1:' + desktopPort + '/');
+      assert.equal(desktopIndex.status, 200);
+      assert.match(await desktopIndex.text(), /<div id="root">/);
+    }
+    const linuxIndex = await fetch('http://127.0.0.1:' + linuxPort + '/', { redirect: 'manual' });
+    assert.equal(linuxIndex.status, 302, 'Linux 端根路径应重定向到官网');
+    assert.equal(linuxIndex.headers.get('location'), '/site/');
+    for (const pathname of ['/app/', '/app', '/assets/index.js']) {
+      const blocked = await fetch('http://127.0.0.1:' + linuxPort + pathname, { redirect: 'manual' });
+      assert.equal(blocked.status, 404, 'Linux 端不应提供桌面 UI：' + pathname);
+    }
 
     const desktopData = await (await fetch('http://127.0.0.1:' + desktopPort + '/api/data')).json();
     const linuxData = await (await fetch('http://127.0.0.1:' + linuxPort + '/api/data')).json();

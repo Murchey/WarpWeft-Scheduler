@@ -1,10 +1,13 @@
 /**
  * 官网使用的极薄 API 客户端。
  *
- * 刻意复用应用层 api.ts 的 getApiBase / getAuthToken / getClientId：
- * - 同一个 localStorage key（warpweft-auth-token:<origin>）让官网与 /app/ 应用共享会话；
- * - 同一个 X-Client-Id 让官网不会额外占用「已连接电脑」名额；
+ * 复用应用层 api.ts 的 getApiBase / getAuthToken / getClientId：
+ * - 同一个 localStorage key（warpweft-auth-token:<origin>）保存会话凭证；
+ * - 同一个 X-Client-Id，避免官网额外占用「已连接电脑」名额；
  * - dev 环境下同样解析到 http://127.0.0.1:4317，无需另配代理。
+ *
+ * 注：Linux 服务端不再提供网页版排课界面，官网只消费 /api/health 与
+ * /api/server/overview 这两个只读接口（后者仅管理员可读）。
  */
 
 import { getApiBase, getAuthToken, setAuthToken, clearAuthToken, getClientId } from '../../apps/renderer/src/api';

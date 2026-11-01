@@ -40,7 +40,7 @@ export function SiteHeader() {
         <button type="button" className="site-icon-button" onClick={toggleLang}>
           {lang === 'zh-CN' ? t('lang.switch') : t('lang.switchBack')}
         </button>
-        <a className="site-cta" href="/app/">
+        <a className="site-cta" href="#status">
           {t('nav.enterApp')}
         </a>
       </div>

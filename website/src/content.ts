@@ -300,8 +300,8 @@ export const DEPLOY_STEPS: DeployStep[] = [
   {
     title: { zh: '把子域名写进 Nginx', en: 'Point your subdomain at it' },
     body: {
-      zh: '复制示例配置后，只需要修改 server_name 这一行：根路径是官网，/app/ 是需要登录的应用，/api/ 是后端接口。',
-      en: 'Copy the sample config and change exactly one line — server_name. / is this site, /app/ is the app behind login, /api/ is the backend.',
+      zh: '复制示例配置后，只需要修改 server_name 这一行：根路径是官网，/api/ 是后端接口。Linux 端不提供排课界面，/app/ 会返回 404。',
+      en: 'Copy the sample config and change exactly one line — server_name. / is this site, /api/ is the backend. The desktop UI is not served on Linux; /app/ returns 404.',
     },
     code: 'sudo cp /opt/warpweft/linux_server/nginx.conf.example /etc/nginx/conf.d/warpweft.conf\n# 只改这一行：server_name warpweft.example.edu;\nsudo nginx -t && sudo systemctl reload nginx',
   },

@@ -14,7 +14,7 @@ export function Hero() {
       <h1>{t('brand.title')}</h1>
       <p>{t('hero.lead')}</p>
       <div className="site-hero-actions">
-        <a className="site-cta" href="/app/">
+        <a className="site-cta" href="#status">
           {t('hero.ctaApp')}
         </a>
         <a className="site-cta ghost" href="#deploy">

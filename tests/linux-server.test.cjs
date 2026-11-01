@@ -53,10 +53,15 @@ test('Linux entry starts the API from environment variables', async () => {
     assert.equal(data.status, 200);
     assert.equal((await data.json()).school.name, '未设置学校');
 
+    // Linux 服务端不提供桌面 UI：根路径重定向到官网，/app/ 必须 404。
+    const index = await fetch('http://127.0.0.1:' + port + '/', { redirect: 'manual' });
+    assert.equal(index.status, 302);
+    assert.equal(index.headers.get('location'), '/site/');
     if (fs.existsSync(path.join(root, 'dist', 'index.html'))) {
-      const index = await fetch('http://127.0.0.1:' + port + '/');
-      assert.equal(index.status, 200);
-      assert.match(await index.text(), /<div id="root">/);
+      for (const pathname of ['/app/', '/app', '/assets/index.js', '/index.html']) {
+        const blocked = await fetch('http://127.0.0.1:' + port + pathname, { redirect: 'manual' });
+        assert.notEqual(blocked.status, 200, 'Linux 端不应提供桌面 UI：' + pathname);
+      }
     }
   } finally {
     await close(context.server);

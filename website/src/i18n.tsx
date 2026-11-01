@@ -6,8 +6,11 @@ import { enUS } from './locale/en-US';
 export type Lang = 'zh-CN' | 'en-US';
 
 /**
- * 与产品界面共用同一个存储键（见 apps/renderer/src/i18n/types.ts），
- * 因此在官网切换语言后打开 /app/ 应用，语言保持一致。
+ * 与桌面端共用同一个存储键（见 apps/renderer/src/i18n/types.ts），
+ * 语言偏好因此在两端一致。
+ *
+ * 注：Linux 服务端已不提供网页版排课界面（见 guideline.md 6.1），
+ * 这里保留共用键只是为了让迁移过的用户偏好不丢。
  */
 export const LANG_STORAGE_KEY = 'warpweft-locale';
 
