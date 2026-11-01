@@ -230,6 +230,8 @@ http://<服务器域名或IP>/app/     # 排课应用（需登录）
 
 `certbot --nginx --redirect` 之后务必用 `sudo nginx -T` 复核四个 `location`（`/`、`/site/`、`/app/`、`/api/`）都还在 443 的 server 块内。
 
+> 上面是「照做就能跑」的最短路径。示例配置里每个 `location` **为什么这么写**、改错会有什么现象、以及 `sites-available` 布局的差异，见 **6.3.1**。官网的备案号与公告配置见 **6.1.2**。
+
 ### 6.1.1 官网内嵌的只读状态面板
 
 官网「运行状态」区块会调用 `/api/health` 与 `/api/server/overview`，展示 CPU、内存、求解器状态、任务队列与求解日志。
@@ -267,6 +269,47 @@ sudo nano /opt/warpweft/dist/site/site-config.json
 | `police` | string | 页脚公安备案号（预留），空串不显示。 |
 
 任何字段都可以缺省或写错类型：配置文件损坏、404、被 Nginx 回退成 HTML 时，官网一律按「全部关闭」渲染，不会白屏。Nginx 示例已把该路径设为 `no-cache`，避免改动被 1 小时静态缓存挡住。
+
+#### 改配置的四步
+
+```bash
+# 1. 编辑（JSON 不允许注释和尾逗号；示例里的 $comment 是普通字段，会一并被忽略）
+sudo nano /opt/warpweft/dist/site/site-config.json
+
+# 2. 语法自检：能解析才算改对
+sudo node -e "JSON.parse(require('fs').readFileSync('/opt/warpweft/dist/site/site-config.json','utf8')); console.log('JSON OK')"
+
+# 3. 确认服务端确实把内容发出去了（看 Cache-Control 应为 no-cache）
+curl -sS -D- -o/dev/null https://scheduler.example.edu/site/site-config.json | grep -i 'cache-control\|content-type'
+
+# 4. 浏览器强制刷新（Ctrl/Cmd+Shift+R）后核对页面
+```
+
+**不需要重启 node 服务，也不需要重新打包**：官网在浏览器里 `fetch` 这个文件，Nginx 直接读磁盘。
+
+> 升级提示：`install.sh` 会用新包整体替换 `/opt/warpweft`，**`dist/site/site-config.json` 会被覆盖回默认值**。升级前先备份，升级后还原：
+>
+> ```bash
+> sudo cp /opt/warpweft/dist/site/site-config.json /root/warpweft-site-config.bak
+> # ……执行升级……
+> sudo cp /root/warpweft-site-config.bak /opt/warpweft/dist/site/site-config.json
+> ```
+
+#### 常见写法错误
+
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| 顶部提示没出现 | 写了 `"privateInstance": "true"`（字符串） | 必须是 JSON 布尔 `true`，不带引号 |
+| 页脚空白 | `icp` 填了空格或空串 | 填完整备案号，如 `京ICP备00000000号-1` |
+| 改完刷新没变化 | 浏览器/中间层缓存 | 强制刷新；确认 Nginx 该路径是 `no-cache`（见上方 curl） |
+| 页面整体异常 | JSON 语法错（尾逗号、中文引号） | 用第 2 步的 `JSON.parse` 自检 |
+| 升级后配置丢失 | 安装包覆盖了 `dist/` | 按上方备份/还原流程重做 |
+
+#### 备案号合规提醒
+
+- **ICP 备案**：域名解析到中国大陆节点的公网服务器并提供网站服务，通常必须完成 ICP 备案（见 6.5.4）。备案通过后，把备案号填进 `icp`，并按规定在首页底部展示、链接到 `beian.miit.gov.cn`——填了 `icp` 时官网页脚会自动生成这个链接，无需手工写 HTML。
+- **公安备案**：网站上线后 30 日内通常还需完成公安联网备案。拿到编号后填 `police`；该字段目前只显示文字，链接地址各地入口不同，如需可点击请自行在页脚模板中补 `href`。
+- 备案主体、域名与页面内容需保持一致；用本配置把官网标记为「用户私有配置的页面」（`privateInstance`）不会免除备案义务。
 
 ### 6.2 直连局域网（不推荐公网）
 
@@ -310,6 +353,169 @@ WARPVEFT_TRUST_PROXY=1
 ```
 
 不要让 4317 暴露在公网。Basic Auth 不能替代应用登录；是否启用取决于使用人群，课堂多人使用时通常只保留应用登录，并用 VPN 或安全组限制来源。
+
+### 6.3.1 Nginx 示例配置逐段说明
+
+示例文件在 `/opt/warpweft/linux_server/nginx.conf.example`，复制到 `/etc/nginx/conf.d/warpweft.conf` 后**只有 `server_name` 必须改**。下面按段落解释每一块为什么这么写，改错时对照排查。
+
+#### 整体路由模型：一个域名，四个入口
+
+```text
+https://scheduler.example.edu/                → 官网首页（公开，Nginx 读磁盘）
+https://scheduler.example.edu/site/…          → 官网资源（公开，Nginx 读磁盘）
+https://scheduler.example.edu/app/…           → 排课应用（需登录，反代到 Node）
+https://scheduler.example.edu/api/…           → 后端接口（需登录，反代到 Node）
+```
+
+Node 只监听 `127.0.0.1:4317`，永不直接对外；公网流量全部经过 Nginx。
+
+#### `upstream` + `keepalive`
+
+```nginx
+upstream warpweft_server {
+    server 127.0.0.1:4317;
+    keepalive 16;
+}
+```
+
+保留空闲长连接到 Node，减少每次 API 调用重新握手的开销。**注意**：`keepalive` 生效的前提是下面每个 `proxy_pass` 都带 `proxy_http_version 1.1` 和 `proxy_set_header Connection ""`，示例已写全——自己加 location 时容易漏掉这两行，表现为连接数暴涨或响应变慢。
+
+#### `location ^~ /site/assets/`：可永久缓存
+
+```nginx
+location ^~ /site/assets/ {
+    root /opt/warpweft/dist;
+    try_files $uri =404;
+    expires 1y;
+    add_header Cache-Control "public, immutable" always;
+}
+```
+
+Vite 产出的文件名带内容哈希（如 `site-C0tyARR0.js`），内容一变文件名就变，所以可以 `immutable` 缓存一年。**不要**给不带哈希的路径套这条规则，否则发版后用户会一直吃旧文件。
+
+#### `location = /site/site-config.json`：必须实时
+
+```nginx
+location = /site/site-config.json {
+    root /opt/warpweft/dist;
+    try_files $uri =404;
+    add_header Cache-Control "no-cache, must-revalidate" always;
+}
+```
+
+这是部署配置（备案号/公告/私有实例提示，见 6.1.2）。用 `=`（精确匹配）而不是 `^~` 前缀，是为了**抢在下面 `^~ /site/` 的 1 小时缓存之前命中**：Nginx 里 `=` 优先级高于任何前缀匹配。没有这条，运维改完备案号要等一小时才生效。
+
+#### `location ^~ /site/`：禁止回落
+
+```nginx
+location ^~ /site/ {
+    root /opt/warpweft/dist;
+    try_files $uri =404;   # ← 关键
+    expires 1h;
+}
+```
+
+`try_files $uri =404` 是**必须的**。如果像常见 SPA 那样回落 `index.html`，一个 404 的 `.js` 会返回 HTML，浏览器因 MIME 类型不符拒绝执行，表现为官网白屏且控制台报 `Failed to load module script`。
+
+#### `location = /`：官网首页
+
+```nginx
+location = / {
+    root /opt/warpweft/dist;
+    try_files /site/index.html =404;
+    default_type text/html;
+    add_header Cache-Control "no-cache, must-revalidate" always;
+}
+```
+
+首页 HTML 用 `no-cache`：它引用的是带哈希的静态资源，HTML 本身不该被缓存，否则发版后用户拿到旧 HTML 去请求已删除的旧哈希资源，直接 404 白屏。
+
+另外两条重定向是多入口时代的兼容：
+
+- `location = /index.html { return 301 /; }` —— 历史上 `/index.html` 是应用入口，现在让给官网；
+- `location = /site/ { return 301 /; }` —— 让 `/site/` 也落到官网首页。
+
+#### `location ^~ /app/`：剥前缀反代
+
+```nginx
+location = /app { return 301 /app/$is_args$args; }   # 补尾斜杠
+
+location ^~ /app/ {
+    proxy_pass http://warpweft_server/;   # ← 末尾的 / 很关键
+    proxy_buffering off;
+    proxy_read_timeout 900s;
+    proxy_send_timeout 900s;
+}
+```
+
+- **`proxy_pass` 末尾带 `/`** 表示"把 `/app/` 前缀替换掉再转发"：`/app/assets/x.js` → `/assets/x.js` → `dist/assets/x.js`。若漏掉末尾斜杠，Node 收到的是 `/app/assets/x.js`，找不到文件。
+- **补尾斜杠的重定向**：应用产物用的是相对路径 `./assets/`，只有 `/app/` 形态才能正确解析；`/app`（无斜杠）会解析成 `/assets/`，因此 301 到 `/app/`。
+- `proxy_buffering off` + 900s 超时：长时排课的结果是流式返回的，缓冲打开会导致进度迟迟不到、或大响应被截断。
+
+#### `location ^~ /assets/`：应用 bundle 的根路径兜底
+
+再代理一层，接住 `/app` 无斜杠时解析出的 `/assets/*`，也作为漏配 `/app/` 时的缓冲。
+
+#### `location ^~ /api/`
+
+```nginx
+location ^~ /api/ {
+    proxy_pass http://warpweft_server;   # 注意：这里不带末尾斜杠
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;   # 覆盖，不追加
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+}
+```
+
+- 这里 `proxy_pass` **不带**末尾 `/`，所以 `/api/...` 原样转给 Node，与 Node 的路由表一致。
+- `X-Forwarded-For` 用 `$remote_addr` **覆盖**而非 `$proxy_add_x_forwarded_for` 追加：服务端只信任第一个地址，追加会让客户端伪造的 IP 生效，绕过网段白名单和登录限流。
+- 必须与服务端 `WARPVEFT_TRUST_PROXY=1` 配套（见 7.1），否则服务端看到的全是 `127.0.0.1`。
+
+#### 其余路径 `location /`
+
+兜底交给 Node，处理 `/icon.svg` 这类根路径静态文件。
+
+#### 常见 Nginx 错误与现象
+
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| 官网白屏，控制台 `Failed to load module script` / MIME 不符 | `/site/` 缺少 `try_files … =404`，404 资源回落成 HTML | 补 `try_files $uri =404` |
+| `/app/` 打开是官网首页 | `proxy_pass` 漏了末尾 `/`，或 `location = /` 抢了匹配 | 检查 `proxy_pass http://warpweft_server/;` |
+| `/app`（无斜杠）样式全丢、控制台 404 `/assets/*` | 缺少 301 补斜杠 | 补 `location = /app { return 301 /app/…; }` |
+| 改完备案号/公告不生效 | 命中了 `^~ /site/` 的 1 小时缓存 | 确认有 `location = /site/site-config.json` 且为 `no-cache` |
+| 官网首页被弹 Basic Auth | `auth_basic` 写在了 server 级或 `location /` | 只写在 `/app/` 与 `/api/` 内部 |
+| 登录限流失效 / 网段白名单形同虚设 | `X-Forwarded-For` 用了 `$proxy_add_x_forwarded_for` | 改回 `$remote_addr` 覆盖 |
+| 长时任务进度不动、响应截断 | 缺少 `proxy_buffering off` | 在 `/app/`、`/api/` 内补上 |
+| 上传工作区报 413 | `client_max_body_size` 小于实际数据 | 调大（示例 8m，服务端上限 5 MiB） |
+
+#### 非 conf.d 布局（sites-available / sites-enabled）
+
+Debian/Ubuntu 的 `/etc/nginx/conf.d/*.conf` 与 `sites-available`/`sites-enabled` 是两种并存机制。示例按 `conf.d` 写；若你的 Nginx 只用 `sites-enabled`：
+
+```bash
+sudo cp /opt/warpweft/linux_server/nginx.conf.example /etc/nginx/sites-available/warpweft.conf
+sudo ln -sf /etc/nginx/sites-available/warpweft.conf /etc/nginx/sites-enabled/warpweft.conf
+sudo rm -f /etc/nginx/sites-enabled/default   # 避免默认 server 抢走请求
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**同一域名不要同时出现在 conf.d 和 sites-enabled**，否则会是两个 server 块，命中哪个取决于加载顺序，表现为"有时正常有时白屏"。
+
+#### 改完必须做的检查
+
+```bash
+sudo nginx -t                       # 语法检查，必须有 "syntax is ok" 和 "test is successful"
+sudo systemctl reload nginx         # reload 不断连接；restart 会掐断正在跑的长时任务
+
+# 四个入口逐个验证
+curl -sSI https://scheduler.example.edu/            | head -1   # 200
+curl -sSI https://scheduler.example.edu/app/        | head -1   # 200
+curl -sS  https://scheduler.example.edu/site/site-config.json -D- -o/dev/null | grep -i cache-control  # no-cache
+curl -sS  https://scheduler.example.edu/api/health                # {"ok":true,...}
+```
+
+`certbot --nginx` 会重写配置（通常新建 443 server 块），跑完务必用 `sudo nginx -T` 复核四个 `location` 都还在 443 块内、且 `/site/site-config.json` 的 `no-cache` 没被冲掉。
 
 ### 6.4 初始化管理员、登录和用户管理
 
@@ -866,6 +1072,21 @@ sudo systemctl restart warpweft
 
 这些值保存在 `/var/lib/warpweft/server-config.json`，重启后保留。修改监听模式会短暂断连并自动重绑；如果设置了 `WARPVEFT_HOST`，重启后以环境变量为准。
 
+### 7.2.1 官网配置文件（site-config.json）
+
+`/opt/warpweft/dist/site/site-config.json` —— 官网的备案号、公告与私有实例提示。**运行时读取，改完刷新即生效，无需重启服务**。
+
+| 字段 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `privateInstance` | boolean | `false` | `true` 时顶部常驻「这是用户私有配置的页面，非开发者官方网页」。只认严格 `true`。 |
+| `announcement` | string | `""` | 顶部横幅公告，空串不显示；超 300 字截断。 |
+| `icp` | string | `""` | 页脚 ICP 备案号，自动链 beian.miit.gov.cn。 |
+| `police` | string | `""` | 页脚公安备案号（预留，仅显示文字）。 |
+
+完整操作流程、校验命令、升级时的备份还原、常见写法错误见 **6.1.2**。
+
+> ⚠️ 该文件位于 `dist/` 内，**升级安装包时会被覆盖**。升级前备份，升级后还原。
+
 ### 7.3 运行模式
 
 浏览器端“运行模式”只影响 UI 展示和 API 地址：
@@ -1220,6 +1441,13 @@ sudo nginx -T 2>/dev/null | grep -i warpweft || true
 | 新建用户后登录不了 | 检查用户名/密码、角色、disabled；服务端会检测文件变化，仍不行则刷新登录页或重启服务。 |
 | 删除/降级管理员被拒绝 | 至少保留一位启用状态的管理员；先创建另一位管理员。 |
 | 服务重启后所有人都要重新登录 | 这是设计：会话保存在内存，12 小时过期且重启清空；账号仍在 `users.json`。 |
+| 官网白屏，控制台 `Failed to load module script` | `/site/` 缺 `try_files $uri =404`，404 资源回落成 HTML 被浏览器拒绝执行；见 6.3.1。 |
+| 改了备案号/公告刷新不生效 | 命中 `^~ /site/` 的 1 小时缓存；确认存在 `location = /site/site-config.json` 且为 `no-cache`，再 `curl -D-` 核对响应头。 |
+| 顶部「私有实例」提示没出现 | `privateInstance` 写成了字符串 `"true"`，必须是 JSON 布尔 `true`；用 `JSON.parse` 自检。 |
+| 官网页脚没有备案号 | `icp` 为空或含多余空格；填完整备案号后强制刷新。 |
+| 升级后官网配置被重置 | `install.sh` 整体替换 `/opt/warpweft`，`dist/site/site-config.json` 被覆盖；按 6.1.2 备份还原。 |
+| 普通账号打开「服务端」页显示「只对管理员开放」 | 设计如此：监控与限额接口校验 admin 角色；用管理员账号查看，或参考 6.1.1。 |
+| `/app`（无斜杠）打开样式丢失、请求 `/assets/*` 404 | 缺 `location = /app { return 301 /app/…; }`；见 6.3.1。 |
 
 ## 10. 验收清单
 
@@ -1269,6 +1497,25 @@ Nginx/TLS 部署还要验证：
 - Basic Auth 生效（如启用）；
 - `X-Forwarded-For` 后客户端列表显示真实 IP；
 - 大请求/长请求不被代理提前断开。
+
+官网与四个入口逐个验证（详见 6.3.1）：
+
+```bash
+curl -sSI https://scheduler.example.edu/         | head -1   # 200，官网首页
+curl -sSI https://scheduler.example.edu/app/     | head -1   # 200，应用外壳
+curl -sSI https://scheduler.example.edu/app      | head -1   # 301 到 /app/
+curl -sS  https://scheduler.example.edu/api/health          # {"ok":true,...}
+# 官网配置：状态 200、Content-Type 为 application/json、Cache-Control 为 no-cache
+curl -sS -D- -o/dev/null https://scheduler.example.edu/site/site-config.json | grep -iE 'HTTP/|content-type|cache-control'
+```
+
+浏览器侧确认：
+
+- [ ] 官网首页能正常渲染（不是白屏、控制台无 `Failed to load module script`）；
+- [ ] 页面顶部与页脚符合 `site-config.json` 的设置（私有实例提示 / 公告 / 备案号）；
+- [ ] 修改 `site-config.json` 后强制刷新，改动立即生效；
+- [ ] 未登录访问 `/app/` 显示登录框，登录后可正常排课；
+- [ ] 普通账号打开「服务端」页显示「只对管理员开放」，管理员可看到监控数据。
 
 云服务器还要从**外部机器**验证：
 
