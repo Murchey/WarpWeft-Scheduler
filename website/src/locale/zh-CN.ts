@@ -89,6 +89,13 @@ export const zhCN = {
   'footer.built': '官网与排课应用由同一个服务端提供。',
   'footer.docs': '部署指南见安装包内 guideline.md',
   'footer.rights': '保留所有权利。',
+
+  'notice.privateTag': '私有实例',
+  'notice.privateBody': '这是用户私有配置的页面，非开发者官方网页。',
+  'notice.announceTag': '公告',
+  'notice.expand': '展开',
+  'notice.collapse': '收起',
+  'notice.dismiss': '关闭公告',
 } as const;
 
 export type SiteKey = keyof typeof zhCN;

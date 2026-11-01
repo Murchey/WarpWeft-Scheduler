@@ -418,7 +418,15 @@ export function SettingsPage(props: SettingsPageProps) {
             <SettingsRow label={t('settings.about.runtime')}>
               <strong>{window.warpweft ? 'Electron ' + (window.warpweft.platform || '') : 'Web'}</strong>
             </SettingsRow>
-            <SettingsRow label={t('settings.about.license')}><strong>MIT</strong></SettingsRow>
+            <SettingsRow label={t('settings.about.license')}>
+              <a
+                href="https://www.gnu.org/licenses/gpl-3.0.html"
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                GNU GPL v3.0
+              </a>
+            </SettingsRow>
           </section>
         ) : null}
       </section>

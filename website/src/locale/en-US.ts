@@ -94,4 +94,11 @@ export const enUS: Partial<Record<SiteKey, string>> = {
   'footer.built': 'Site and app are served by the same Node service.',
   'footer.docs': 'See guideline.md inside the package for the full deployment guide',
   'footer.rights': 'All rights reserved.',
+
+  'notice.privateTag': 'Private instance',
+  'notice.privateBody': "This page is privately configured by its operator and is not the developer's official website.",
+  'notice.announceTag': 'Notice',
+  'notice.expand': 'Show',
+  'notice.collapse': 'Hide',
+  'notice.dismiss': 'Dismiss notice',
 };

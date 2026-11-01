@@ -35,6 +35,15 @@ server {
         add_header Cache-Control "public, immutable" always;
         access_log off;
     }
+    # 部署配置必须每次回源校验：运维改完备案号/公告后刷新即生效，
+    # 不能被下面的 1 小时缓存挡住。^~ 更长前缀优先，故需单独列出。
+    location = /site/site-config.json {
+        root /opt/warpweft/dist;
+        try_files $uri =404;
+        add_header Cache-Control "no-cache, must-revalidate" always;
+        # Nginx 的 mime.types 已把 .json 映射为 application/json，无需手写 Content-Type。
+        access_log off;
+    }
     location ^~ /site/ {
         root /opt/warpweft/dist;
         # 禁止回落：若落到 Node 的 SPA 兜底会返回 text/html，浏览器会拒绝执行 module 导致白屏

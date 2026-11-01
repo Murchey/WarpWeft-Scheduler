@@ -6,11 +6,13 @@ import { MetricsStrip } from './components/MetricsStrip';
 import { ShotGallery } from './components/ShotGallery';
 import { SiteFooter } from './components/SiteFooter';
 import { SiteHeader } from './components/SiteHeader';
+import { SiteNotice } from './components/SiteNotice';
 import { StatusPanel } from './components/StatusPanel';
 
 export function SiteApp() {
   return (
     <div className="app-shell">
+      <SiteNotice />
       <SiteHeader />
       <main className="site-shell">
         <Hero />

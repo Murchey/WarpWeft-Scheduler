@@ -195,3 +195,11 @@ npm run build:site     # 产出 dist/site/（应用仍是 npm run build，产出
 ## 设计与改造文档
 
 - [排课约束与准备流程改造设计](docs/constraint-ux-redesign.md)
+
+## 许可证
+
+本项目以 **GNU General Public License v3.0** 发布，全文见 [LICENSE](LICENSE)。
+
+这意味着：你可以自由使用、修改和分发本软件，包括商用；但分发修改版时必须同样以 GPLv3 开源，并提供对应源代码。软件按「现状」提供，不附带任何担保。
+
+应用内「设置 → 关于 → 许可证」显示的就是这一条款。

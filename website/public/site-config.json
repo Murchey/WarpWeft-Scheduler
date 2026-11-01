@@ -1,0 +1,7 @@
+{
+  "$comment": "WarpWeft 官网部署配置。改完刷新页面即可生效，无需重新构建。",
+  "privateInstance": false,
+  "announcement": "",
+  "icp": "",
+  "police": ""
+}

@@ -2123,6 +2123,8 @@ html[lang='en-US'] .status-tag,html[lang='en-US'] .mini-tag{letter-spacing:.04em
 .settings-row-label small{font-size:11px;color:var(--muted);line-height:1.6}
 .settings-row-control{flex:0 1 auto;display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0}
 .settings-row-control .settings-input{min-width:220px;max-width:320px}
+.settings-row-control a{color:var(--info-strong);text-decoration:underline;text-underline-offset:2px}
+.settings-row-control a:hover{color:var(--info)}
 .settings-inline-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:flex-end}
 .settings-checkbox{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap}
 .settings-checkbox input{margin:0}

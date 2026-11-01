@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "WarpWeft Scheduler single-machine MVP",
+  "license": "GPL-3.0-only",
   "main": "apps/desktop/main.cjs",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
