@@ -12,6 +12,8 @@ export const enUS: Partial<Record<SiteKey, string>> = {
   'nav.shots': 'Interface',
   'nav.status': 'Status',
   'nav.deploy': 'Deploy',
+  'nav.openMenu': 'Open navigation menu',
+  'nav.closeMenu': 'Close navigation menu',
   'nav.enterApp': 'Server status',
 
   'theme.switch': 'Theme',
@@ -39,6 +41,8 @@ export const enUS: Partial<Record<SiteKey, string>> = {
   'shots.title': 'Interface',
   'shots.lead': 'One interface for both the desktop app and the Linux server. Click to enlarge.',
   'shots.close': 'Close',
+  'shots.prev': 'Previous screenshot',
+  'shots.next': 'Next screenshot',
 
   'status.title': 'Server status',
   'status.lead':

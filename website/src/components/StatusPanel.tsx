@@ -231,12 +231,14 @@ export function StatusPanel() {
                 ) : (
                   jobs.map((job: JobSummary, index) => (
                     <tr key={job.id || index}>
-                      <td>{job.id ? job.id.slice(0, 8) : '—'}</td>
-                      <td>{JOB_STATUS[job.status ?? ''] ? pick(JOB_STATUS[job.status ?? '']) : job.status}</td>
-                      <td>{job.lessons ?? '—'}</td>
-                      <td>{job.entries ?? '—'}</td>
-                      <td>{formatElapsed(job.elapsedMs)}</td>
-                      <td>{formatTime(job.finishedAt, lang)}</td>
+                      <td data-label={t('status.job.id')}>{job.id ? job.id.slice(0, 8) : '—'}</td>
+                      <td data-label={t('status.job.status')}>
+                        {JOB_STATUS[job.status ?? ''] ? pick(JOB_STATUS[job.status ?? '']) : job.status}
+                      </td>
+                      <td data-label={t('status.job.lessons')}>{job.lessons ?? '—'}</td>
+                      <td data-label={t('status.job.entries')}>{job.entries ?? '—'}</td>
+                      <td data-label={t('status.job.elapsed')}>{formatElapsed(job.elapsedMs)}</td>
+                      <td data-label={t('status.job.finished')}>{formatTime(job.finishedAt, lang)}</td>
                     </tr>
                   ))
                 )}

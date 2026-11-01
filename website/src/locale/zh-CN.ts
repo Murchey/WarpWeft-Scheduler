@@ -8,6 +8,8 @@ export const zhCN = {
   'nav.shots': '界面',
   'nav.status': '运行状态',
   'nav.deploy': '部署',
+  'nav.openMenu': '打开导航菜单',
+  'nav.closeMenu': '关闭导航菜单',
   'nav.enterApp': '服务端状态',
 
   'theme.switch': '主题',
@@ -35,6 +37,8 @@ export const zhCN = {
   'shots.title': '界面',
   'shots.lead': '同一套界面同时用于桌面版与 Linux 服务端，点击可放大查看。',
   'shots.close': '关闭',
+  'shots.prev': '上一张',
+  'shots.next': '下一张',
 
   'status.title': '运行状态',
   'status.lead': '只读面板：展示当前服务端的负载、求解器与任务队列，不提供取消或删除等写操作。',

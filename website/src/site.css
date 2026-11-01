@@ -357,6 +357,72 @@ a {
   font-size: 12px;
 }
 
+/* 灯箱底部：翻页 + 计数。移动端靠滑动手势，桌面上靠这两个按钮。 */
+.site-lightbox-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 55%);
+  color: #f5f5f7;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  max-width: calc(100% - 32px);
+}
+
+.site-lightbox-bar span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-lightbox-bar button {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border: 1px solid #6d716c;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.site-lightbox-bar button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* 移动端灯箱：留出安全区，图片按宽度铺满 */
+@media (max-width: 640px) {
+  .site-lightbox {
+    padding: 12px;
+  }
+
+  .site-lightbox img {
+    max-height: 74vh;
+    width: auto;
+    max-width: 100%;
+  }
+
+  .site-lightbox-close {
+    top: 10px;
+    right: 12px;
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0 12px;
+  }
+
+  .site-lightbox-bar {
+    bottom: 10px;
+  }
+}
+
 /* ---------- 状态面板 ---------- */
 
 .site-status {
@@ -662,27 +728,378 @@ a {
   text-decoration: underline;
 }
 
-@media (max-width: 900px) {
+/* ============================================================
+ * 响应式：移动端优先适配
+ *
+ * 断点：861px（顶栏折叠）/ 640px（单列）/ 480px（紧凑）
+ * 原则：
+ *   1) 任何宽度都不允许横向滚动（表格改为卡片，而不是让用户左右拖）；
+ *   2) 触控目标 ≥44px（iOS/Android 推荐下限）；
+ *   3) 正文不缩小到 14px 以下，行高放宽。
+ * ============================================================ */
+
+/* 语言按钮的超窄屏备用文案：默认不显示，只在 ≤480px 用 */
+.site-label-compact {
+  display: none;
+}
+
+/* ---------- 顶栏折叠按钮（默认隐藏，≤860px 显示） ---------- */
+.site-menu-toggle {
+  display: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--rule);
+  background: transparent;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+/* 三条横线：中间一条用透明度切换成「×」，无需图片。 */
+.site-menu-toggle i,
+.site-menu-toggle i::before,
+.site-menu-toggle i::after {
+  display: block;
+  width: 18px;
+  height: 2px;
+  background: var(--ink);
+  content: '';
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+
+.site-menu-toggle i {
+  position: relative;
+}
+
+.site-menu-toggle i::before {
+  position: absolute;
+  top: -6px;
+  left: 0;
+}
+
+.site-menu-toggle i::after {
+  position: absolute;
+  top: 6px;
+  left: 0;
+}
+
+.site-menu-toggle i.is-open {
+  background: transparent;
+}
+
+.site-menu-toggle i.is-open::before {
+  transform: translateY(6px) rotate(45deg);
+}
+
+.site-menu-toggle i.is-open::after {
+  transform: translateY(-6px) rotate(-45deg);
+}
+
+/* ---------- 窄屏下拉导航 ---------- */
+.site-mobile-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 4px;
+  padding: 12px 16px 18px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--rule);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 12%);
+  max-height: calc(100vh - 100%);
+  overflow-y: auto;
+}
+
+.site-mobile-menu nav {
+  display: grid;
+}
+
+.site-mobile-menu nav a {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 4px;
+  font-size: 15px;
+  color: var(--ink);
+  text-decoration: none;
+  border-bottom: 1px solid var(--rule);
+}
+
+.site-mobile-menu nav a:last-child {
+  border-bottom: 0;
+}
+
+.site-mobile-menu > .site-cta {
+  justify-self: stretch;
+  text-align: center;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+/* ---------- 861px 及以下：顶栏折叠 ---------- */
+@media (max-width: 860px) {
+  .site-header {
+    /* 必须固定不换行，否则导航会把顶栏撑成几百像素高 */
+    flex-wrap: nowrap;
+    gap: 12px;
+    padding: 10px 16px;
+    position: sticky;
+  }
+
+  /* 桌面横排导航让位给抽屉 */
+  .site-nav {
+    display: none;
+  }
+
+  .site-header-actions {
+    margin-left: auto;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .site-menu-toggle {
+    display: inline-flex;
+  }
+
+  /* 顶栏里的 CTA 在窄屏收起，避免和汉堡按钮抢空间（抽屉里有同款入口） */
+  .site-cta-header {
+    display: none;
+  }
+
+  .site-icon-button {
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .site-shell {
+    padding: 0 16px;
+  }
+
+  .site-section {
+    padding: 44px 0;
+  }
+
+  .site-hero {
+    padding: 44px 0 36px;
+    gap: 20px;
+  }
+
+  .site-hero h1 {
+    font-size: 30px;
+  }
+
   .site-notice {
     align-items: flex-start;
     flex-wrap: wrap;
     padding: 8px 16px;
   }
+}
+
+/* ---------- 640px 及以下：单列与可读性 ---------- */
+@media (max-width: 640px) {
   .site-hero h1 {
-    font-size: 30px;
+    font-size: 26px;
   }
-  .site-section {
-    padding: 44px 0;
+
+  .site-hero-actions {
+    flex-wrap: wrap;
   }
-  .site-nav {
-    order: 3;
+
+  .site-hero-actions .site-cta {
+    flex: 1 1 auto;
+    min-height: 46px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .site-section h2 {
+    font-size: 22px;
+  }
+
+  .site-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .site-features,
+  .site-shots {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .site-steps .site-step {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  /* 代码块在窄屏禁止撑破容器 */
+  .site-code,
+  .site-log {
+    font-size: 11.5px;
+    padding: 12px;
+  }
+
+  .site-footer-inner {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .site-footer-filing {
+    flex-direction: column;
+    gap: 4px;
+  }
+}
+
+/* ---------- 360px 及以下（折叠屏/超窄机型）：顶栏只留图标 ---------- */
+@media (max-width: 360px) {
+  .site-header {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .site-brand {
+    gap: 6px;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+  }
+
+  /* 文本标签隐藏，只留图标；触控目标维持 40px（该宽度下已无更优解） */
+  .site-icon-button .site-label {
+    display: none;
+  }
+
+  .site-icon-button,
+  .site-menu-toggle {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
+    padding: 0;
+  }
+
+  .site-label-compact {
+    display: inline;
+    font-size: 13px;
+  }
+}
+
+/* ---------- 480px 及以下：紧凑 ---------- */
+@media (max-width: 480px) {
+  .site-shell {
+    padding: 0 14px;
+  }
+
+  .site-header-actions {
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+
+  .site-brand {
+    min-width: 0;
+    flex-shrink: 1;
+  }
+
+  .site-brand span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .site-hero h1 {
+    font-size: 23px;
+  }
+
+  .site-metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .site-brand {
+    font-size: 13px;
+    letter-spacing: 0.08em;
+  }
+
+  .site-brand img {
+    width: 26px;
+    height: 26px;
+  }
+
+  .site-notice-tag {
+    font-size: 10px;
+  }
+}
+
+/* ---------- 状态面板表格：窄屏改卡片 ---------- */
+@media (max-width: 720px) {
+  .site-table {
+    display: block;
+  }
+
+  .site-table thead {
+    /* 表头在卡片模式下无意义，隐藏但保留给读屏 */
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .site-table tbody,
+  .site-table tr,
+  .site-table td {
+    display: block;
     width: 100%;
-    margin-left: 0;
+  }
+
+  .site-table tr {
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    background: var(--panel);
+  }
+
+  .site-table td {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 5px 0;
+    border: 0;
+    text-align: right;
+  }
+
+  /* 用 data-label 在每行左侧显示列名 */
+  .site-table td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    text-align: left;
+    color: var(--muted);
+    font-size: 11.5px;
+  }
+
+  .site-table td[colspan] {
+    display: block;
+    text-align: center;
+  }
+
+  .site-table td[colspan]::before {
+    content: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
+  }
+  .site-menu-toggle i,
+  .site-menu-toggle i::before,
+  .site-menu-toggle i::after {
+    transition: none;
   }
 }
