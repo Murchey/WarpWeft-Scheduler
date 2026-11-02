@@ -55,10 +55,10 @@
 Linux 入口和桌面入口继续共用 `server/api/api.cjs`，没有另写一套 API。本轮补上了可执行的对照与打包校验：
 
 - **运行时对照测试**：`tests/server-parity.test.cjs` 同时启动桌面式 `startApi` 与 Linux `startFromEnv`（关闭 Linux 登录做等价比较），比较 `/api/health` 的 `appVersion`、`schemaVersion`、`solverProtocol`、`capabilities`、配额配置，以及 `/` 构建页面和空工作区数据。两边必须完全一致。
-- **构建清单**：`npm run dist:linux` 会在包根写入 `warpweft-build.json`，记录版本、schema、capabilities、渲染资源数量，以及 `dist/index.html`、`server/api/api.cjs`、`linux_server/server.cjs`、`data-schema.json`、Solver jar 的 SHA-256。
+- **构建清单**：`npm run dist:linux` 会在包根写入 `warpweft-build.json`，记录版本、schema、capabilities、官网资源数量，以及 `dist/site/index.html`、`server/api/api.cjs`、`linux_server/server.cjs`、`data-schema.json`、Solver jar 的 SHA-256。（Linux 包不含桌面 UI，因此没有 `dist/index.html` 条目。）
 - **安装后自检**：`linux_server/verify.sh` 在 health/schema 检查后调用 `verify-manifest.cjs`，把运行中的 `appVersion` / `schemaVersion` / `solverProtocol` / `capabilities` 与构建清单对比，并校验五个关键文件及 renderer 资源哈希；半覆盖升级、只替换 UI 或只替换 API 会直接失败。
-- **构建资源检查**：`scripts/build-linux-server.cjs` 会解析 `dist/index.html` 的本地 `src`/`href`，确认引用的 JS/CSS/图标都进入包内，避免“服务能启动但页面白屏”。
-- **最新包**：`dist/linux-server/warpweft-linux-server-0.1.0.tar.gz` 已按当前 `dist`、`data-schema.json`、Solver jar 重新构建；解压后启动并用 `WARPVEFT_BASE_URL=http://127.0.0.1:4321 bash linux_server/verify.sh` 实测通过。
+- **构建资源检查**：`scripts/build-linux-server.cjs` 会解析 `dist/site/index.html` 的本地 `src`/`href`，确认官网引用的 JS/CSS/图标都进入包内，并硬断言站点文件（`index.html`、`site-config.json`、`og-cover.png`）随包携带，避免“服务能启动但官网白屏”。
+- **最新包**：`dist/linux/warpweft-linux-server-0.1.0.tar.gz` 已按当前 `dist/site`、`data-schema.json`、Solver jar 重新构建；解压后启动并用 `WARPVEFT_BASE_URL=http://127.0.0.1:4321 bash linux_server/verify.sh` 实测通过。
 
 ### 仍然保留的平台差异（不是能力缺失）
 

@@ -8,7 +8,7 @@ const skipBuild = process.argv.includes('--skip-build');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const schema = JSON.parse(fs.readFileSync(path.join(root, 'data-schema.json'), 'utf8'));
 const version = pkg.version || '0.0.0';
-const outputDir = path.join(root, 'dist', 'linux-server');
+const outputDir = path.join(root, 'dist', 'linux');
 const stageParent = path.join(root, 'build', 'linux-server');
 const stage = path.join(stageParent, 'warpweft');
 const tarName = 'warpweft-linux-server-' + version + '.tar.gz';
@@ -94,6 +94,21 @@ copy('resources/solver/warpweft-solver.jar', 'resources/solver/warpweft-solver.j
 copy('data-schema.json', 'data-schema.json');
 copy('guideline.md', 'guideline.md');
 copy('LICENSE', 'LICENSE');
+
+// 站点必须随服务端部署包一起交付：安装完即可直接访问官网与运行状态面板，
+// 不需要运维再单独拷一份静态资源。缺任何一个文件都直接失败，不产出残缺包。
+for (const requiredSiteFile of [
+  path.join('dist', 'site', 'index.html'),
+  path.join('dist', 'site', 'site-config.json'),
+  path.join('dist', 'site', 'og-cover.png'),
+]) {
+  if (!fs.existsSync(path.join(stage, requiredSiteFile))) {
+    throw new Error(
+      '服务端部署包缺少站点文件：' + requiredSiteFile + '（先运行 npm run build:site）',
+    );
+  }
+}
+console.log('[linux-server] 站点已随包携带（dist/site）');
 
 const runtimePackage = {
   name: pkg.name,

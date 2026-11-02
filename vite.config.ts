@@ -6,4 +6,10 @@ export default defineConfig(({ command }) => ({
   // renderer from resolving /assets against the drive root and showing blank.
   base: command === 'build' ? './' : '/',
   plugins: [react()],
+  build: {
+    // ★ 不要开 emptyOutDir：outDir 是 dist/，整体清空会连带删掉已经打好的
+    //   dist/linux、dist/windows 与 dist/site。应用自己的产物由
+    //   scripts/clean-app-dist.cjs 精确清理（挂在 prebuild）。
+    emptyOutDir: false,
+  },
 }));

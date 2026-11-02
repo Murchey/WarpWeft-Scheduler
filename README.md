@@ -253,9 +253,22 @@ npm run dist:win      # Windows 安装包 + 免安装应用（等同 build_appli
 npm run dist:linux    # Linux 服务端部署包 tar.gz + SHA256
 ~~~
 
-Windows 产物在 `dist/`：`WarpWeft Scheduler Setup <版本>.exe`、`win-unpacked/`。
+产物按目标分目录存放，**互不覆盖**：
 
-Linux 部署包自带 Node 侧全部依赖、Java 求解器、systemd 单元、安装 / 卸载 / 验证脚本和 Nginx 示例，服务器上**不需要 npm install，也不需要 Electron**。安装后 `verify.sh` 会核对运行中服务与安装包清单（版本、schema、capabilities、资源哈希），避免 UI 与 API 版本漂移。
+~~~text
+dist/
+├── index.html、assets/、icon.svg   应用渲染层（Electron 与 Linux 包共用）
+├── site/                           官网产物
+├── linux/                          Linux 服务端部署包（tar.gz + SHA256）
+└── windows/                        Windows 安装包 + win-unpacked/
+~~~
+
+- `dist/windows/`：`WarpWeft Scheduler Setup <版本>.exe`、`win-unpacked/`
+- `dist/linux/`：`warpweft-linux-server-<版本>.tar.gz` 与 `.sha256`
+
+**构建不会互相覆盖**：`npm run build` 只清理应用自身产物（`scripts/clean-app-dist.cjs`），不动 `dist/site`、`dist/linux`、`dist/windows`；因此先打 Linux 还是先打 Windows 都行。`electron-builder` 的 `files` 已排除这三个目录，打包产物不会被递归装进安装包。
+
+Linux 部署包自带 Node 侧全部依赖、Java 求解器、systemd 单元、安装 / 卸载 / 验证脚本、Nginx 示例，**以及产品官网静态站点（dist/site，含 site-config.json）**，服务器上**不需要 npm install，也不需要 Electron**，装完即可直接访问官网与运行状态面板。构建脚本会对站点文件做硬断言，缺任何一个都不产出包。安装后 `verify.sh` 会核对运行中服务与安装包清单（版本、schema、capabilities、资源哈希），避免 UI 与 API 版本漂移。
 
 ## 官网（website/）
 
@@ -266,7 +279,7 @@ npm run dev:site      # 本地预览 http://127.0.0.1:5174/site/
 npm run build:site    # 产出 dist/site/（应用仍是 npm run build，产出 dist/）
 ~~~
 
-**两条构建的顺序不能交换**：应用构建会清空 `dist/`，官网产物必须在其之后生成；`npm run dist:linux` 已按正确顺序串行执行。
+**两条构建的顺序不再受限**：早期应用构建会清空整个 `dist/`，现在 `emptyOutDir` 已关闭、改由 `clean-app-dist.cjs` 精确清理，先建应用还是先建官网都可以。`npm run dist:linux` 内部仍按「应用 → 官网」串行执行。`npm run build:site` 只清空自己的 `dist/site/`。
 
 约定（踩过的坑）：
 

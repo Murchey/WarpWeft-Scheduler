@@ -103,8 +103,8 @@ npm run dist:linux
 脚本会重新构建 Java Solver、渲染进程，并在项目根目录生成：
 
 ```text
-dist/linux-server/warpweft-linux-server-<版本>.tar.gz
-dist/linux-server/warpweft-linux-server-<版本>.tar.gz.sha256
+dist/linux/warpweft-linux-server-<版本>.tar.gz
+dist/linux/warpweft-linux-server-<版本>.tar.gz.sha256
 ```
 
 ### 5.2 Linux 原生构建
@@ -132,7 +132,7 @@ MAVEN_MIRROR=https://maven.aliyun.com/repository/public npm run build:solver
 ### 5.3 校验部署包
 
 ```bash
-cd dist/linux-server
+cd dist/linux
 sha256sum -c warpweft-linux-server-<版本>.tar.gz.sha256
 ```
 
@@ -164,6 +164,57 @@ warpweft/
 服务端不需要执行 `npm install`；它只使用 Node 内置模块、静态文件和 Java JAR。
 
 ## 6. 安装
+
+### 6.0 快捷部署（整段粘贴）
+
+适用：Ubuntu 22.04/24.04、域名已解析到本机、需要公网 HTTPS。把示例域名换成自己的即可，其余原样粘贴。
+
+```bash
+# 0) 依赖（详见第 4 章；不同发行版的 Java 包名可能不同）
+sudo apt update
+sudo apt install -y curl ca-certificates tar nginx openjdk-21-jre-headless
+
+# 1) 解压部署包（在包所在目录执行）
+tar -xzf warpweft-linux-server-<版本>.tar.gz
+cd warpweft
+
+# 2) 安装服务。官网站点随包一起装好，装完即可访问
+sudo bash linux_server/install.sh
+
+# 3) 建账号：管理员 + 教师
+sudo warpweft user add admin --admin
+sudo warpweft user add teacher
+
+# 4) Nginx：复制示例，只改一行 server_name
+sudo cp /opt/warpweft/linux_server/nginx.conf.example /etc/nginx/conf.d/warpweft.conf
+sudo sed -i 's/server_name _;/server_name warpweft.example.edu;/' /etc/nginx/conf.d/warpweft.conf
+sudo nginx -t && sudo systemctl reload nginx
+
+# 5) HTTPS（公网必须）
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d warpweft.example.edu --redirect
+
+# 6) 验证
+WARPVEFT_BASE_URL=https://warpweft.example.edu \
+WARPVEFT_SITE_URL=https://warpweft.example.edu \
+WARPVEFT_VERIFY_USERNAME=admin WARPVEFT_VERIFY_PASSWORD='<密码>' \
+  sudo bash /opt/warpweft/linux_server/verify.sh
+```
+
+跑完即可用：
+
+- `https://<域名>/` —— 产品官网，含「运行状态」面板；登录 admin 或 teacher 都能看到负载与运行中的任务（教师看不到内网 IP 等敏感信息）
+- `https://<域名>/api/` —— 后端接口，供桌面客户端连接
+- `/app/` 返回 404：排课、导入、调代课等都在桌面客户端完成
+
+**还剩两件按需做的事**：
+
+1. **填备案号 / 公告**：`sudo nano /opt/warpweft/dist/site/site-config.json`，填 `icp`（公安备案填 `police`）、按需填 `announcement` 与 `privateInstance`；保存后刷新页面即生效。字段说明见 **6.1.2**。
+2. **改掉示例密码**：`sudo warpweft user passwd admin`。
+
+> 只有 IP、没有域名？见 **6.6**。需要 Basic Auth、备份、升级、卸载、排障见后续章节。
+
+**分步安装（想逐条理解时看这里；与上面的快捷部署等价）**
 
 ```bash
 tar -xzf warpweft-linux-server-<版本>.tar.gz
@@ -646,8 +697,8 @@ java -version
 在本地构建机上传部署包和校验文件：
 
 ```bash
-scp dist/linux-server/warpweft-linux-server-<版本>.tar.gz \
-    dist/linux-server/warpweft-linux-server-<版本>.tar.gz.sha256 \
+scp dist/linux/warpweft-linux-server-<版本>.tar.gz \
+    dist/linux/warpweft-linux-server-<版本>.tar.gz.sha256 \
     user@<公网IP>:/tmp/
 ```
 

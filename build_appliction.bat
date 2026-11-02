@@ -32,7 +32,7 @@ echo.
 echo   [1] 编译本地版本
 echo       Electron 应用 + NSIS 安装包（安装包使用应用图标）
 echo   [2] 编译 Linux 服务端（含登录）
-echo       生成 systemd 部署包到 dist\linux-server\；说明见 guideline.md
+echo       生成 systemd 部署包到 dist\linux\（含官网站点）；说明见 guideline.md
 echo   [0] 退出
 echo.
 choice /c 120 /n /m "请选择 [1/2/0]: "
@@ -84,7 +84,8 @@ echo.
 echo ============================================================
 echo   [2/4] 编译渲染进程和 Java Solver
 echo ============================================================
-if exist "%DIST%" rmdir /s /q "%DIST%"
+rem 不再整体删除 dist\：那会连带删掉已打好的 dist\linux、dist\windows 与 dist\site。
+rem 应用自身产物由 scripts\clean-app-dist.cjs 在 prebuild 阶段精确清理。
 call npm run build
 if errorlevel 1 (
   echo.
@@ -126,21 +127,22 @@ echo [完成] Electron 应用和安装包已生成。
 echo.
 
 echo ============================================================
-echo   [4/4] 移动产物到项目根目录 dist\
+echo   [4/4] 移动产物到 dist\windows\
 echo ============================================================
-if not exist "%DIST%" mkdir "%DIST%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $src=Join-Path (Get-Location) 'build\release'; $dst=Join-Path (Get-Location) 'dist'; if (-not (Test-Path -LiteralPath $src)) { throw '缺少打包暂存目录: ' + $src }; Get-ChildItem -LiteralPath $src -Force | ForEach-Object { Move-Item -LiteralPath $_.FullName -Destination $dst -Force }"
+set "OUT=%DIST%\windows"
+if not exist "%OUT%" mkdir "%OUT%"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $src=Join-Path (Get-Location) 'build\release'; $dst=Join-Path (Get-Location) 'dist\windows'; if (-not (Test-Path -LiteralPath $src)) { throw '缺少打包暂存目录: ' + $src }; if (-not (Test-Path -LiteralPath $dst)) { New-Item -ItemType Directory -Path $dst | Out-Null }; Get-ChildItem -LiteralPath $src -Force | ForEach-Object { Move-Item -LiteralPath $_.FullName -Destination $dst -Force }"
 if errorlevel 1 (
   echo.
-  echo [错误] 移动打包产物到 dist 失败。
+  echo [错误] 移动打包产物到 dist\windows 失败。
   goto :FAIL
 )
-if not exist "%DIST%\win-unpacked" (
-  echo [错误] dist\win-unpacked 不存在。
+if not exist "%OUT%\win-unpacked" (
+  echo [错误] dist\windows\win-unpacked 不存在。
   goto :FAIL
 )
-if not exist "%DIST%\*.exe" (
-  echo [错误] dist\*.exe 不存在。
+if not exist "%OUT%\*.exe" (
+  echo [错误] dist\windows\*.exe 不存在。
   goto :FAIL
 )
 
@@ -148,13 +150,13 @@ echo.
 echo ============================================================
 echo   构建完成
 echo ============================================================
-echo   产物目录: %DIST%
+echo   产物目录: %OUT%
 echo.
 echo   安装包:
-for %%F in ("%DIST%\*.exe") do echo     %%~nxF
+for %%F in ("%OUT%\*.exe") do echo     %%~nxF
 echo.
 echo   免安装应用:
-echo     dist\win-unpacked\
+echo     dist\windows\win-unpacked\
 echo.
 echo   应用图标:
 echo     %ICON%
@@ -207,21 +209,21 @@ if errorlevel 1 (
   echo [错误] Linux 服务端部署包构建失败。
   goto :FAIL
 )
-if not exist "%DIST%\linux-server\*.tar.gz" (
-  echo [错误] 未找到 dist\linux-server\*.tar.gz。
+if not exist "%DIST%\linux\*.tar.gz" (
+  echo [错误] 未找到 dist\linux\*.tar.gz。
   goto :FAIL
 )
-if not exist "%DIST%\linux-server\*.sha256" (
-  echo [错误] 未找到 dist\linux-server\*.sha256。
+if not exist "%DIST%\linux\*.sha256" (
+  echo [错误] 未找到 dist\linux\*.sha256。
   goto :FAIL
 )
 echo.
 echo ============================================================
 echo   Linux 服务端部署包构建完成
 echo ============================================================
-echo   产物目录: %DIST%\linux-server\
-for %%F in ("%DIST%\linux-server\*.tar.gz") do echo   部署包: %%~nxF
-for %%F in ("%DIST%\linux-server\*.sha256") do echo   校验文件: %%~nxF
+echo   产物目录: %DIST%\linux\
+for %%F in ("%DIST%\linux\*.tar.gz") do echo   部署包: %%~nxF
+for %%F in ("%DIST%\linux\*.sha256") do echo   校验文件: %%~nxF
 if defined NONINTERACTIVE goto :EXIT
 echo.
 pause

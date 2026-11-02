@@ -14,8 +14,14 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if [ ! -f "$source_dir/linux_server/server.cjs" ] || [ ! -f "$source_dir/dist/index.html" ] || [ ! -f "$source_dir/dist/site/index.html" ]; then
-  echo "安装包不完整：需要 linux_server/server.cjs、dist/index.html 和 dist/site/index.html。" >&2
+# Linux 端只提供官网 + 监控 + API，不带桌面 UI（排课界面在 Electron 客户端）。
+# 因此这里校验的是官网站点，而不是 dist/index.html。
+if [ ! -f "$source_dir/linux_server/server.cjs" ] || [ ! -f "$source_dir/dist/site/index.html" ]; then
+  echo "安装包不完整：需要 linux_server/server.cjs 与 dist/site/index.html（官网站点）。" >&2
+  exit 1
+fi
+if [ ! -f "$source_dir/dist/site/site-config.json" ]; then
+  echo "缺少 dist/site/site-config.json（官网部署配置），安装包可能被截断。" >&2
   exit 1
 fi
 if ! command -v node >/dev/null 2>&1; then
@@ -29,6 +35,12 @@ fi
 if ! command -v systemctl >/dev/null 2>&1; then
   echo "找不到 systemctl。本安装脚本要求 systemd。" >&2
   exit 1
+fi
+if ! command -v java >/dev/null 2>&1; then
+  echo "[warn] 未找到 java：服务会启动，但排课求解不可用。" >&2
+  echo "[warn] 请安装 Java 21 运行时（如 apt install -y openjdk-21-jre-headless）。" >&2
+else
+  echo "[ok] java: $(java -version 2>&1 | head -n 1)"
 fi
 if ! id -u warpweft >/dev/null 2>&1; then
   useradd --system --home "$DATA_DIR" --shell /usr/sbin/nologin warpweft
