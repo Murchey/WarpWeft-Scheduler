@@ -14,6 +14,7 @@ import { ProjectLauncher } from './ProjectLauncher';
 import { TitleBar } from './TitleBar';
 import { SettingsPage } from './SettingsPage';
 import { WorkspaceLocationCard } from './WorkspaceLocationCard';
+import { JavaCheckDialog } from './JavaCheckDialog';
 import { PromptDialog } from './PromptDialog';
 import { copyText } from './clipboard';
 import { createEmptyWorkspace, isWorkspaceEmpty } from './newWorkspace';
@@ -730,6 +731,8 @@ function App() {
   const [connectionRetry, setConnectionRetry] = useState(0);
   const [serverSchema, setServerSchema] = useState<number | null>(null);
   const [serverBlocked, setServerBlocked] = useState(false);
+  // JDK 环境检测：null = 已就绪或旧服务端不提供该信息；否则记录探测到的版本（null=没找到 java）。
+  const [javaCheck, setJavaCheck] = useState<{ version: string | null } | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authNeedsSetup, setAuthNeedsSetup] = useState(false);
@@ -740,6 +743,20 @@ function App() {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<RunProgress>({ phase: 'idle', message: '等待开始排课' });
   const [shortRuns, setShortRuns] = useState<ShortRunRecord[]>([]);
+  // 装完 JDK 后点「重新检测」：只重查 Java，不动工作区与登录态。
+  const recheckJava = useCallback(async () => {
+    try {
+      const health = await fetchHealth();
+      if (!health.java) {
+        setJavaCheck(null);
+        return;
+      }
+      setJavaCheck(health.java.available ? null : { version: health.java.version ?? null });
+    } catch {
+      // 探测失败（服务端没起来）时保持原状，避免误报「Java 缺失」
+    }
+  }, []);
+
   const deleteShortRun = useCallback((id: string) => {
     setShortRuns((current) => current.filter((run) => run.id !== id));
   }, []);
@@ -948,6 +965,10 @@ function App() {
         const schema = Number(health.schemaVersion) || 1;
         setServerSchema(schema);
         setServerBlocked(schema < MIN_SERVER_SCHEMA);
+        // Java 21+ 是排课的前提，其余功能不受影响。旧服务端不返回 java 字段时跳过。
+        if (health.java) {
+          setJavaCheck(health.java.available ? null : { version: health.java.version ?? null });
+        }
         const required = Boolean(health.auth?.required);
         setAuthRequired(required);
         setAuthNeedsSetup(Boolean(health.auth?.needsSetup));
@@ -2363,6 +2384,15 @@ function App() {
     );
   }
 
+  // JDK 检测弹窗同样要在两个分支都渲染：装完 JDK 的用户多半还在启动页。
+  const javaDialogNode = javaCheck ? (
+    <JavaCheckDialog
+      detectedVersion={javaCheck.version}
+      onRecheck={() => void recheckJava()}
+      onClose={() => setJavaCheck(null)}
+    />
+  ) : null;
+
   // 命名对话框要在「启动页」与「工作区」两个分支都渲染，否则从启动页触发时不可见
   const nameDialogNode = nameDialog ? (
     <PromptDialog
@@ -2418,6 +2448,7 @@ function App() {
             setModeSettingsOpen(true);
           }}
         />
+        {javaDialogNode}
         {nameDialogNode}
       </>
     );
@@ -2708,6 +2739,7 @@ function App() {
         />
       ) : null}
       {modeDialog}
+      {javaDialogNode}
       {nameDialogNode}
     </div>
   );

@@ -2,6 +2,7 @@ import { navMessages } from '../domains/nav';
 import { commonMessages } from '../domains/common';
 import { settingsMessages } from '../domains/settings';
 import { projectMessages } from '../domains/project';
+import { javaMessages } from '../domains/java';
 
 /**
  * 中文词条是唯一真源。所有 UI key 必须在这里（或 domains/* 中）登记，
@@ -12,6 +13,7 @@ export const zhCN = {
   ...commonMessages,
   ...settingsMessages,
   ...projectMessages,
+  ...javaMessages,
 } as const;
 
 export type MessageKey = keyof typeof zhCN;

@@ -26,7 +26,8 @@
     "build:fullsolver": "powershell -ExecutionPolicy Bypass -File server/fullsolver/build.ps1",
     "verify:fullsolver": "powershell -ExecutionPolicy Bypass -File server/fullsolver/verify.ps1",
     "dist:win": "cmd /c build_appliction.bat --local",
-    "dist:linux": "node scripts/build-linux-server.cjs",
+    "dist:linux": "node scripts/build-linux-server.cjs && node scripts/build-linux-webapp.cjs",
+    "dist:webapp": "node scripts/build-linux-webapp.cjs",
     "prebuild": "npm run build:solver && node scripts/clean-app-dist.cjs",
     "predev:api": "npm run build:solver",
     "prevalidate": "npm run build:solver"

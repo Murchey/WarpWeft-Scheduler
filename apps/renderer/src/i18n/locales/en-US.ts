@@ -274,4 +274,19 @@ export const enUS = {
   'empty.lead': 'Start the server, or check the service address in the run mode settings.',
   'empty.retry': 'Reconnect',
   'empty.settings': 'Open settings',
+
+  'java.titleMissing': 'Java runtime not detected',
+  'java.titleOld': 'Java version is too old',
+  'java.leadMissing':
+    'Scheduling needs Java 21 or newer, but no java command was found. Install it and press Recheck — no restart needed.',
+  'java.leadOld':
+    'Scheduling needs Java 21 or newer, but Java {version} was detected. Upgrade and press Recheck.',
+  'java.source.oracle': 'Oracle JDK 21 (long-term support)',
+  'java.source.microsoft': 'Microsoft Build of OpenJDK',
+  'java.source.openjdk': 'OpenJDK 21 (jdk.java.net)',
+  'java.hintHome':
+    'If it is still not detected after installing, make sure java is on PATH, or set JAVA_HOME to the JDK/JRE install folder.',
+  'java.recheck': 'Recheck',
+  'java.checking': 'Checking…',
+  'java.later': 'Later',
 } satisfies Partial<Record<MessageKey, string>>;

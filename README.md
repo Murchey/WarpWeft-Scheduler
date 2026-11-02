@@ -74,6 +74,8 @@
 4. 在「排课准备 → 数据导入」导入 Excel，或手工录入
 5. 切到「排课任务」发起排课，完成后在「课表预览」查看与导出
 
+> **Java 21+ 是排课的前提**。应用启动后会自动检测：若检测不到 Java 21 及以上版本，会弹出提示框，给出三个官方下载入口（Oracle JDK 21、Microsoft Build of OpenJDK、OpenJDK 21），装好后点「重新检测」即可，不需要重启应用。可以点「稍后再说」先用其它功能，只有排课会受影响。
+
 > 从源码构建见第二部分。
 
 ### Linux 服务端（多人共享）
@@ -250,7 +252,8 @@ npm run validate      # 演示数据校验
 
 ~~~powershell
 npm run dist:win      # Windows 安装包 + 免安装应用（等同 build_appliction.bat 选项 1）
-npm run dist:linux    # Linux 服务端部署包 tar.gz + SHA256
+npm run dist:linux    # 两种 Linux 部署包（纯服务端 + 网页版应用）
+npm run dist:webapp   # 只打网页版应用包
 ~~~
 
 产物按目标分目录存放，**互不覆盖**：
@@ -264,7 +267,9 @@ dist/
 ~~~
 
 - `dist/windows/`：`WarpWeft Scheduler Setup <版本>.exe`、`win-unpacked/`
-- `dist/linux/`：`warpweft-linux-server-<版本>.tar.gz` 与 `.sha256`
+- `dist/linux/`：两种 Linux 包（各带 `.sha256`）
+  - **纯服务端包** `warpweft-linux-server-<版本>.tar.gz` —— 官网 + 运行状态监控 + API 运算 + Java 求解器，**不含排课界面**
+  - **网页版应用包** `warpweft-linux-webapp-<版本>.tar.gz` —— 排课界面的静态前端，**可直接部署到任意网站**（附 `nginx.conf.example` 与部署说明）
 
 **构建不会互相覆盖**：`npm run build` 只清理应用自身产物（`scripts/clean-app-dist.cjs`），不动 `dist/site`、`dist/linux`、`dist/windows`；因此先打 Linux 还是先打 Windows 都行。`electron-builder` 的 `files` 已排除这三个目录，打包产物不会被递归装进安装包。
 

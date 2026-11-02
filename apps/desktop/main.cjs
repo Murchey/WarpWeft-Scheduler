@@ -304,6 +304,28 @@ ipcMain.handle('warpweft:show-item', async (_event, target) => {
   }
 });
 
+// ── 外部链接 ─────────────────────────────────────────────────
+// 下载 JDK、查看文档等需要跳系统浏览器；只放行 http/https，避免被拿来打开本地文件。
+function safeExternalUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+ipcMain.handle('warpweft:open-external', async (_event, value) => {
+  const href = safeExternalUrl(value);
+  if (!href) return { ok: false, error: '只允许打开 http(s) 链接' };
+  try {
+    await shell.openExternal(href);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
 // ── 无边框窗口控制 ───────────────────────────────────────────
 // Windows/Linux 使用自绘标题栏；macOS 保留原生红绿灯（hiddenInset）。
 const USE_NATIVE_FRAME = process.platform === 'darwin';
@@ -379,6 +401,12 @@ function createWindow() {
   for (const channel of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'focus', 'blur', 'resize']) {
     window.on(channel, pushWindowState);
   }
+  // target="_blank" 的链接交给系统浏览器，而不是再开一个 Electron 窗口。
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    const href = safeExternalUrl(url);
+    if (href) void shell.openExternal(href);
+    return { action: 'deny' };
+  });
   window.webContents.on('did-finish-load', pushWindowState);
 
   if (process.env.VITE_DEV_SERVER_URL) {

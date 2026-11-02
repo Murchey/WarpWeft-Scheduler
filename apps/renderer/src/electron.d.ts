@@ -28,6 +28,8 @@ export interface WarpweftBridge {
     files: { filename: string; data: ArrayBuffer }[],
   ) => Promise<WarpweftBridgeResult & { files?: number; folderName?: string }>;
   showItemInFolder: (target: string) => Promise<{ ok: boolean; error?: string }>;
+  /** 用系统浏览器打开外部链接；仅放行 http(s)。 */
+  openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
   getWorkspace: () => Promise<WarpweftWorkspaceInfo>;
   chooseWorkspace: () => Promise<{ canceled?: boolean; status?: string; path?: string; restartRequired?: boolean; error?: string }>;
   /** 以下方法仅新版桌面壳提供，浏览器端与旧版壳均为 undefined。 */

@@ -84,6 +84,11 @@ jar --version
 - 至少 2 GB 可用磁盘（Electron 不参与 Linux 服务端，包体主要是 JRE 依赖之外的静态文件和 JAR）。
 - 服务器时间同步（NTP），否则审计时间、任务时间和课表日期会漂移。
 
+**应用会自动检测 JDK**：Windows 桌面版与网页版应用启动后会检查 Java 版本；检测不到 Java 21 及以上时会弹出提示框，给出三个官方下载入口（Oracle JDK 21、Microsoft Build of OpenJDK、OpenJDK 21），装好后点「重新检测」即可，不需要重启应用。
+
+- 检测的是**服务端**的 Java（求解器跑在服务端），不是浏览器所在机器。
+- 提示框是非阻断的：可以点「稍后再说」继续使用其它功能，只有排课会失败。
+
 ## 5. 构建 Linux 部署包
 
 ### 5.1 Windows 上交叉构建（推荐给当前开发机）
@@ -100,12 +105,32 @@ jar --version
 npm run dist:linux
 ```
 
-脚本会重新构建 Java Solver、渲染进程，并在项目根目录生成：
+脚本会重新构建 Java Solver、渲染进程，并在 `dist/linux/` 下生成**两种部署包**：
 
 ```text
-dist/linux/warpweft-linux-server-<版本>.tar.gz
-dist/linux/warpweft-linux-server-<版本>.tar.gz.sha256
+dist/linux/
+  warpweft-linux-server-<版本>.tar.gz          [1] 纯服务端包
+  warpweft-linux-server-<版本>.tar.gz.sha256
+  warpweft-linux-webapp-<版本>.tar.gz          [2] 网页版应用包
+  warpweft-linux-webapp-<版本>.tar.gz.sha256
 ```
+
+| 包 | 内容 | 适合谁 |
+| --- | --- | --- |
+| **[1] 纯服务端包** | 官网 + 运行状态监控 + API 运算 + Java 求解器；**不含排课界面** | 想用桌面客户端排课、或只需要一个内网排课服务的学校 |
+| **[2] 网页版应用包** | 排课界面的静态前端，可直接部署到任意网站 | 想用浏览器排课、不想装桌面客户端的用户 |
+
+两个包可以独立使用，也可以搭配：[2] 部署到网站后，把它的 `/api/` 指向 [1] 跑起来的服务端即可。
+
+只想打其中一个时：
+
+```bash
+npm run dist:linux -- --skip-build   # 两个都要（默认）
+npm run dist:webapp                  # 只要网页版应用包
+node scripts/build-linux-server.cjs  # 只要纯服务端包
+```
+
+网页版应用包里附带 `nginx.conf.example` 与 `README.md`，说明如何把它挂到网站上。
 
 ### 5.2 Linux 原生构建
 
@@ -134,6 +159,7 @@ MAVEN_MIRROR=https://maven.aliyun.com/repository/public npm run build:solver
 ```bash
 cd dist/linux
 sha256sum -c warpweft-linux-server-<版本>.tar.gz.sha256
+sha256sum -c warpweft-linux-webapp-<版本>.tar.gz.sha256
 ```
 
 部署包内容：

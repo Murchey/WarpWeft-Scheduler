@@ -32,7 +32,7 @@ echo.
 echo   [1] 编译本地版本
 echo       Electron 应用 + NSIS 安装包（安装包使用应用图标）
 echo   [2] 编译 Linux 服务端（含登录）
-echo       生成 systemd 部署包到 dist\linux\（含官网站点）；说明见 guideline.md
+echo       生成两种部署包到 dist\linux\：纯服务端（含官网站点）+ 网页版应用
 echo   [0] 退出
 echo.
 choice /c 120 /n /m "请选择 [1/2/0]: "
@@ -209,8 +209,12 @@ if errorlevel 1 (
   echo [错误] Linux 服务端部署包构建失败。
   goto :FAIL
 )
-if not exist "%DIST%\linux\*.tar.gz" (
-  echo [错误] 未找到 dist\linux\*.tar.gz。
+if not exist "%DIST%\linux\warpweft-linux-server-*.tar.gz" (
+  echo [错误] 未找到纯服务端包 dist\linux\warpweft-linux-server-*.tar.gz。
+  goto :FAIL
+)
+if not exist "%DIST%\linux\warpweft-linux-webapp-*.tar.gz" (
+  echo [错误] 未找到网页版应用包 dist\linux\warpweft-linux-webapp-*.tar.gz。
   goto :FAIL
 )
 if not exist "%DIST%\linux\*.sha256" (
@@ -219,11 +223,18 @@ if not exist "%DIST%\linux\*.sha256" (
 )
 echo.
 echo ============================================================
-echo   Linux 服务端部署包构建完成
+echo   Linux 部署包构建完成（两种）
 echo ============================================================
 echo   产物目录: %DIST%\linux\
-for %%F in ("%DIST%\linux\*.tar.gz") do echo   部署包: %%~nxF
-for %%F in ("%DIST%\linux\*.sha256") do echo   校验文件: %%~nxF
+echo.
+echo   [1] 纯服务端包（官网 + 监控 + API，排课在桌面客户端）
+for %%F in ("%DIST%\linux\warpweft-linux-server-*.tar.gz") do echo       %%~nxF
+echo.
+echo   [2] 网页版应用包（排课界面，可直接部署到网站）
+for %%F in ("%DIST%\linux\warpweft-linux-webapp-*.tar.gz") do echo       %%~nxF
+echo.
+echo   校验文件:
+for %%F in ("%DIST%\linux\*.sha256") do echo       %%~nxF
 if defined NONINTERACTIVE goto :EXIT
 echo.
 pause

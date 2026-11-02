@@ -2164,6 +2164,15 @@ html[lang='en-US'] .status-tag,html[lang='en-US'] .mini-tag{letter-spacing:.04em
 .prompt-dialog .prompt-field .settings-input{width:100%;min-width:0}
 .prompt-dialog .rule-dialog-body .panel-note{margin:0}
 .server-copy-fallback{display:inline-block;margin-left:8px;font-style:normal;font-size:11px;color:var(--danger)}
+
+/* JDK 环境检测弹窗：比 prompt 窄，下载源用整行卡片便于点击 */
+.java-check-dialog{width:min(560px,100%);border-radius:0}
+.java-check-dialog .rule-dialog-body .panel-note{margin:0}
+.java-check-links{display:grid;gap:8px}
+.java-check-link{display:grid;gap:2px;padding:10px 12px;border:1px solid var(--rule);text-decoration:none;color:inherit}
+.java-check-link:hover{border-color:var(--info);background:var(--info-soft)}
+.java-check-link b{font-size:13px;font-weight:600}
+.java-check-link small{font-size:11px;color:var(--muted);word-break:break-all}
 @media(max-width:1080px){
   .settings-shell{grid-template-columns:1fr;gap:18px}
   .settings-nav{position:static;grid-template-columns:repeat(3,minmax(0,1fr));border-top:0;border-bottom:1px solid var(--rule);padding:0 0 8px}

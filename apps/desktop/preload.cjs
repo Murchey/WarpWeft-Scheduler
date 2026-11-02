@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('warpweft', {
   saveExport: (filename, data) => ipcRenderer.invoke('warpweft:save-export', { filename, data }),
   saveExports: (folderName, files) => ipcRenderer.invoke('warpweft:save-exports', { folderName, files }),
   showItemInFolder: (target) => ipcRenderer.invoke('warpweft:show-item', target),
+  // 用系统浏览器打开外部链接（下载 JDK、查看文档等）
+  openExternal: (url) => ipcRenderer.invoke('warpweft:open-external', url),
   getWorkspace: () => ipcRenderer.invoke('warpweft:get-workspace'),
   chooseWorkspace: () => ipcRenderer.invoke('warpweft:choose-workspace'),
   // 自绘标题栏所需的窗口控制
