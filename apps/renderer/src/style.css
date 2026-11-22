@@ -2186,6 +2186,12 @@ html[lang='en-US'] .status-tag,html[lang='en-US'] .mini-tag{letter-spacing:.04em
   .settings-inline-actions{justify-content:flex-start}
 }
 
+/* 侧栏列表项底线：原先写死 #343934，在纯黑侧栏上偏亮，与分组间距叠在一起
+   容易看成"多出来的一条线"。统一降到更贴近背景的 #24282 4（深色）。 */
+.command-rail .nav-item{border-bottom-color:#242824}
+html[data-theme='dark'] .command-rail .nav-item{border-bottom-color:#22262a}
+
+
 /* ── 班会 / 合班 / 拆班：三种预设入口与余量提示 ─────────────── */
 .elective-presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0}
 .elective-preset{display:grid;gap:4px;text-align:left;padding:12px 14px;cursor:pointer;
@@ -2317,13 +2323,14 @@ html[data-theme='dark'] .tt-btn-primary:hover:not(:disabled){background:var(--si
 }
 
 
-/* ── 侧栏导航分组：只加分隔与间距，导航项本身样式不变 ───────── */
+/* ── 侧栏导航分组：只用间距分段，不再额外画分隔线 ─────────────
+   每个 .nav-item 自带 1px 下边框，分组若再加一条 1px 线，两条线相隔十几像素、
+   在深色主题下配色又几乎一致，看起来就像同一条线被画了两遍。 */
 .nav-group{display:grid}
-.nav-group-rule{display:block;height:1px;margin:12px 8px 6px;background:#454844}
-html[data-theme='dark'] .nav-group-rule{background:var(--rule)}
+.nav-group.is-separated{margin-top:6px;padding-top:2px}
 @media(max-width:680px){
   /* 窄屏原本是 3 列网格；分组容器改为 contents，保持原有排布 */
   .nav-list .nav-group{display:contents}
-  .nav-group-rule{display:none}
+  .nav-group.is-separated{margin-top:0;padding-top:0}
 }
 

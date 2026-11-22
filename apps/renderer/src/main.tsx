@@ -2566,8 +2566,7 @@ function App() {
         </div>
         <nav className="nav-list" aria-label={t('nav.aria')}>
           {tabGroups.map((group, groupIndex) => (
-            <div className="nav-group" key={group.join('|')}>
-              {groupIndex > 0 ? <span className="nav-group-rule" aria-hidden="true" /> : null}
+            <div className={'nav-group' + (groupIndex > 0 ? ' is-separated' : '')} key={group.join('|')}>
               {group.map((item) => (
                 <button
                   key={item}
