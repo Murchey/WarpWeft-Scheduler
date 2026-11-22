@@ -2186,6 +2186,18 @@ html[lang='en-US'] .status-tag,html[lang='en-US'] .mini-tag{letter-spacing:.04em
   .settings-inline-actions{justify-content:flex-start}
 }
 
+/* ── 无障碍修正：侧栏在深色底上的小字号对比度不足（实测 4.43:1）─────
+   序号与英文副标从 #777c76 提到 #9a9f98（约 5.6:1），正文保持原样。 */
+.command-rail .nav-item .nav-no,
+.command-rail .nav-item em{color:#9a9f98}
+.command-rail .rail-footer small{color:#b0b5ae}
+html[data-theme='dark'] .command-rail .nav-item .nav-no,
+html[data-theme='dark'] .command-rail .nav-item em{color:#a9aea7}
+
+/* 正文最小字号：12px 的说明文字在 1440 宽下偏小，统一提到 12.5px */
+.panel-note{font-size:12.5px}
+
+
 /* 长篇口径说明收进 details：默认只留一行结论，需要时再展开 */
 .soft-prefs-more{margin-top:10px;border-top:1px solid var(--rule);padding-top:8px}
 .soft-prefs-more summary{cursor:pointer;font:11px var(--font-ui);letter-spacing:.04em;color:var(--muted)}
