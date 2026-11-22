@@ -27,7 +27,7 @@ export const enUS = {
   'prepare.section.timeSlots': 'Time slots',
   'prepare.section.semester': 'Semester',
   'prepare.section.plans': 'Course plans',
-  'prepare.section.electives': 'Elective groups',
+  'prepare.section.electives': 'Combined / Split / Assembly',
   'prepare.section.availability': 'Availability',
   'prepare.section.rules': 'Rules',
   'prepare.countConfigured': 'Set',

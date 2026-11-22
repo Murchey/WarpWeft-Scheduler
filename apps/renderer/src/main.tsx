@@ -48,6 +48,7 @@ import { RUN_MODE_LABEL_KEYS, RUN_MODE_OPTIONS, runResultText } from './runConfi
 import { confirmDialog, ConfirmHost } from './confirm';
 import { HelpPanel } from './HelpPanel';
 import { useGlobalShortcuts } from './shortcuts';
+import { electiveSlackMessages } from './electiveSlack';
 import { resolveNextAction } from './nextAction';
 import { NextActionBar } from './NextActionBar';
 import { CLOUD_ENDPOINT_PLACEHOLDER, cleanEndpoint, endpointForMode, initialEndpointForMode, RUNTIME_MODE_KEY, readActiveEndpoint, readEndpointMemory, rememberEndpoint, writeActiveEndpoint, writeEndpointMemory } from './runtimeEndpoint';
@@ -470,6 +471,8 @@ function preflight(inputData: SchoolData): string[] {
       issues.push(item.name + ' 的周课时 ' + load + ' 超过可用时间格 ' + slotCount);
     }
   }
+  // 走班组（班会/合班/拆班）需要班级有整格空位，零余量时必然排不进。
+  issues.push(...electiveSlackMessages(data));
   for (const item of data.teachers) {
     const plans = data.coursePlans.filter((plan) => plan.teacherId === item.id);
     const load = Math.max(loadInWeek(plans, 'odd'), loadInWeek(plans, 'even'));

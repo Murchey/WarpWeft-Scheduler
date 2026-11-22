@@ -22,7 +22,7 @@ export const navMessages = {
   'prepare.section.timeSlots': '周时间段',
   'prepare.section.semester': '学期周次',
   'prepare.section.plans': '教学计划',
-  'prepare.section.electives': '走班组',
+  'prepare.section.electives': '班会 / 合班 / 拆班',
   'prepare.section.availability': '教师时间',
   'prepare.section.rules': '排课规则',
   'prepare.countConfigured': '已设置',
