@@ -131,7 +131,7 @@ echo   [4/4] 移动产物到 dist\windows\
 echo ============================================================
 set "OUT=%DIST%\windows"
 if not exist "%OUT%" mkdir "%OUT%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $src=Join-Path (Get-Location) 'build\release'; $dst=Join-Path (Get-Location) 'dist\windows'; if (-not (Test-Path -LiteralPath $src)) { throw '缺少打包暂存目录: ' + $src }; if (-not (Test-Path -LiteralPath $dst)) { New-Item -ItemType Directory -Path $dst | Out-Null }; Get-ChildItem -LiteralPath $src -Force | ForEach-Object { Move-Item -LiteralPath $_.FullName -Destination $dst -Force }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $src=Join-Path (Get-Location) 'build\release'; $dst=Join-Path (Get-Location) 'dist\windows'; if (-not (Test-Path -LiteralPath $src)) { throw '缺少打包暂存目录: ' + $src }; if (-not (Test-Path -LiteralPath $dst)) { New-Item -ItemType Directory -Path $dst | Out-Null }; Get-ChildItem -LiteralPath $src -Force | ForEach-Object { $target=Join-Path $dst $_.Name; if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }; Move-Item -LiteralPath $_.FullName -Destination $target -Force }"
 if errorlevel 1 (
   echo.
   echo [错误] 移动打包产物到 dist\windows 失败。
