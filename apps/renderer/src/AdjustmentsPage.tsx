@@ -34,6 +34,7 @@ import { DAYS, SectionHeading } from './components';
 import { download, exportMessage } from './download';
 import { LessonLogPanel } from './LessonLogPanel';
 import { messageOf, todayLocal, uid } from './utils';
+import { confirmDialog } from './confirm';
 import { findClass, findRoom, findTeacher, planOf, planSubjectName } from './selectors';
 import { fmtDateTime } from './i18n';
 
@@ -606,7 +607,7 @@ export function AdjustmentsPage({
     setStatus({ tone: 'neutral', text: '已撤销这次调整。' });
   };
 
-  const revokeDayAdjustments = () => {
+  const revokeDayAdjustments = async () => {
     const current = latestData.current;
     const targets = (current.adjustments ?? []).filter(
       (item) => item.status === 'active' && (item.date === date || (item.type === 'swap' && item.targetDate === date)),
@@ -615,7 +616,7 @@ export function AdjustmentsPage({
       setStatus({ tone: 'warning', text: '当前日期没有可撤销的调整。' });
       return;
     }
-    if (!window.confirm(`撤销 ${targets.length} 条 ${date} 的调整？操作会写入审计记录。`)) return;
+    if (!(await confirmDialog({ tone: 'danger', title: '撤销当天全部调整', message: `撤销 ${date} 的 ${targets.length} 条调整？`, detail: '撤销会写入审计记录；逐条撤销的记录同样保留。', confirmLabel: '全部撤销' }))) return;
     const at = new Date().toISOString();
     const operatorName = operator.trim() || '未填写';
     commit(
@@ -969,7 +970,7 @@ export function AdjustmentsPage({
     });
   };
 
-  const revokeAdjustment = (adjustment: Adjustment) => {
+  const revokeAdjustment = async (adjustment: Adjustment) => {
     const noop = adjustment.status === 'active' && isNoopMove(adjustment);
     const isMove = adjustment.type === 'move';
     const isSwap = adjustment.type === 'swap';
@@ -990,7 +991,7 @@ export function AdjustmentsPage({
         : isSwap
           ? '撤销这次对调？两节课都会回到各自的日期和原时间，撤销记录会保留在审计里。'
           : '撤销这条调整？撤销记录会保留在审计里。';
-    if (!window.confirm(prompt)) return;
+    if (!(await confirmDialog({ tone: 'danger', message: prompt, detail: '撤销会写入审计记录，操作人和前后值都会保留。', confirmLabel: noop ? '清理记录' : '撤销' }))) return;
     const at = new Date().toISOString();
     const detail =
       describeAdjustment(adjustment, data) +
@@ -1025,9 +1026,9 @@ export function AdjustmentsPage({
     });
   };
 
-  const cleanupNoops = () => {
+  const cleanupNoops = async () => {
     if (noopRecords.length === 0) return;
-    if (!window.confirm('清理 ' + noopRecords.length + ' 条原位置调课记录？它们不会改变课表，撤销记录会保留在审计里。')) return;
+    if (!(await confirmDialog({ tone: 'danger', title: '清理原位置调课记录', message: '清理 ' + noopRecords.length + ' 条原位置调课记录？', detail: '这些记录不会改变课表；清理动作会保留在审计里。', confirmLabel: '清理' }))) return;
     const ids = new Set(noopRecords.map((item) => item.id));
     const at = new Date().toISOString();
     const detail = '清理 ' + noopRecords.length + ' 条原位置调课记录 · 操作人 ' + (operator.trim() || '未填写');
@@ -1516,7 +1517,7 @@ export function AdjustmentsPage({
         ))}
       </nav>
       <p className="adjust-lead">
-        调整只作用于所选日期，不改动周课表。调课用于同一天的空节次，也可以直接拖动课程卡片；对调用于与另一天的同班课程互换，每班固定教室随班级走，系统只检查两天的班级和教师占用。绿色可放，红色会说明原因。
+        调整只作用于所选日期，不改动周课表；绿点表示可放，红点会说明原因。
       </p>
 
       <div className="tt-command adjust-command">
@@ -1668,7 +1669,7 @@ export function AdjustmentsPage({
           </>
         ) : (
           <span className="tt-selection-empty">
-            点击左侧课程查看可调目标；调课只换同一天的空节次，对调则与另一天的同班课程互换。选中后点击目标节次或拖动课程放置。
+            点一节课查看可调目标。
           </span>
         )}
       </div>
@@ -1791,10 +1792,7 @@ export function AdjustmentsPage({
           </div>
           {!selected ? (
             <div className="adjust-guide">
-              <p><b>1</b> 选择日期和班级</p>
-              <p><b>2</b> 点击课程卡片</p>
-              <p><b>3</b> 调课点目标节次；对调选目标日期和课程</p>
-              <p className="panel-note">目标节次会直接显示可调/不可调及原因；对调只允许不同星期的同班课程，当前位置不会产生调整记录。</p>
+              <p className="panel-note">在上方课表点一节课程开始：调课直接点目标节次，对调则选另一天的同班课程。目标格会实时显示可调与否及原因。</p>
             </div>
           ) : (
             <>

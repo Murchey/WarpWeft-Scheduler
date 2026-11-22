@@ -77,6 +77,31 @@ test('clean timetable has no issues and is publishable', async () => {
   assert.equal(report.utilization.rooms[0].ratio, 0.5);
 });
 
+test('odd/even paired lessons do not overflow the class week', async () => {
+  const { inspectTimetable } = await loadInspection();
+  const input = baseInput();
+  // 一个班每周 4 格，其中两节单周、两节双周：任何一周都只上 2 节，
+  // 不应因为总数 4 > 2 而被误判成超排（曾导致每班固定显示 102.9%）。
+  input.coursePlans = [
+    { id: 'p1', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyPeriods: 1, weeks: 'odd' },
+    { id: 'p2', classId: 'c1', subjectId: 's2', teacherId: 't2', weeklyPeriods: 1, weeks: 'odd' },
+    { id: 'p3', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyPeriods: 1, weeks: 'even' },
+    { id: 'p4', classId: 'c1', subjectId: 's2', teacherId: 't2', weeklyPeriods: 1, weeks: 'even' },
+  ];
+  input.classes = [{ id: 'c1', name: '一班', size: 30 }];
+  input.entries = [
+    { id: 'e1', coursePlanId: 'p1', classId: 'c1', teacherId: 't1', roomId: 'r1', slotId: 'd1-p1', weeks: 'odd' },
+    { id: 'e2', coursePlanId: 'p2', classId: 'c1', teacherId: 't2', roomId: 'r1', slotId: 'd1-p2', weeks: 'odd' },
+    { id: 'e3', coursePlanId: 'p3', classId: 'c1', teacherId: 't1', roomId: 'r1', slotId: 'd2-p1', weeks: 'even' },
+    { id: 'e4', coursePlanId: 'p4', classId: 'c1', teacherId: 't2', roomId: 'r1', slotId: 'd2-p2', weeks: 'even' },
+  ];
+  const report = inspectTimetable(input);
+  const row = report.utilization.classes[0];
+  assert.equal(row.used, 2, '单周与双周各只占 2 格');
+  assert.ok(row.ratio <= 1, '单周密度不应超过 100%，实际 ' + row.ratio);
+  assert.equal(row.warning, false);
+});
+
 test('class, teacher and room double booking are hard conflicts', async () => {
   const { inspectTimetable, CATEGORY_LABELS } = await loadInspection();
   const input = baseInput();

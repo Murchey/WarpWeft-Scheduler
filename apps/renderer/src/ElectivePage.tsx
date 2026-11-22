@@ -1,6 +1,7 @@
 import type { Commit, ElectiveBlock, ElectiveGroup, SchoolData } from './types';
 import { SectionHeading } from './components';
 import { uid } from './utils';
+import { confirmDialog } from './confirm';
 
 const ROOM_TYPES = ['普通教室', '实验室', '计算机房', '音乐教室', '美术教室', '体育馆'];
 
@@ -54,8 +55,8 @@ export function ElectivePage({
     updateGroup(group.id, { blocks: group.blocks.map((block) => (block.id === blockId ? { ...block, ...patch } : block)) });
   };
 
-  const removeGroup = (group: ElectiveGroup) => {
-    if (!window.confirm('删除走班组「' + group.name + '」？相关候选课表会清空。')) return;
+  const removeGroup = async (group: ElectiveGroup) => {
+    if (!(await confirmDialog({ tone: 'danger', title: '删除走班组', message: '删除走班组「' + group.name + '」？', detail: '相关候选课表会清空，需要重新排课。', confirmLabel: '删除走班组' }))) return;
     write(groups.filter((item) => item.id !== group.id));
   };
 

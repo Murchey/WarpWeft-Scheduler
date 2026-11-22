@@ -10,7 +10,7 @@ export const enUS = {
   'nav.runs': 'Scheduling',
   'nav.preview': 'Timetable',
   'nav.adjust': 'Adjustments',
-  'nav.final': 'Final Timetable',
+  'nav.final': 'Inspection',
   'nav.stats': 'Reports',
   'nav.server': 'Server',
   'nav.settings': 'Settings',

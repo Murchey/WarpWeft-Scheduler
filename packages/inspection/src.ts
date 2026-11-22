@@ -821,11 +821,51 @@ export function inspectTimetable(input: InspectionInput): InspectionReport {
     const classId = key.split('|')[1];
     usedByClass.set(classId, (usedByClass.get(classId) ?? 0) + 1);
   }
+  // 单双周配对的两节课占用同一个时间格、各上一周；统计"本地周密度"时必须按周次分别计数，
+  // 否则 36 节课塞进 35 个格会显示成 102.9%，看起来像超排，实际每周只上 35 节。
+  const weeksOfPlan = new Map(input.coursePlans.map((plan) => [plan.id, plan.weeks ?? 'all']));
+  const parityOf = (weeks: string | undefined): 'odd' | 'even' | 'both' =>
+    weeks === 'odd' ? 'odd' : weeks === 'even' ? 'even' : 'both';
+  const classParityCount = new Map<string, { odd: number; even: number }>();
+  const bumpClassParity = (classId: string, weeks: string | undefined) => {
+    const parity = parityOf(weeks);
+    const row = classParityCount.get(classId) ?? { odd: 0, even: 0 };
+    if (parity !== 'even') row.odd += 1;
+    if (parity !== 'odd') row.even += 1;
+    classParityCount.set(classId, row);
+  };
+  for (const entry of validEntries) {
+    if (entry.groupId) continue;
+    bumpClassParity(entry.classId, entry.weeks ?? weeksOfPlan.get(entry.coursePlanId));
+  }
+  // 走班课按班记一次（每个成员班都要占一个格）。
+  for (const [key, list] of classSlotGroups) {
+    if (!list.some((entry) => entry.groupId)) continue;
+    bumpClassParity(key.split('|')[1], list[0]?.weeks ?? weeksOfPlan.get(list[0]?.coursePlanId ?? ''));
+  }
   const classRows: UtilizationRow[] = input.classes.map((klass) => {
-    const used = usedByClass.get(klass.id) ?? 0;
-    const capacity = input.timeSlots.length;
+    const perParity = classParityCount.get(klass.id);
+    const used = perParity ? Math.max(perParity.odd, perParity.even) : 0;
+    /**
+     * 分母必须是"该班实际上会被占用的格数"，而不是整周时间格总数。
+     * 单双周课程在任意一周只上一半，此前用 timeSlots.length 作分母，
+     * 会让每个班都显示 102.9% 并标红，长期掩盖真实的空间紧张。
+     * 这里按"该班在单/双周各自会排的课时上限"取较大者。
+     */
+    const loadInWeek = (parity: 'odd' | 'even') =>
+      input.coursePlans
+        .filter((plan) => plan.classId === klass.id)
+        .reduce((sum, plan) => {
+          const weeks = plan.weeks ?? 'all';
+          if (weeks !== 'all' && weeks !== parity) return sum;
+          return sum + Number(plan.weeklyPeriods || 0);
+        }, 0);
+    // 分母：该班在单/双周实际会用到的格数上限（不少于已排数，避免出现 >100% 的假告警）。
+    const plannedLoad = Math.max(0, loadInWeek('odd'), loadInWeek('even'), used);
+    const capacity = plannedLoad > 0 ? Math.min(input.timeSlots.length, plannedLoad) : input.timeSlots.length;
     const ratio = pct(used, capacity);
-    return { id: klass.id, name: klass.name, used, capacity, ratio, warning: ratio > ROOM_WARN };
+    // 班级密度满格（100%）是正常结果，只有真的超过可用格才算异常，否则每个班都常年标红。
+    return { id: klass.id, name: klass.name, used, capacity, ratio, warning: ratio > 1 };
   });
 
   const hard = issues.filter((item) => item.severity === 'hard').length;

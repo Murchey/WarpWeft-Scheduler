@@ -18,6 +18,7 @@ import { importChanges } from './importReview';
 import { isWorkspaceArchive, workspaceArchiveFileName } from './workspaceProject';
 import { exportWorkspaceArchive, unpackWorkspaceArchive } from './api';
 import { fmtDateTime } from './i18n';
+import { confirmDialog } from './confirm';
 
 type ResourceCollection = 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots';
 
@@ -248,7 +249,7 @@ function ResourcesPage({
     }
     return next;
   };
-  const remove = (
+  const remove = async (
     collection: 'classes' | 'teachers' | 'subjects' | 'rooms' | 'timeSlots',
     id: string,
   ) => {
@@ -272,7 +273,7 @@ function ResourcesPage({
       setError('该时间段仍被教学计划设为固定时间，请先调整相关计划');
       return;
     }
-    if (!window.confirm('确定删除这条记录？')) return;
+    if (!(await confirmDialog({ tone: 'danger', title: '删除记录', message: '确定删除这条记录？', detail: '删除后候选课表会失效，需要重新排课；已保存的正式版不受影响。', confirmLabel: '删除' }))) return;
     const rows = (data[collection] as Array<{ id: string }>).filter((row) => row.id !== id);
     const next = pruneDeletedReferences({ ...data, [collection]: rows } as unknown as SchoolData, collection, new Set([id]));
     commit(next, { invalidate: true });
@@ -1201,7 +1202,7 @@ function ResourcesPage({
         return;
       }
       const parsed = await unpackWorkspaceArchive(buffer);
-      if (!window.confirm('加载工作区「' + parsed.name + '」？当前未保存的修改会被替换。')) return;
+      if (!(await confirmDialog({ tone: 'danger', title: '加载工作区', message: '加载工作区「' + parsed.name + '」？', detail: '当前未保存的修改会被替换，且不可撤销。', confirmLabel: '加载' }))) return;
       onLoadWorkspace?.(parsed.data);
       setNotice('已加载工作区：' + parsed.name);
     } catch (cause) {

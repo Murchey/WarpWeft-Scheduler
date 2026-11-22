@@ -14,6 +14,7 @@ import {
   timeLabel,
 } from './rules';
 import { SoftConstraintPanel } from './SoftConstraintPanel';
+import { confirmDialog } from './confirm';
 
 function RulesPage({
   data,
@@ -31,8 +32,8 @@ function RulesPage({
   const [draft, setDraft] = useState<RuleInstance | null>(null);
   const [simulating, setSimulating] = useState('');
   const [simulations, setSimulations] = useState<Record<string, string>>({});
-  const saveRules = (next: RuleInstance[]) => {
-    if (data.candidate && !window.confirm('应用规则修改将清除当前候选课表，包括锁定课程和手动调整，需重新排课。正式版保留。确认应用？取消会保留当前编辑内容。')) return false;
+  const saveRules = async (next: RuleInstance[]): Promise<boolean> => {
+    if (data.candidate && !(await confirmDialog({ tone: 'danger', title: '规则修改会清除候选课表', message: '应用规则修改将清除当前候选课表。', detail: '锁定课程与手动调整会一并清除，需要重新排课；已保存的正式版保留。', confirmLabel: '应用并清除候选' }))) return false;
     commit({ ...data, rules: next }, { invalidate: true });
     setSimulations({});
     return true;
@@ -73,8 +74,8 @@ function RulesPage({
       : '放宽后仍缺 ' + Math.max(0, result.total - result.entries) + ' 课时，可继续检查其他规则';
     setSimulations((current) => ({ ...current, [rule.id]: text + '（' + result.elapsedMs + ' ms）' }));
   };
-  const removeRule = (rule: RuleInstance) => {
-    if (!window.confirm('删除这条规则？已生成的候选课表会失效。')) return;
+  const removeRule = async (rule: RuleInstance) => {
+    if (!(await confirmDialog({ tone: 'danger', title: '删除规则', message: '删除这条规则？', detail: '已生成的候选课表会失效，需要重新排课。', confirmLabel: '删除规则' }))) return;
     saveRules(rules.filter((item) => item.id !== rule.id));
   };
   const toggleRule = (rule: RuleInstance) => {

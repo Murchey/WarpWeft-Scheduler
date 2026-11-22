@@ -21,6 +21,7 @@ export interface TitleBarProps {
   onImportProject: (file: File) => void;
   onToggleTheme: () => void;
   onOpenSettings: () => void;
+  onOpenHelp: () => void;
   onOpenMode: () => void;
   onLogout: () => void;
 }
@@ -113,6 +114,9 @@ export function TitleBar(props: TitleBarProps) {
       </div>
 
       <div className="titlebar-tools">
+        <button type="button" onClick={props.onOpenHelp} title="流程与快捷键" aria-label="流程与快捷键">
+          ?
+        </button>
         <button type="button" onClick={toggleLang} title={t('common.switchLanguage')} aria-label={t('common.switchLanguage')}>
           {lang === 'zh-CN' ? 'EN' : '中文'}
         </button>

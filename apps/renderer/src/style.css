@@ -2185,3 +2185,119 @@ html[lang='en-US'] .status-tag,html[lang='en-US'] .mini-tag{letter-spacing:.04em
   .settings-row-control .settings-input{min-width:0;width:100%;max-width:none}
   .settings-inline-actions{justify-content:flex-start}
 }
+
+/* 长篇口径说明收进 details：默认只留一行结论，需要时再展开 */
+.soft-prefs-more{margin-top:10px;border-top:1px solid var(--rule);padding-top:8px}
+.soft-prefs-more summary{cursor:pointer;font:11px var(--font-ui);letter-spacing:.04em;color:var(--muted)}
+.soft-prefs-more summary:hover{color:var(--ink)}
+.soft-prefs-more .panel-note{margin:6px 0 0}
+
+
+/* ── 帮助面板：主流程 + 快捷键，唯一的"我该做什么"文字入口 ───── */
+.help-panel{width:min(620px,100%);max-height:min(80vh,720px);overflow:auto;display:grid;gap:16px;
+  padding:20px 22px;border-top:4px solid var(--ink);background:var(--panel);color:var(--ink)}
+.help-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.help-panel-head h2{margin:0;font-size:20px;letter-spacing:-.02em}
+.help-block h3{margin:0 0 8px;font-size:13px;font-weight:600;color:var(--muted);letter-spacing:.04em}
+.help-flow{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.help-flow li{display:grid;grid-template-columns:110px minmax(0,1fr);gap:10px;align-items:baseline;
+  padding-bottom:8px;border-bottom:1px solid var(--rule)}
+.help-flow li:last-child{border-bottom:0}
+.help-flow b{font:600 12px var(--font-ui);letter-spacing:.02em}
+.help-flow span{font-size:12px;line-height:1.6;color:var(--muted)}
+.help-shortcuts{margin:0;display:grid;gap:6px}
+.help-shortcuts div{display:grid;grid-template-columns:150px minmax(0,1fr);gap:10px;align-items:center}
+.help-shortcuts dt{margin:0}
+.help-shortcuts dd{margin:0;font-size:12px;color:var(--muted)}
+.help-shortcuts kbd{padding:3px 7px;border:1px solid var(--rule);background:var(--chip);
+  font:11px var(--font-ui);white-space:nowrap}
+@media(max-width:600px){
+  .help-flow li,.help-shortcuts div{grid-template-columns:1fr;gap:2px}
+}
+
+
+/* 主按钮语义统一：主行动 = 墨底 + 信号色 hover；--info 只用于"信息/只读"标记。
+   此前 tt-btn-primary 用 --info 蓝，与 action-button 的墨底并列，出现两个"主要动作"。 */
+.tt-btn-primary{background:var(--ink);border-color:var(--ink);color:var(--panel)}
+.tt-btn-primary:hover:not(:disabled){background:var(--signal);border-color:var(--signal);color:var(--on-signal)}
+html[data-theme='dark'] .tt-btn-primary{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+html[data-theme='dark'] .tt-btn-primary:hover:not(:disabled){background:var(--signal);border-color:var(--signal);color:var(--on-signal)}
+
+
+/* ── 课表检测：同类问题聚合后仍需能逐条展开 ─────────────── */
+.inspect-group{display:grid;gap:6px;margin-bottom:10px}
+.inspect-group:last-child{margin-bottom:0}
+.inspect-group-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:9px 11px;border-left:3px solid var(--rule);background:var(--chip)}
+.inspect-group-head b{font-size:13px;font-weight:600}
+.inspect-group-head small{color:var(--muted);font-size:12px;margin-right:auto}
+.inspect-group-head .inspect-locate{margin-left:auto}
+
+
+/* 工作台 hero 里的次要动作：主行动已由全局"下一步"条承担，这里不再抢焦点 */
+.hero-copy .ghost-button.hero-secondary{padding:5px 10px;font:11px var(--font-ui);letter-spacing:.04em}
+.hero-copy .ghost-button.hero-secondary span{margin-left:10px}
+
+
+/* ── 自绘确认对话框：替代 window.confirm，可展示影响摘要 ────── */
+.confirm-overlay{position:fixed;inset:0;z-index:3000;display:grid;place-items:center;
+  padding:24px;background:rgba(10,12,10,.55);backdrop-filter:blur(2px)}
+.confirm-dialog{width:min(440px,100%);display:grid;gap:12px;padding:20px 22px;
+  border-top:4px solid var(--ink);background:var(--panel);color:var(--ink)}
+.confirm-dialog.is-danger{border-top-color:var(--danger)}
+.confirm-head{display:flex;align-items:center;gap:10px}
+.confirm-mark{display:grid;place-items:center;width:26px;height:26px;flex:0 0 auto;
+  background:var(--chip);color:var(--ink);font:700 13px var(--font-ui)}
+.confirm-dialog.is-danger .confirm-mark{background:var(--danger);color:#fff}
+.confirm-head h2{margin:0;font-size:18px;letter-spacing:-.02em}
+.confirm-message{margin:0;font-size:13px;line-height:1.6;white-space:pre-line}
+.confirm-detail{margin:0;padding:9px 11px;background:var(--chip);color:var(--muted);
+  font-size:12px;line-height:1.6;white-space:pre-line}
+.confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+.confirm-ok{border:1px solid var(--ink);background:var(--ink);color:var(--panel);
+  padding:9px 16px;font:12px var(--font-ui);letter-spacing:.04em;cursor:pointer}
+.confirm-ok:hover{background:var(--signal);color:var(--on-signal)}
+.confirm-ok.is-danger{background:var(--danger);border-color:var(--danger);color:#fff}
+.confirm-ok.is-danger:hover{filter:brightness(1.08);color:#fff}
+@media(max-width:600px){
+  .confirm-actions{flex-direction:column-reverse}
+  .confirm-actions button{width:100%}
+}
+
+
+/* ── 全局"下一步"条：一次只给一个行动，避免多入口抢注意力 ──── */
+.next-action{display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:11px 14px;
+  border:1px solid var(--rule);border-left:4px solid var(--info);background:var(--panel)}
+.next-action.is-blocking{border-left-color:var(--danger)}
+.next-action.is-attention{border-left-color:var(--signal)}
+.next-action.is-ready{border-left-color:var(--info)}
+.next-action.is-done{border-left-color:#15c98e}
+.next-action-mark{display:grid;place-items:center;flex:0 0 auto;width:26px;height:26px;
+  background:var(--chip);color:var(--ink);font:700 13px var(--font-ui)}
+.next-action.is-blocking .next-action-mark{background:var(--danger);color:#fff}
+.next-action.is-attention .next-action-mark{background:var(--signal);color:var(--on-signal)}
+.next-action.is-done .next-action-mark{background:#15c98e;color:#06281c}
+.next-action-copy{display:grid;gap:2px;min-width:0;flex:1 1 auto}
+.next-action-copy b{font-size:13px;font-weight:600}
+.next-action-copy small{font-size:12px;color:var(--muted);line-height:1.5}
+.next-action-btn{flex:0 0 auto;border:1px solid var(--ink);background:transparent;color:var(--ink);
+  padding:7px 12px;font:12px var(--font-ui);letter-spacing:.04em;cursor:pointer;white-space:nowrap}
+.next-action-btn:hover:not(:disabled){background:var(--signal);color:var(--on-signal)}
+.next-action-btn:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:720px){
+  .next-action{flex-wrap:wrap}
+  .next-action-copy{flex-basis:calc(100% - 40px)}
+  .next-action-btn{width:100%}
+}
+
+
+/* ── 侧栏导航分组：只加分隔与间距，导航项本身样式不变 ───────── */
+.nav-group{display:grid}
+.nav-group-rule{display:block;height:1px;margin:12px 8px 6px;background:#454844}
+html[data-theme='dark'] .nav-group-rule{background:var(--rule)}
+@media(max-width:680px){
+  /* 窄屏原本是 3 列网格；分组容器改为 contents，保持原有排布 */
+  .nav-list .nav-group{display:contents}
+  .nav-group-rule{display:none}
+}
+

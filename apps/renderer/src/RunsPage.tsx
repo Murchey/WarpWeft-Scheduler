@@ -5,19 +5,20 @@ import { RUN_MODE_OPTIONS, runResultText, runStatusText } from './runConfig';
 import { SectionHeading } from './components';
 import { EmptyState, MissingReasons, RunProgressView } from './runViews';
 import { missingPlans } from './selectors';
-import { activeRules, describeRule, matchedPlans } from './rules';
+import { describeRule, matchedPlans } from './rules';
 import { LongRunPanel } from './LongRunPanel';
 import { ShortRunDialog } from './ShortRunDialog';
 import type { LongJob, LongJobDetail } from './api';
 import { fmtDateTime } from './i18n';
+import { confirmDialog } from './confirm';
 
 export function RunsPage({
-  data, result, issues, running, progress, timeLimit, setTimeLimit, randomSeed, setRandomSeed, onRun, onRepair, onTimetable, onClear, runMode, shortRuns, onDeleteShortRun, inputFactory, onApplyLongResult, onNotice, onError,
+  data, result, issues, running, progress, timeLimit, setTimeLimit, randomSeed, setRandomSeed, onRun, onRepair, onTimetable, onClear, onRules, runMode, shortRuns, onDeleteShortRun, inputFactory, onApplyLongResult, onNotice, onError,
 }: {
   data: SchoolData; result: SolverOutput | null; issues: string[]; running: boolean; progress: RunProgress;
   timeLimit: number; setTimeLimit: (value: number) => void; randomSeed: number; setRandomSeed: (value: number) => void; onRun: () => void;
   onRepair: (scope: 'class' | 'teacher' | 'rule', id: string) => Promise<void>;
-  onTimetable: () => void; onClear: () => void; runMode?: RunMode | null;
+  onTimetable: () => void; onClear: () => void | Promise<void>; onRules: () => void; runMode?: RunMode | null;
   shortRuns: ShortRunRecord[];
   onDeleteShortRun: (id: string) => void;
   inputFactory: (seconds: number) => SolverInput;
@@ -70,8 +71,8 @@ export function RunsPage({
   const canConfigure = checked && !running;
   const lockedCount = data.candidate?.entries.filter((entry) => entry.locked).length ?? 0;
   const modeLabel = RUN_MODE_OPTIONS.find((item) => item.value === runMode)?.title ?? '当前模式';
-  const removeShortRun = (run: ShortRunRecord) => {
-    if (!window.confirm('删除这条短时计算记录？仅移除本次会话的历史记录，不影响当前候选课表、正式版课表或长时任务。')) return;
+  const removeShortRun = async (run: ShortRunRecord) => {
+    if (!(await confirmDialog({ tone: 'danger', title: '删除短时记录', message: '删除这条短时计算记录？', detail: '仅移除本次会话的历史记录，不影响当前候选课表、正式版课表或长时任务。', confirmLabel: '删除记录' }))) return;
     onDeleteShortRun(run.id);
     setViewingShortRun((current) => (current?.id === run.id ? null : current));
   };
@@ -108,9 +109,9 @@ export function RunsPage({
     <div className="runs-wizard">
       <section className="section-panel wizard-intro">
         <SectionHeading english="SCHEDULE RUN" title="排课向导" />
-        <p className="panel-note">按 01 → 02 → 03 → 04 完成配置。数据检查未通过时，后续步骤会锁定。</p>
+        <p className="panel-note">按 01 → 02 → 03 完成配置；数据检查未通过时，后续步骤会锁定。排课规则在「排课准备 → 排课规则」里调整。</p>
         <div className="wizard-stepper">
-          {['数据检查', '排课规则', '计算设置', '开始排课'].map((label, index) => (
+          {['数据检查', '计算设置', '开始排课'].map((label, index) => (
             <div key={label} className={'wizard-stepper-item ' + (index === 0 && checked || index > 0 && canConfigure ? 'done' : '')}>
               <b>0{index + 1}</b><span>{label}</span>
             </div>
@@ -137,36 +138,16 @@ export function RunsPage({
               ) : null}
             </>
           )}
-          <div className="hero-actions"><button className="ghost-button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>回到顶部查看状态</button></div>
+          <div className="hero-actions">
+            <button type="button" className="ghost-button" onClick={onRules}>
+              去设置排课规则
+            </button>
+            <span className="panel-note">系统硬规则由求解器自动保证；这里的入口只用于调整自定义规则与偏好。</span>
+          </div>
         </section>
 
         <section className={'section-panel wizard-card ' + (!checked ? 'wizard-locked' : '')}>
-          <div className="wizard-card-head"><span className="wizard-number">02</span><div><h2>排课规则</h2></div><span className="status-tag">{checked ? '自动保证' : '待检查'}</span></div>
-          {!checked ? <p className="panel-note">请先修复第 01 步的问题。</p> : (
-            <>
-              <div className="rule-summary">
-                {[
-                  ['01', '班级不撞课', '同一班级同一时间只安排一门课'],
-                  ['02', '教师不撞课', '同一教师同一时间只安排一门课'],
-                  ['03', '教室匹配', '教室类型和容量必须满足班级'],
-                  ['04', '固定约束', '固定时间和教师不可用时间自动生效'],
-                ].map(([number, title, description]) => (
-                  <div className="rule-item" key={number}><span>{number}</span><div><b>{title}</b><small>{description}</small></div><em>自动</em></div>
-                ))}
-              </div>
-              <p className="panel-note">这些是硬性规则，不需要手动配置；求解器会优先保证。当前已启用 <b>{activeRules(data).length}</b> 条自定义偏好规则。</p>
-              <div className="model-boundary-note" aria-label="求解器模型支持边界">
-                <b>模型边界</b>
-                <span>普通教学计划按单教师建模；走班组支持多个教师块。</span>
-                <span>{data.roomMode === 'full' ? '完整教室模式会检查容量、类型和同槽冲突。' : '简化教室模式按班级固定教室处理，不参与教室池优化。'}</span>
-                <span>配对单双周和连堂按同槽/连续时段约束处理，复杂协同教学需拆成走班块。</span>
-              </div>
-            </>
-          )}
-        </section>
-
-        <section className={'section-panel wizard-card ' + (!checked ? 'wizard-locked' : '')}>
-          <div className="wizard-card-head"><span className="wizard-number">03</span><div><h2>计算设置</h2></div><span className="status-tag">{!checked ? '待检查' : computeMode === 'long' ? '长时任务' : '已就绪'}</span></div>
+          <div className="wizard-card-head"><span className="wizard-number">02</span><div><h2>计算设置</h2></div><span className="status-tag">{!checked ? '待检查' : computeMode === 'long' ? '长时任务' : '已就绪'}</span></div>
           {!checked ? <p className="panel-note">完成数据检查后配置计算方式。</p> : (
             <>
               <div className="compute-mode" role="group" aria-label="运行方式">
@@ -187,7 +168,7 @@ export function RunsPage({
               ) : (
                 <>
                   <div className="run-controls"><label>任务时限<select value={longSeconds} disabled={!canConfigure} onChange={(event) => setLongSeconds(Number(event.target.value))}><option value={1800}>30 分钟</option><option value={3600}>1 小时</option><option value={7200}>2 小时</option><option value={21600}>6 小时（上限）</option></select></label></div>
-                  <p className="panel-note">长时任务在后台持续优化，可暂停/继续；检查点会写入服务端。启动入口统一在第 04 步，任务状态和历史在下方“任务与历史”面板展开查看。</p>
+                  <p className="panel-note">长时任务在后台持续优化，可暂停/继续；检查点会写入服务端。启动入口在最下方的第 03 步，任务状态与历史在“任务与历史”面板展开查看。</p>
                   <div className="config-summary"><span>运行模式<strong>{modeLabel}</strong></span><span>锁定课程<strong>{lockedCount}</strong></span><span>随机种子<strong>{randomSeed}</strong></span><span>可用时间格<strong>{data.timeSlots.length}</strong></span></div>
                 </>
               )}
@@ -196,13 +177,13 @@ export function RunsPage({
         </section>
 
         <section className={'section-panel wizard-card wizard-final ' + (!checked ? 'wizard-locked' : '')}>
-          <div className="wizard-card-head"><span className="wizard-number">04</span><div><h2>开始排课</h2></div><span className={computeMode === 'long' ? 'status-tag' : result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{computeMode === 'long' ? '长时任务' : result ? result.status : '尚未运行'}</span></div>
+          <div className="wizard-card-head"><span className="wizard-number">03</span><div><h2>开始排课</h2></div><span className={computeMode === 'long' ? 'status-tag' : result?.hasFeasibleSolution ? 'status-tag' : 'status-tag muted'}>{computeMode === 'long' ? '长时任务' : result ? runResultText(result.status, result.outcome) : '尚未运行'}</span></div>
           {computeMode === 'long' ? (
             <p className="panel-note">点击下方按钮会按当前工作区数据启动一个新的长时任务；暂停、继续、载入最佳课表和历史任务都在下方“任务与历史”面板中。</p>
           ) : result && lockedCount > 0 ? (
             <p className="panel-note">本次重新排课将保留 {lockedCount} 条锁定课程的位置。</p>
           ) : (
-            <p className="panel-note">确认前面三步后，开始生成候选课表。</p>
+            <p className="panel-note">确认前面两步后，开始生成候选课表。</p>
           )}
           <button className="action-button wizard-run-button" onClick={startSelected} disabled={!checked || running || (computeMode === 'long' && longActive)}>
             {computeMode === 'long'

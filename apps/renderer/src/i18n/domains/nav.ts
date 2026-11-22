@@ -5,7 +5,7 @@ export const navMessages = {
   'nav.runs': '排课任务',
   'nav.preview': '课表预览',
   'nav.adjust': '调代课',
-  'nav.final': '最终课表',
+  'nav.final': '课表检测',
   'nav.stats': '统计报表',
   'nav.server': '服务端',
   'nav.settings': '设置',

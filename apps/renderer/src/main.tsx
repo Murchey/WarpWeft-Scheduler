@@ -13,7 +13,6 @@ import type { ProjectMeta } from './api';
 import { ProjectLauncher } from './ProjectLauncher';
 import { TitleBar } from './TitleBar';
 import { SettingsPage } from './SettingsPage';
-import { WorkspaceLocationCard } from './WorkspaceLocationCard';
 import { JavaCheckDialog } from './JavaCheckDialog';
 import { PromptDialog } from './PromptDialog';
 import { copyText } from './clipboard';
@@ -45,7 +44,12 @@ import { messageOf, todayLocal, uid } from './utils';
 import { clearSavedLogins, forgetSavedLogin, readSavedLogins, rememberSavedLogin } from './savedLogins';
 import type { SavedLogin } from './savedLogins';
 import { activeRules, describeRule, matchedPlans, unscheduledHints } from './rules';
-import { RUN_MODE_LABEL_KEYS, RUN_MODE_OPTIONS } from './runConfig';
+import { RUN_MODE_LABEL_KEYS, RUN_MODE_OPTIONS, runResultText } from './runConfig';
+import { confirmDialog, ConfirmHost } from './confirm';
+import { HelpPanel } from './HelpPanel';
+import { useGlobalShortcuts } from './shortcuts';
+import { resolveNextAction } from './nextAction';
+import { NextActionBar } from './NextActionBar';
 import { CLOUD_ENDPOINT_PLACEHOLDER, cleanEndpoint, endpointForMode, initialEndpointForMode, RUNTIME_MODE_KEY, readActiveEndpoint, readEndpointMemory, rememberEndpoint, writeActiveEndpoint, writeEndpointMemory } from './runtimeEndpoint';
 import type { EndpointMemory } from './runtimeEndpoint';
 import type { RunProgress, ShortRunRecord } from './runConfig';
@@ -103,6 +107,17 @@ const TAB_LABEL_KEY: Record<Tab, MessageKey> = {
   设置: 'nav.settings',
 };
 type SaveState = 'idle' | 'saving' | 'saved' | 'offline' | 'error';
+
+/**
+ * 侧栏分组：只决定显示顺序与分组分隔线，成员必须来自 TABS。
+ * TABS 的中文内部 id 是 URL 深链与条件渲染的依赖，禁止改名。
+ */
+const NAV_GROUPS: readonly (readonly Tab[])[] = [
+  ['工作台', '排课准备'],
+  ['排课任务', '课表预览', '最终课表'],
+  ['调代课', '统计报表'],
+  ['服务端', '设置'],
+] as const;
 type View = PreviewView;
 
 /** 启动行为：auto = 直接进入上次工程；always = 每次先显示工程选择界面。 */
@@ -271,9 +286,11 @@ function LoginScreen({
                 type="button"
                 className="server-inline-btn"
                 onClick={() => {
-                  if (!window.confirm(t('login.confirmClearAll'))) return;
-                  setSaved(clearSavedLogins(getApiBase()));
-                  setPassword('');
+                  void (async () => {
+                    if (!(await confirmDialog({ tone: 'danger', title: '清除已保存账号', message: t('login.confirmClearAll'), detail: '已保存的账号与密码会从这台电脑移除，需要重新输入。' }))) return;
+                    setSaved(clearSavedLogins(getApiBase()));
+                    setPassword('');
+                  })();
                 }}
               >
                 {t('login.clear')}
@@ -297,9 +314,11 @@ function LoginScreen({
                   type="button"
                   className="saved-login-delete"
                   onClick={() => {
-                    if (!window.confirm(t('login.confirmDeleteOne', { name: item.username }))) return;
-                    setSaved(forgetSavedLogin(item.username, getApiBase()));
-                    if (username === item.username) setPassword('');
+                    void (async () => {
+                      if (!(await confirmDialog({ tone: 'danger', title: '删除已保存账号', message: t('login.confirmDeleteOne', { name: item.username }), detail: '只移除本机记住的账号，不影响服务端用户。' }))) return;
+                      setSaved(forgetSavedLogin(item.username, getApiBase()));
+                      if (username === item.username) setPassword('');
+                    })();
                   }}
                   title={t('login.confirmDeleteOne', { name: item.username })}
                 >
@@ -675,7 +694,12 @@ function App() {
   const params = new URLSearchParams(window.location.search);
   const electronShell = Boolean((window as unknown as { warpweft?: unknown }).warpweft);
   const requestedTab = params.get('tab');
-  const normalizedTab = requestedTab === '基础资料' || requestedTab === '教学计划' ? '排课准备' : requestedTab;
+  // 旧深链兼容：导航显示文案从「最终课表」改成「课表检测」后，两个词都要能进同一页。
+  const normalizedTab = requestedTab === '基础资料' || requestedTab === '教学计划'
+    ? '排课准备'
+    : requestedTab === '课表检测'
+      ? '最终课表'
+      : requestedTab;
   const [tab, setTab] = useState<Tab>(
     normalizedTab && (TABS as readonly string[]).includes(normalizedTab) ? (normalizedTab as Tab) : '工作台',
   );
@@ -721,6 +745,7 @@ function App() {
     return saved === 'single' || saved === 'lan-server' || saved === 'lan-client' || saved === 'cloud' ? saved : null;
   });
   const [modeSettingsOpen, setModeSettingsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   // Saving the same run mode with a different endpoint must still re-run
   // bootstrap; otherwise "链接云端" silently keeps using the old URL.
   const [modeRevision, setModeRevision] = useState(0);
@@ -1038,7 +1063,7 @@ function App() {
   };
 
   const handleLogout = async () => {
-    if (!window.confirm('确认退出当前服务端账号？退出后需要重新登录。')) return;
+    if (!(await confirmDialog({ message: '确认退出当前服务端账号？退出后需要重新登录。', confirmLabel: '退出登录' }))) return;
     try {
       await logout();
     } catch {
@@ -1286,7 +1311,7 @@ function App() {
       await refreshProjects();
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === 'PROJECT_CONFLICT' && !force) {
-        if (window.confirm(cause.message + '\n\n' + t('project.conflictRetry'))) {
+        if (await confirmDialog({ title: '工程已在别处切换', message: cause.message, detail: t('project.conflictRetry'), confirmLabel: '仍然切换' })) {
           await openProjectById(id, true);
           return;
         }
@@ -1305,12 +1330,16 @@ function App() {
       if (hadProject && !saved) return;
       // 未绑定工程且工作区非空：先确认，绝不再静默覆盖
       if (!hadProject && data && !isWorkspaceEmpty(data)) {
-        const ok = window.confirm(
-          t('project.confirmDiscardWorkspace', {
+        const ok = await confirmDialog({
+          tone: 'danger',
+          title: '当前工作区未保存为工程',
+          message: t('project.confirmDiscardWorkspace', {
             classes: data.classes.length,
             plans: data.coursePlans.length,
           }),
-        );
+          detail: '继续会新建空白工程并替换当前工作区，未保存的数据无法找回。',
+          confirmLabel: '仍然新建',
+        });
         if (!ok) return;
       }
       discardPendingSave();
@@ -1342,7 +1371,7 @@ function App() {
       const { saved, hadProject } = await persistActiveProject();
       if (hadProject && !saved) return;
       if (!hadProject && data && !isWorkspaceEmpty(data)) {
-        if (!window.confirm(t('project.confirmImport', { name: importName }))) return;
+        if (!(await confirmDialog({ tone: 'danger', title: '导入工程会替换工作区', message: t('project.confirmImport', { name: importName }), confirmLabel: '仍然导入' }))) return;
       }
       discardPendingSave();
       const created = await importProjectArchive(buffer);
@@ -1455,7 +1484,7 @@ function App() {
 
   const deleteProjectById = async (id: string) => {
     const target = projects.find((item) => item.id === id);
-    if (!window.confirm(t('project.confirmDelete', { name: target?.name ?? id }))) return;
+    if (!(await confirmDialog({ tone: 'danger', title: '删除工程', message: t('project.confirmDelete', { name: target?.name ?? id }), detail: '工程快照会一并删除，此操作不可撤销。', confirmLabel: '删除工程' }))) return;
     setLauncherBusy(true);
     try {
       await deleteProjectApi(id);
@@ -1519,6 +1548,19 @@ function App() {
       void flush(updated);
     }
   };
+
+  // 全局快捷键必须在任何提前 return 之前注册，否则分支渲染会改变 hook 顺序。
+  // 依赖用 ref 持有，回调里读到的始终是最新状态。
+  const shortcutStateRef = useRef({ issues: [] as string[] });
+  shortcutStateRef.current.issues = data ? preflight(data) : ['尚未加载工作区'];
+  useGlobalShortcuts({
+    onSaveProject: () => void saveActiveProject(),
+    // 已经在排课任务页时直接开始计算；在其他页面只跳转过去，避免在浏览课表时误触重算。
+    onRunSchedule: () => (tab === '排课任务' ? void run() : setTab('排课任务')),
+    runEnabled: shortcutStateRef.current.issues.length === 0 && !running,
+    escapeEnabled: helpOpen,
+    onEscape: () => setHelpOpen(false),
+  });
 
   const adjustmentDays = useMemo(() => {
     if (!data) return [];
@@ -1799,7 +1841,7 @@ function App() {
       return;
     }
     const locked = data.candidate?.entries.filter((entry) => entry.locked) ?? [];
-    if (locked.length > 0 && !window.confirm('重新排课会重新计算全部课程，已锁定的课程会保留在原位置。继续？')) {
+    if (locked.length > 0 && !(await confirmDialog({ message: '重新排课会重新计算全部课程。', detail: '已锁定的 ' + locked.length + ' 条课程会保留在原位置。', confirmLabel: '开始排课' }))) {
       setProgress({ phase: 'idle', message: '等待开始排课' });
       return;
     }
@@ -2096,7 +2138,7 @@ function App() {
           report.summary.hard +
           ' 项硬冲突、' +
           report.summary.must +
-          ' 条「必须」规则违反。请先在「最终课表」处理阻断项，再保存为正式版。',
+          ' 条「必须」规则违反。请先在「课表检测」处理阻断项，再保存为正式版。',
       );
       setTab('最终课表');
       return;
@@ -2106,9 +2148,9 @@ function App() {
     setExportOpen('publish');
   };
 
-  const clearCandidate = () => {
+  const clearCandidate = async () => {
     if (!data) return;
-    if (!window.confirm('清空候选课表？已保存的正式版不受影响。')) return;
+    if (!(await confirmDialog({ tone: 'danger', title: '清空候选课表', message: '清空候选课表？', detail: '锁定课程与手动调整会一并清除；已保存的正式版不受影响。', confirmLabel: '清空候选' }))) return;
     setResult(null);
     setSelectedEntryId('');
     setHistory([]);
@@ -2362,6 +2404,7 @@ function App() {
           onSettings={() => setModeSettingsOpen(true)}
         />
         {modeDialog}
+        <ConfirmHost />
       </>
     );
   }
@@ -2372,6 +2415,7 @@ function App() {
         <>
           <EmptyDataScreen message={loadError} onRetry={() => window.location.reload()} onSettings={() => setModeSettingsOpen(true)} />
           {modeDialog}
+          <ConfirmHost />
         </>
       );
     }
@@ -2450,12 +2494,27 @@ function App() {
         />
         {javaDialogNode}
         {nameDialogNode}
+        <ConfirmHost />
       </>
     );
   }
 
   const issues = preflight(data);
-  const visibleTabs = runMode === 'lan-server' ? TABS : TABS.filter((item) => item !== '服务端');
+  // 侧栏分组只影响渲染顺序与分隔线，内部 id 与深链保持中文原值。
+  const visibleTabs: Tab[] = runMode === 'lan-server' ? [...TABS] : TABS.filter((item) => item !== '服务端');
+  const tabGroups = NAV_GROUPS.map((group) => group.filter((item) => visibleTabs.includes(item))).filter((group) => group.length > 0);
+  const orderedTabs: Tab[] = tabGroups.flat();
+  // 全局唯一的"下一步"推导：五个页面共用，避免各写一套互相矛盾的建议。
+  const nextAction = resolveNextAction({
+    issues,
+    hasCandidate: Boolean(result),
+    outcome: result?.outcome,
+    hasReport: Boolean(report),
+    reportOk: Boolean(report?.ok),
+    hardConflicts: report?.summary.hard ?? 0,
+    unplaced: report?.summary.unplaced ?? 0,
+    hasPublished: Boolean(data.published),
+  });
   const saveLabel =
     saveState === 'saving'
       ? t('common.saving')
@@ -2488,6 +2547,7 @@ function App() {
         onImportProject={(file) => void importProjectFile(file)}
         onToggleTheme={() => setThemeMode(theme === 'light' ? 'dark' : 'light')}
         onOpenSettings={() => setTab('设置')}
+        onOpenHelp={() => setHelpOpen(true)}
         onOpenMode={() => setModeSettingsOpen(true)}
         onLogout={() => void handleLogout()}
       />
@@ -2502,16 +2562,22 @@ function App() {
           </div>
         </div>
         <nav className="nav-list" aria-label={t('nav.aria')}>
-          {visibleTabs.map((item, index) => (
-            <button
-              key={item}
-              className={tab === item ? 'nav-item active' : 'nav-item'}
-              onClick={() => setTab(item)}
-              aria-current={tab === item ? 'page' : undefined}
-            >
-              <span className="nav-no">0{index + 1}</span>
-              <span>{t(TAB_LABEL_KEY[item])}</span>
-            </button>
+          {tabGroups.map((group, groupIndex) => (
+            <div className="nav-group" key={group.join('|')}>
+              {groupIndex > 0 ? <span className="nav-group-rule" aria-hidden="true" /> : null}
+              {group.map((item) => (
+                <button
+                  key={item}
+                  className={tab === item ? 'nav-item active' : 'nav-item'}
+                  onClick={() => setTab(item)}
+                  aria-current={tab === item ? 'page' : undefined}
+                >
+                  {/* 序号按实际渲染顺序编排：分组会重排顺序，用 TABS 的原始下标会错位。 */}
+                  <span className="nav-no">{String(orderedTabs.indexOf(item) + 1).padStart(2, '0')}</span>
+                  <span>{t(TAB_LABEL_KEY[item])}</span>
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="rail-footer">
@@ -2544,6 +2610,28 @@ function App() {
             当前服务端数据版本 v{serverSchema ?? '未知'}，本客户端至少需要 v{MIN_SERVER_SCHEMA}。请升级局域网服务端；升级前可以查看和导出，但不能保存或排课。
           </Banner>
         ) : null}
+        <NextActionBar
+          action={nextAction}
+          hidden={tab === '设置' || tab === '服务端' || tab === '工作台'}
+          busy={running}
+          onAct={() => {
+            if (nextAction.kind === 'prepare') {
+              setPrepareSection('plans');
+              setTab('排课准备');
+            } else if (nextAction.kind === 'rules') {
+              setPrepareSection('rules');
+              setTab('排课准备');
+            } else if (nextAction.kind === 'run') {
+              setTab('排课任务');
+            } else if (nextAction.kind === 'inspect') {
+              setTab('最终课表');
+            } else if (nextAction.kind === 'publish') {
+              setTab('最终课表');
+            } else {
+              setTab('课表预览');
+            }
+          }}
+        />
         {tab === '工作台' ? (
           <Dashboard
             data={data}
@@ -2589,6 +2677,7 @@ function App() {
             onRepair={repairSchedule}
             onTimetable={() => setTab('课表预览')}
             onClear={clearCandidate}
+            onRules={() => { setPrepareSection('rules'); setTab('排课准备'); }}
             inputFactory={(seconds) => toSolverInput(data, seconds, data.candidate?.entries.filter((entry) => entry.locked) ?? [], randomSeed)}
             onApplyLongResult={applyLongResult}
             onNotice={setNotice}
@@ -2741,6 +2830,8 @@ function App() {
       {modeDialog}
       {javaDialogNode}
       {nameDialogNode}
+      <HelpPanel open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <ConfirmHost />
     </div>
   );
 }
@@ -2774,6 +2865,7 @@ function Dashboard({
     { code: '课时', label: '待排课时', value: periods, note: '每周总量' },
   ];
   const ready = issues.length === 0;
+  // 状态与进度全部由真实数据推导，不再写死「已就绪」或 62%/28% 这类魔数。
   const stateLabel = result
     ? ['COMPLETED', 'FEASIBLE', 'IMPROVED', 'OPTIMAL'].includes(result.status)
       ? '就绪'
@@ -2783,25 +2875,43 @@ function Dashboard({
         ? '超时'
         : '失败'
     : '待排课';
+  const heroHeadline = !ready
+    ? '还有 ' + issues.length + ' 项数据待处理'
+    : result
+      ? result.outcome === 'feasible' || result.hasFeasibleSolution
+        ? '候选课表已生成'
+        : '当前时限内未排满'
+      : '数据已就绪，可以排课';
+  const heroDetail = result
+    ? result.outcome === 'partial'
+      ? '已生成部分候选，仍需处理未排课时'
+      : result.outcome === 'timeout'
+        ? '当前时限内未找到完整课表'
+        : '候选方案已生成，可在课表预览中调整'
+    : ready
+      ? '数据已就绪，可以排课'
+      : '先处理排课准备里的提示项，再开始排课';
+  // 进度条只反映已完成的真实阶段（数据检查 → 排课 → 发布），不做假百分比。
+  const progressRatio = !ready ? 1 / 3 : result ? (data.published ? 1 : 2 / 3) : 2 / 3;
   return (
     <>
       <section className="hero-panel">
         <div className="hero-copy">
           <h2>
-            <strong>经纬排课已就绪</strong>
+            <strong>{heroHeadline}</strong>
           </h2>
           <p className="hero-subtitle">WarpWeft-Scheduler</p>
-          <button className="ink-button" onClick={onPrepare}>
-            继续准备数据 <span>→</span>
+          <button className="ghost-button hero-secondary" onClick={onPrepare}>
+            去排课准备 <span>→</span>
           </button>
         </div>
         <div className="hero-readout">
           <span>任务状态</span>
           <strong>{stateLabel}</strong>
           <div className="readout-track">
-            <i style={{ width: result ? '100%' : ready ? '62%' : '28%' }} />
+            <i style={{ width: Math.round(progressRatio * 100) + '%' }} />
           </div>
-          <small>{result?.outcome === 'partial' ? '已生成部分候选，仍需处理未排课时' : result?.outcome === 'timeout' ? '当前时限内未找到完整课表' : result ? '候选方案已生成' : ready ? '数据已就绪，可以排课' : '还有 ' + issues.length + ' 项需要处理'}</small>
+          <small>{heroDetail}</small>
         </div>
       </section>
       <section className="number-strip">
@@ -2816,7 +2926,6 @@ function Dashboard({
           </div>
         ))}
       </section>
-      <WorkspaceLocationCard />
       <TodayPanel data={data} now={new Date()} onAdjust={onAdjust} onTimetable={onTimetable} />
       <section className="dashboard-grid">
         <article className="section-panel progress-panel">
@@ -2839,8 +2948,8 @@ function Dashboard({
             <b>{data.coursePlans.length}</b>
           </div>
           <div className="hero-actions">
-            <button className="action-button" onClick={onRun} disabled={running}>
-              {running ? '计算中…' : '进入排课任务'} <span>→</span>
+            <button className="ghost-button" onClick={onRun} disabled={running}>
+              {running ? '计算中…' : '去排课任务'} <span>→</span>
             </button>
             {result ? (
               <button className="ghost-button" onClick={onTimetable}>
@@ -2850,28 +2959,32 @@ function Dashboard({
           </div>
         </article>
         <article className="section-panel next-panel">
-          <SectionHeading english="NEXT ACTIONS" title="下一步" />
+          <SectionHeading english="DATA STATUS" title={issues.length > 0 ? '待处理的数据问题' : '数据齐备'} />
           {issues.length > 0 ? (
-            <ol>
-              {issues.slice(0, 4).map((issue, index) => (
-                <li key={issue}>
-                  <span>0{index + 1}</span>
-                  {issue}
-                </li>
-              ))}
-            </ol>
+            <>
+              <p className="panel-note">这些问题来自排课前的自动检查；补齐后才能开始排课。</p>
+              <ol>
+                {issues.slice(0, 4).map((issue, index) => (
+                  <li key={issue}>
+                    <span>0{index + 1}</span>
+                    {issue}
+                  </li>
+                ))}
+              </ol>
+              {issues.length > 4 ? <p className="panel-note">还有 {issues.length - 4} 项，进入排课准备可逐项处理。</p> : null}
+            </>
           ) : (
-            <ol>
-              <li>
-                <span>01</span>确认班级、教师和教室资料
-              </li>
-              <li>
-                <span>02</span>检查教学计划的周课时
-              </li>
-              <li>
-                <span>03</span>开始一次自动排课
-              </li>
-            </ol>
+            <>
+              <p className="panel-note">班级、教师、教室与教学计划都已通过检查，不需要再处理。</p>
+              <div className="field-row">
+                <span>班级</span>
+                <b>{data.classes.length}</b>
+                <span>教师</span>
+                <b>{data.teachers.length}</b>
+                <span>计划</span>
+                <b>{data.coursePlans.length}</b>
+              </div>
+            </>
           )}
         </article>
       </section>
@@ -3227,7 +3340,7 @@ function UsersCard({ currentUser }: { currentUser: AuthUser }) {
 
   const removeUser = async (user: AuthUser) => {
     if (busy) return;
-    if (!window.confirm('删除用户「' + user.username + '」？该用户将立即失去登录权限。')) return;
+    if (!(await confirmDialog({ tone: 'danger', title: '删除用户', message: '删除用户「' + user.username + '」？', detail: '该用户会立即失去登录权限，已保存的数据不受影响。', confirmLabel: '删除用户' }))) return;
     setBusy(user.id + ':delete');
     setError('');
     setNotice('');
@@ -3827,7 +3940,7 @@ function TimetablePage({
         <div className="tt-head-actions">
           <span className={'tt-status ' + (result.hasFeasibleSolution ? 'is-ok' : 'is-warn')}>
             <i />
-            {result.status} · {result.entries.length} 课时
+            {runResultText(result.status, result.outcome)} · {result.entries.length} 课时
           </span>
           <button
             className="tt-btn tt-btn-quiet"
@@ -3843,11 +3956,11 @@ function TimetablePage({
           <button
             className={'tt-btn ' + (report && !report.ok ? 'tt-btn-primary' : 'tt-btn-quiet')}
             onClick={onInspect}
-            title="打开最终课表报告（保存正式版门禁）"
+            title="打开课表检测报告（保存正式版门禁）"
           >
             检测{report ? (report.ok ? '通过' : ' · ' + report.summary.hard + ' 项') : '报告'}
           </button>
-          <button className="tt-btn tt-btn-primary" onClick={onRun} disabled={running}>
+          <button className="tt-btn tt-btn-quiet" onClick={onRun} disabled={running} title="按当前数据重新计算（会覆盖候选课表）">
             {running ? '正在排课…' : '重新排课'}
           </button>
         </div>

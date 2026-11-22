@@ -117,7 +117,7 @@ export function InspectionPage({
   onRules: () => void;
   onAdjust: () => void;
   onRun: () => void;
-  onClear: () => void;
+  onClear: () => void | Promise<void>;
   adjustmentDays: { date: string; label: string; count: number; summary: string }[];
   onViewAdjustment: (date: string) => void;
   onExportAdjustment: (date: string) => void;
@@ -139,6 +139,22 @@ export function InspectionPage({
     if (!report) return [];
     return filter === 'all' ? report.issues : report.issues.filter((item) => item.severity === filter);
   }, [report, filter]);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
+  /**
+   * 按"标题 + 级别 + 分类"聚合：一条「必须」规则命中 160 个班级时，
+   * 逐条平铺既读不出结论，也挤掉了利用率与密度这些真正需要判断的内容。
+   */
+  const groups = useMemo(() => {
+    const map = new Map<string, InspectionIssue[]>();
+    for (const issue of issues) {
+      // 用「级别 + 分类」聚合：title 里带班级/课程名，逐条不同，按 title 分组等于没分组。
+      const key = issue.severity + '|' + issue.category;
+      const list = map.get(key);
+      if (list) list.push(issue);
+      else map.set(key, [issue]);
+    }
+    return [...map.entries()].map(([key, items]) => ({ key, items }));
+  }, [issues]);
 
   if (!report || !hasCandidate) {
     return (
@@ -186,7 +202,7 @@ export function InspectionPage({
       ) : null}
       <section className={'section-panel inspect-hero ' + (report.ok ? 'is-ok' : 'is-fail')}>
         <div className="panel-head">
-          <SectionHeading english="FINAL TIMETABLE" title="最终课表" />
+          <SectionHeading english="INSPECTION" title="课表检测" />
           <span className={'status-tag ' + (report.ok ? '' : 'danger')}>{report.ok ? '检测通过' : '检测未通过'}</span>
         </div>
         <p className="panel-note">
@@ -305,24 +321,53 @@ export function InspectionPage({
             {filter === 'all' ? '没有发现问题。' : '没有「' + SEVERITY_LABELS[filter] + '」级别的问题。'}
           </p>
         ) : (
-          <ol className="inspect-issue-list">
-            {issues.map((issue) => (
-              <li key={issue.id} className={'inspect-issue is-' + issue.severity}>
-                <span className={'inspect-severity is-' + issue.severity}>{severityLabel(issue)}</span>
-                <div className="inspect-issue-copy">
-                  <b>{issue.title}</b>
-                  <small>
-                    {CATEGORY_LABELS[issue.category]} · {issue.detail}
-                  </small>
-                </div>
-                {issue.category === 'RULE' ? <button className="ghost-button inspect-locate" onClick={onRules}>去规则</button> : null}
-                {issue.category === 'UNPLACED' || issue.category === 'TEACHER_UNAVAILABLE' ? <button className="ghost-button inspect-locate" onClick={onAdjust}>去调整</button> : null}
-                <button className="ghost-button inspect-locate" disabled={!hasTarget(issue.refs)} onClick={() => onLocate(issue.refs)}>
-                  定位
-                </button>
-              </li>
+          <>
+            {/* 同一规则/同一原因的重复条目先聚合：162 条「尽量」规则违反逐条列出等于没有清单。 */}
+            {groups.map((group) => (
+              <section className="inspect-group" key={group.key}>
+                {group.items.length > 1 ? (
+                  <header className="inspect-group-head">
+                    <span className={'inspect-severity is-' + group.items[0].severity}>{severityLabel(group.items[0])}</span>
+                    <b>{CATEGORY_LABELS[group.items[0].category]}</b>
+                    <small>{group.items.length} 处同类问题 · {group.items[0].title}</small>
+                    {group.items[0].category === 'RULE' ? <button className="ghost-button inspect-locate" onClick={onRules}>去规则</button> : null}
+                    <button
+                      className="ghost-button inspect-locate"
+                      aria-expanded={expandedGroups.has(group.key)}
+                      onClick={() => setExpandedGroups((current) => {
+                        const next = new Set(current);
+                        if (next.has(group.key)) next.delete(group.key);
+                        else next.add(group.key);
+                        return next;
+                      })}
+                    >
+                      {expandedGroups.has(group.key) ? '收起明细' : '展开明细'}
+                    </button>
+                  </header>
+                ) : null}
+                {group.items.length === 1 || expandedGroups.has(group.key) ? (
+                  <ol className="inspect-issue-list">
+                    {group.items.map((issue) => (
+                      <li key={issue.id} className={'inspect-issue is-' + issue.severity}>
+                        <span className={'inspect-severity is-' + issue.severity}>{severityLabel(issue)}</span>
+                        <div className="inspect-issue-copy">
+                          <b>{group.items.length > 1 ? issue.detail : issue.title}</b>
+                          <small>
+                            {CATEGORY_LABELS[issue.category]} · {group.items.length > 1 ? issue.title : issue.detail}
+                          </small>
+                        </div>
+                        {issue.category === 'RULE' && group.items.length === 1 ? <button className="ghost-button inspect-locate" onClick={onRules}>去规则</button> : null}
+                        {issue.category === 'UNPLACED' || issue.category === 'TEACHER_UNAVAILABLE' ? <button className="ghost-button inspect-locate" onClick={onAdjust}>去调整</button> : null}
+                        <button className="ghost-button inspect-locate" disabled={!hasTarget(issue.refs)} onClick={() => onLocate(issue.refs)}>
+                          定位
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                ) : null}
+              </section>
             ))}
-          </ol>
+          </>
         )}
       </section>
 
@@ -350,7 +395,7 @@ export function InspectionPage({
             <SectionHeading english="CLASS DENSITY" title="班级课时密度" />
           </div>
           <UtilizationTable rows={report.utilization.classes} nameHeader="班级" empty="没有班级数据。" />
-          <p className="panel-note">占用率 = 该班已排课时 ÷ 可用时间格；计划课时少于可用格时占用率偏低是正常的。日内空档请看统计报表。</p>
+          <p className="panel-note">占用率 = 该班单周已排课时 ÷ 该班单周计划课时；排满显示 100%，超过 100% 才是真的超排。日内空档请看统计报表。</p>
         </section>
       </div>
 

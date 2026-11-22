@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { Column } from './components';
 import { useColumnWidths } from './resizableTable';
+import { confirmDialog } from './confirm';
 
 export interface BatchField {
   key: string;
@@ -135,9 +136,9 @@ function ResourceWorkspace<T extends { id: string }>({
     setBatchClasses([]);
   };
 
-  const removeSelected = () => {
+  const removeSelected = async () => {
     if (selected.length === 0) return;
-    if (!window.confirm('删除选中的 ' + selected.length + ' 条记录？相关候选课表会清空。')) return;
+    if (!(await confirmDialog({ tone: 'danger', title: '批量删除记录', message: '删除选中的 ' + selected.length + ' 条记录？', detail: '相关候选课表会清空，需要重新排课。', confirmLabel: '删除 ' + selected.length + ' 条' }))) return;
     onRemoveMany(selected);
     setSelected([]);
     setFeedback('已删除 ' + selected.length + ' 条记录。');

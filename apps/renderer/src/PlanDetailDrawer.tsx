@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import type { CoursePlan, SlotKind, WeekType } from './types';
 import type { PlanLookups } from './planTableView';
 import { KIND_LABELS, planFixedLabels } from './planTableView';
+import { confirmDialog } from './confirm';
 
 interface PlanDetailDrawerProps {
   plan: CoursePlan;
@@ -9,7 +10,7 @@ interface PlanDetailDrawerProps {
   roomTypes: string[];
   onClose: () => void;
   onSave: (patch: Partial<CoursePlan>) => void;
-  onDelete: () => boolean;
+  onDelete: () => boolean | Promise<boolean>;
   onOpenFixed: () => void;
   /** The fixed-slot dialog owns Esc while it is open. */
   escapeDisabled?: boolean;
@@ -52,8 +53,8 @@ function PlanDetailDrawer({ plan, lookups, roomTypes, onClose, onSave, onDelete,
     || draft.consecutive !== initial.consecutive
     || draft.pairId !== initial.pairId;
 
-  const close = () => {
-    if (dirty && !window.confirm('有未保存的约束修改，放弃后关闭？')) return;
+  const close = async () => {
+    if (dirty && !(await confirmDialog({ title: '放弃未保存的修改', message: '有未保存的约束修改，放弃后关闭？', detail: '关闭后这次的约束调整不会写入教学计划。', confirmLabel: '放弃并关闭' }))) return;
     onClose();
   };
 
@@ -61,7 +62,15 @@ function PlanDetailDrawer({ plan, lookups, roomTypes, onClose, onSave, onDelete,
     if (escapeDisabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      if (dirty && !window.confirm('有未保存的约束修改，放弃后关闭？')) return;
+      if (dirty) {
+        event.preventDefault();
+        // Esc 与点击关闭走同一条确认路径，避免两处文案/行为不一致。
+        void (async () => {
+          if (!(await confirmDialog({ title: '放弃未保存的修改', message: '有未保存的约束修改，放弃后关闭？', detail: '关闭后这次的约束调整不会写入教学计划。', confirmLabel: '放弃并关闭' }))) return;
+          onClose();
+        })();
+        return;
+      }
       onClose();
     };
     window.addEventListener('keydown', onKeyDown);
@@ -170,8 +179,10 @@ function PlanDetailDrawer({ plan, lookups, roomTypes, onClose, onSave, onDelete,
             type="button"
             className="danger-link"
             onClick={() => {
-              if (!window.confirm('删除这条教学计划？相关候选课表会被清空。')) return;
-              if (onDelete()) onClose();
+              void (async () => {
+                if (!(await confirmDialog({ tone: 'danger', title: '删除教学计划', message: '删除这条教学计划？', detail: '相关候选课表会被清空，需要重新排课。', confirmLabel: '删除计划' }))) return;
+                if (await onDelete()) onClose();
+              })();
             }}
           >
             删除计划

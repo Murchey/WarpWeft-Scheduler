@@ -16,6 +16,7 @@ import type { SolverInput } from './types';
 import { SectionHeading } from './components';
 import { forgetTask, latestTaskForEndpoint, newTaskUuid, rememberTask, snapshotIdOf } from './taskIndex';
 import { fmtDateTime } from './i18n';
+import { confirmDialog } from './confirm';
 
 const STATUS_LABELS: Record<string, string> = {
   queued: '排队中',
@@ -230,7 +231,7 @@ export function LongRunPanel({
 
   const restartWithCurrentData = () =>
     withBusy('restart', async () => {
-      if (!window.confirm('将按当前工作区数据重新开始长时排课。当前任务（如果还在运行）会被取消，旧检查点不会作为新任务的输入。继续吗？')) return;
+      if (!(await confirmDialog({ tone: 'danger', title: '重新开始长时排课', message: '将按当前工作区数据重新开始长时排课。', detail: '当前任务（如果还在运行）会被取消，旧检查点不会作为新任务的输入。', confirmLabel: '重新开始' }))) return;
       try {
         if (job && ['queued', 'running', 'paused'].includes(job.status)) {
           await cancelLongJob(job.id);
@@ -284,7 +285,7 @@ export function LongRunPanel({
 
   const cancel = (id: string) =>
     withBusy('cancel', async () => {
-      if (!window.confirm('取消长时任务？已保存的最佳解会保留，之后仍可继续。')) return;
+      if (!(await confirmDialog({ title: '取消长时任务', message: '取消长时任务？', detail: '已保存的最佳解会保留，之后仍可继续。', confirmLabel: '取消任务' }))) return;
       try {
         await cancelLongJob(id);
         await loadJob(id);
@@ -301,7 +302,7 @@ export function LongRunPanel({
         onError('运行中或排队中的任务不能删除；请先取消任务');
         return;
       }
-      if (!window.confirm('删除' + statusLabel(target.status) + '任务 ' + target.id + '？任务数据文件和检查点会被删除，此操作不可撤销。')) return;
+      if (!(await confirmDialog({ tone: 'danger', title: '删除长时任务', message: '删除' + statusLabel(target.status) + '任务 ' + target.id + '？', detail: '任务数据文件和检查点会被删除，此操作不可撤销。', confirmLabel: '删除任务' }))) return;
       try {
         await deleteLongJob(target.id);
         if (target.taskUuid) forgetTask(window.localStorage, target.taskUuid);

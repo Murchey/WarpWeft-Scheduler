@@ -24,6 +24,7 @@ import {
 } from './planTableView';
 import type { PlanColumnKey, PlanFilters, PlanSort, PlanTableView } from './planTableView';
 import { fixedSlotIdsOf } from '../../../packages/contracts/src';
+import { confirmDialog } from './confirm';
 
 function PlansPage({
   data,
@@ -115,8 +116,8 @@ function PlansPage({
     commit({ ...data, coursePlans: plans }, { invalidate: true });
   };
 
-  const removePlan = (id: string): boolean => {
-    if (!window.confirm('删除这条教学计划？相关候选课表会被清空。')) return false;
+  const removePlan = async (id: string): Promise<boolean> => {
+    if (!(await confirmDialog({ tone: 'danger', title: '删除教学计划', message: '删除这条教学计划？', detail: '相关候选课表会被清空，需要重新排课。', confirmLabel: '删除计划' }))) return false;
     commit({ ...data, coursePlans: data.coursePlans.filter((plan) => plan.id !== id) }, { invalidate: true });
     setSelected((current) => current.filter((item) => item !== id));
     return true;
@@ -280,10 +281,12 @@ function PlansPage({
         onDelete={(id) => { removePlan(id); }}
         onBatch={(key, value) => batchEdit(selected, key, value)}
         onBatchDelete={() => {
+          void (async () => {
           if (!selected.length) return;
-          if (!window.confirm('删除选中的 ' + selected.length + ' 条教学计划？相关候选课表会被清空。')) return;
+          if (!(await confirmDialog({ tone: 'danger', title: '批量删除教学计划', message: '删除选中的 ' + selected.length + ' 条教学计划？', detail: '相关候选课表会被清空，需要重新排课。', confirmLabel: '删除 ' + selected.length + ' 条' }))) return;
           removeMany(selected);
           setSelected([]);
+          })();
         }}
         onOpenDrawer={setDrawerId}
         onOpenFixed={setFixedEditor}

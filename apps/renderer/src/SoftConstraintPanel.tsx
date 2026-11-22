@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import type { Commit, SchoolData, SoftRuleKind } from './types';
 import { normalizeSoftConstraints, SOFT_CONSTRAINT_DEFINITIONS, withSoftWeight } from './softConstraints';
+import { confirmDialog } from './confirm';
 
 const WEIGHT_OPTIONS = [
   { value: 0, label: '0 不启用' },
@@ -23,9 +24,9 @@ export function SoftConstraintPanel({
   const current = normalizeSoftConstraints(data);
   const [advanced, setAdvanced] = useState(false);
   const weightOf = (kind: SoftRuleKind) => current.find((item) => item.kind === kind)?.weight ?? 0;
-  const update = (kind: SoftRuleKind, weight: number) => {
+  const update = async (kind: SoftRuleKind, weight: number) => {
     if (weight === weightOf(kind)) return;
-    if (data.candidate && !window.confirm('修改课表偏好将清除当前候选课表，包括锁定课程和手动调整，需重新排课。正式版保留。确认应用？')) return;
+    if (data.candidate && !(await confirmDialog({ tone: 'danger', title: '偏好修改会清除候选课表', message: '修改课表偏好将清除当前候选课表。', detail: '锁定课程与手动调整会一并清除，需要重新排课；已保存的正式版保留。', confirmLabel: '应用并清除候选' }))) return;
     commit(withSoftWeight(data, kind, weight), { invalidate: true, immediate: true });
   };
   return (
@@ -64,11 +65,17 @@ export function SoftConstraintPanel({
         ))}
       </div>
       <p className="panel-note">
-        「学科时段偏好」不是主科/副科两套独立开关：先在「排课准备 → 学科」逐科或批量设置「上午 / 下午 / 不限」，这里的权重同时控制两类偏好的优先程度。导入时留空会按学科名推荐，填「不限」才表示不限制；手动新增学科请在学科表选择。固定时间和教师不可用仍可能覆盖软偏好。
-        权重不是“空档数量”，数值越大只代表求解器越优先减少空档，仍可能因教师/教室约束保留空档。
-        班级空档只统计常规、自习、课后服务三类日间时段；早读、晚自习、补课之间的作息间隔不计入。
-        如果要绝对禁止某个时段（例如体育绝不排上午），请新建「学科时间偏好」规则并选“必须”；软权重只影响优先级，不能保证。要禁止同学科相邻两节，请新建「同学科不连排」规则。
+        权重越高，求解器越优先满足，但不保证一定满足。要绝对禁止某个时段或相邻两节，请用下方规则库里的「必须」，不要依赖权重。
       </p>
+      <details className="soft-prefs-more">
+        <summary>权重与统计口径说明</summary>
+        <p className="panel-note">
+          「学科时段偏好」不是主科/副科两套开关：先在「排课准备 → 学科」设置每科「上午 / 下午 / 不限」，这里的权重控制优先程度。导入时留空按学科名推荐，填「不限」才表示不限制。
+        </p>
+        <p className="panel-note">
+          权重不是"空档数量"：数值越大只代表更优先减少空档，仍可能因教师/教室约束保留空档。班级空档只统计常规、自习、课后服务三类日间时段；早读、晚自习、补课之间的作息间隔不计入。
+        </p>
+      </details>
     </div>
   );
 }
